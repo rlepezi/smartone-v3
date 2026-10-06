@@ -1,0 +1,512 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "mandantes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "usuarios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "usuarios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "usuarios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "proyectos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "proyectos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "proyectos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "personas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "personas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "personas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "recursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "recursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "recursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesParticipacion",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesParticipacion",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesParticipacion",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "requerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "requerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tipoEntidad", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "requerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tipoEntidad", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tipo", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "tipo", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "tipo", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilesRecurso",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "tipo", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "perfilParticipacionId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "perfilParticipacionId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "perfilParticipacionId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "perfilRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "perfilParticipacionId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evidencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evidencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evidencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "requerimientoId", "order": "ASCENDING"},
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "requerimientoId", "order": "ASCENDING"},
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "asignaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "asignaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "asignaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "asignaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "entidad", "order": "ASCENDING"},
+        {"fieldPath": "entidadId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "actorUid", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "actorUid", "order": "ASCENDING"},
+        {"fieldPath": "entidad", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesiones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "usuarioId", "order": "ASCENDING"},
+        {"fieldPath": "inicio", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesiones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "fin", "order": "ASCENDING"},
+        {"fieldPath": "ultimoLatido", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "metricasUsuarioDiarias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "usuarioId", "order": "ASCENDING"},
+        {"fieldPath": "fecha", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "metricasUsuarioDiarias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fecha", "order": "ASCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

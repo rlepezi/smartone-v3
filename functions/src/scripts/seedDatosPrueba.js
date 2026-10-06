@@ -1,0 +1,1010 @@
+/**
+ * Script de seed: genera un dataset de prueba completo cubriendo las 15
+ * entidades de la Matriz Maestra, invocando los Services reales (nunca
+ * Firestore directo) para que se apliquen todas las validaciones,
+ * derivaciones y lógica especial ya construida.
+ *
+ * Uso:
+ *   USE_EMULATOR=true node src/scripts/seedDatosPrueba.js   (emulador local)
+ *   node src/scripts/seedDatosPrueba.js                     (proyecto real,
+ *       requiere functions/serviceAccountKey.json)
+ *
+ * Idempotente: puede correrse varias veces sin duplicar datos.
+ */
+
+const path = require("path");
+
+if (process.env.USE_EMULATOR === "true") {
+  process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
+}
+
+const admin = require("firebase-admin");
+
+if (!admin.apps.length) {
+  if (process.env.USE_EMULATOR === "true") {
+    admin.initializeApp({projectId: "smartone-v3"});
+  } else {
+    const serviceAccount = require(
+        path.join(__dirname, "../../serviceAccountKey.json"),
+    );
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  }
+}
+
+const {cleanRut} = require("../utils/rutValidator");
+
+const mandanteService = require("../services/mandanteService");
+const usuarioService = require("../services/usuarioService");
+const proyectoService = require("../services/proyectoService");
+const empresaService = require("../services/empresaService");
+const personaService = require("../services/personaService");
+const recursoService = require("../services/recursoService");
+const perfilParticipacionService =
+    require("../services/perfilParticipacionService");
+const requerimientoService = require("../services/requerimientoService");
+const perfilRequerimientoService =
+    require("../services/perfilRequerimientoService");
+const participacionService = require("../services/participacionService");
+const expedienteService = require("../services/expedienteService");
+const evidenciaService = require("../services/evidenciaService");
+const evidenciaRequerimientoService =
+    require("../services/evidenciaRequerimientoService");
+const evaluacionService = require("../services/evaluacionService");
+const perfilRecursoService = require("../services/perfilRecursoService");
+
+const mandanteRepository = require("../repositories/mandanteRepository");
+const usuarioRepository = require("../repositories/usuarioRepository");
+const proyectoRepository = require("../repositories/proyectoRepository");
+const empresaRepository = require("../repositories/empresaRepository");
+const personaRepository = require("../repositories/personaRepository");
+const recursoRepository = require("../repositories/recursoRepository");
+const perfilParticipacionRepository =
+    require("../repositories/perfilParticipacionRepository");
+const requerimientoRepository =
+    require("../repositories/requerimientoRepository");
+const perfilRequerimientoRepository =
+    require("../repositories/perfilRequerimientoRepository");
+const participacionRepository =
+    require("../repositories/participacionRepository");
+const expedienteRepository = require("../repositories/expedienteRepository");
+const evidenciaRepository = require("../repositories/evidenciaRepository");
+const evidenciaRequerimientoRepository =
+    require("../repositories/evidenciaRequerimientoRepository");
+const evaluacionRepository = require("../repositories/evaluacionRepository");
+const perfilRecursoRepository =
+    require("../repositories/perfilRecursoRepository");
+
+// Perfiles de Recurso que se crean en cada Mandante. Las clasificaciones de
+// Maquinaria son también los `tipo` de los Recursos del seed.
+const ROLES_PERSONA = ["Operador", "Trabajador"];
+const CLASIFICACIONES_MAQUINARIA = [
+  "Camioneta", "Retroexcavadora", "Grúa", "Camión Pluma",
+];
+
+const ACTOR_FALSO = {
+  rol: "superadmin",
+  mandanteId: null,
+  uid: "seed-script",
+  email: "seed-script@local",
+};
+
+const PASSWORD_PRUEBA = "Seed2026#";
+const EMAILS_USUARIOS = [
+  "admin.andina@seed.smartone.cl",
+  "lector.andina@seed.smartone.cl",
+  "admin.minera@seed.smartone.cl",
+  "lector.minera@seed.smartone.cl",
+  "evaluador@seed.smartone.cl",
+];
+
+const resumen = {creados: {}, omitidos: {}, fallidos: []};
+
+/**
+ * Imprime una línea en consola.
+ * @param {string} mensaje Mensaje a imprimir.
+ * @return {void}
+ */
+function log(mensaje) {
+  console.log(mensaje);
+}
+
+/**
+ * Calcula el dígito verificador de un RUT chileno (módulo 11), mismo
+ * algoritmo que functions/src/utils/rutValidator.js.
+ * @param {string} cuerpo Cuerpo numérico del RUT (sin DV).
+ * @return {string} Dígito verificador ("0"-"9" o "K").
+ */
+function calcularDV(cuerpo) {
+  let suma = 0;
+  let multiplo = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += multiplo * parseInt(cuerpo.charAt(i), 10);
+    multiplo = multiplo < 7 ? multiplo + 1 : 2;
+  }
+  const dvEsperado = 11 - (suma % 11);
+  if (dvEsperado === 11) return "0";
+  if (dvEsperado === 10) return "K";
+  return String(dvEsperado);
+}
+
+/**
+ * Genera un RUT de prueba válido y determinístico a partir de un número
+ * base fijo (mismo número → mismo RUT siempre, para que la idempotencia
+ * entre corridas funcione).
+ * @param {number} base Número base sintético (rango claramente de
+ *     prueba, ej. 90000001).
+ * @return {string} RUT con formato "NNNNNNNN-D".
+ */
+function rutDesdeBase(base) {
+  const cuerpo = String(base);
+  return `${cuerpo}-${calcularDV(cuerpo)}`;
+}
+
+/**
+ * Ejecuta la creación idempotente de una entidad: si ya existe (según
+ * existeFn), la omite y la cuenta; si no, la crea, loguea y cuenta;
+ * cualquier error se atrapa, loguea y cuenta sin abortar el script.
+ * @param {string} tipo Nombre del tipo de entidad (para el resumen).
+ * @param {string} descripcion Descripción legible de este registro.
+ * @param {function(): Promise<?Object>} existeFn Chequeo de existencia.
+ * @param {function(): Promise<Object>} crearFn Creación real.
+ * @return {Promise<?Object>} La entidad (existente o creada), o null si
+ *     falló.
+ */
+async function seedItem(tipo, descripcion, existeFn, crearFn) {
+  try {
+    const existente = await existeFn();
+    if (existente) {
+      log(`  ↷ ${tipo}: "${descripcion}" ya existe, omitiendo.`);
+      resumen.omitidos[tipo] = (resumen.omitidos[tipo] || 0) + 1;
+      return existente;
+    }
+    const creado = await crearFn();
+    log(`  ✓ ${tipo}: "${descripcion}" creado.`);
+    resumen.creados[tipo] = (resumen.creados[tipo] || 0) + 1;
+    return creado;
+  } catch (err) {
+    log(`  ✗ ${tipo}: "${descripcion}" falló: ${err.message}`);
+    resumen.fallidos.push({tipo, descripcion, motivo: err.message});
+    return null;
+  }
+}
+
+/**
+ * Busca un usuario por email, resolviendo Auth + el doc de Firestore.
+ * @param {string} email Email a buscar.
+ * @return {Promise<?Object>} El usuario (con id = uid) o null.
+ */
+async function buscarUsuarioPorEmail(email) {
+  try {
+    const authUser = await admin.auth().getUserByEmail(email);
+    return await usuarioRepository.getById(authUser.uid);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Devuelve todas las Personas de una Empresa a partir del mapa
+ * {empresaId: [Persona, ...]}.
+ * @param {Object<string, Object[]>} personasPorEmpresaId Índice de
+ *     Personas por empresaId.
+ * @param {string} empresaId ID de la Empresa.
+ * @return {Object[]} Lista de Personas de esa Empresa.
+ */
+function personasDeEmpresa(personasPorEmpresaId, empresaId) {
+  return personasPorEmpresaId[empresaId] || [];
+}
+
+/**
+ * Devuelve todos los Recursos de una Empresa a partir del mapa
+ * {empresaId: [Recurso, ...]}.
+ * @param {Object<string, Object[]>} recursosPorEmpresaId Índice de
+ *     Recursos por empresaId.
+ * @param {string} empresaId ID de la Empresa.
+ * @return {Object[]} Lista de Recursos de esa Empresa.
+ */
+function recursosDeEmpresa(recursosPorEmpresaId, empresaId) {
+  return recursosPorEmpresaId[empresaId] || [];
+}
+
+/**
+ * Paso 1: Mandantes.
+ * @return {Promise<Object<string, Object>>} Mapa nombreFantasia →
+ *     Mandante.
+ */
+async function seedMandantes() {
+  log("\n[1/15] Mandantes");
+  const datos = [
+    {
+      nombreFantasia: "Constructora Andina",
+      rut: rutDesdeBase(90000001),
+      razonSocial: "Constructora Andina SpA",
+    },
+    {
+      nombreFantasia: "Minera del Sur",
+      rut: rutDesdeBase(90000002),
+      razonSocial: "Minera del Sur SpA",
+    },
+    // Lo exige seedRequerimientosTransemel.js (catálogo real de Transemel).
+    {
+      nombreFantasia: "Transemel",
+      rut: rutDesdeBase(90000003),
+      razonSocial: "Empresa de Transmisión Eléctrica Transemel S.A.",
+    },
+  ];
+
+  const mandantes = {};
+  for (const d of datos) {
+    const creado = await seedItem(
+        "Mandante", d.nombreFantasia,
+        () => mandanteRepository.getByRut(cleanRut(d.rut)),
+        () => mandanteService.crearMandante({
+          rut: d.rut,
+          razonSocial: d.razonSocial,
+          nombreFantasia: d.nombreFantasia,
+          estado: "activo",
+        }),
+    );
+    if (creado) mandantes[d.nombreFantasia] = creado;
+  }
+  return mandantes;
+}
+
+/**
+ * Paso 2: Usuarios (mandante_admin y mandante_lector por Mandante, más
+ * un evaluador). El superadmin de seedSuperAdmin.js se verifica pero
+ * nunca se duplica.
+ * @param {Object<string, Object>} mandantes Mapa nombreFantasia →
+ *     Mandante.
+ * @return {Promise<Object<string, Object>>} Mapa email → Usuario.
+ */
+async function seedUsuarios(mandantes) {
+  log("\n[2/15] Usuarios");
+
+  const superadmin = await buscarUsuarioPorEmail("clepez@gmail.com");
+  log(superadmin ?
+      "  ↷ Superadmin (clepez@gmail.com) ya existe, no se duplica." :
+      "  ! Superadmin (clepez@gmail.com) no encontrado — " +
+      "corré seedSuperAdmin.js si hace falta.");
+
+  const andina = mandantes["Constructora Andina"];
+  const minera = mandantes["Minera del Sur"];
+
+  const datos = [
+    andina && {
+      email: "admin.andina@seed.smartone.cl", nombre: "Admin",
+      apellido: "Andina", rol: "mandante_admin", mandanteId: andina.id,
+    },
+    andina && {
+      email: "lector.andina@seed.smartone.cl", nombre: "Lector",
+      apellido: "Andina", rol: "mandante_lector", mandanteId: andina.id,
+    },
+    minera && {
+      email: "admin.minera@seed.smartone.cl", nombre: "Admin",
+      apellido: "Minera", rol: "mandante_admin", mandanteId: minera.id,
+    },
+    minera && {
+      email: "lector.minera@seed.smartone.cl", nombre: "Lector",
+      apellido: "Minera", rol: "mandante_lector", mandanteId: minera.id,
+    },
+    {
+      email: "evaluador@seed.smartone.cl", nombre: "Evaluador",
+      apellido: "Seed", rol: "evaluador", mandanteId: null,
+    },
+  ].filter(Boolean);
+
+  const usuarios = {};
+  for (const d of datos) {
+    const creado = await seedItem(
+        "Usuario", d.email,
+        () => buscarUsuarioPorEmail(d.email),
+        () => usuarioService.crearUsuario({
+          nombre: d.nombre,
+          apellido: d.apellido,
+          email: d.email,
+          rol: d.rol,
+          mandanteId: d.mandanteId,
+          password: PASSWORD_PRUEBA,
+        }, ACTOR_FALSO),
+    );
+    if (creado) usuarios[d.email] = creado;
+  }
+  return usuarios;
+}
+
+/**
+ * Paso 3: Proyectos (3 por Mandante, con estados planificado/
+ * en_ejecucion/finalizado — nunca archivado).
+ * @param {Object<string, Object>} mandantes Mapa nombreFantasia →
+ *     Mandante.
+ * @return {Promise<Object<string, Object>>} Mapa nombre → Proyecto.
+ */
+async function seedProyectos(mandantes) {
+  log("\n[3/15] Proyectos");
+  const grupos = [
+    {mandante: "Constructora Andina", sufijo: "AND"},
+    {mandante: "Minera del Sur", sufijo: "MIN"},
+  ];
+
+  const proyectos = {};
+  for (const grupo of grupos) {
+    const mandante = mandantes[grupo.mandante];
+    if (!mandante) continue;
+
+    const specs = [
+      {
+        nombre: `Proyecto Planificado ${grupo.sufijo}`,
+        codigo: `SEED-${grupo.sufijo}-001`,
+        estadoFinal: "planificado",
+      },
+      {
+        nombre: `Proyecto en Ejecución ${grupo.sufijo}`,
+        codigo: `SEED-${grupo.sufijo}-002`,
+        estadoFinal: "en_ejecucion",
+      },
+      {
+        nombre: `Proyecto Finalizado ${grupo.sufijo}`,
+        codigo: `SEED-${grupo.sufijo}-003`,
+        estadoFinal: "finalizado",
+      },
+    ];
+
+    for (const spec of specs) {
+      let proyecto = await seedItem(
+          "Proyecto", spec.nombre,
+          () => proyectoRepository.getByCodigo(mandante.id, spec.codigo),
+          () => proyectoService.crearProyecto({
+            nombre: spec.nombre,
+            codigo: spec.codigo,
+            mandanteId: mandante.id,
+            fechaInicio: "2026-01-15",
+          }, ACTOR_FALSO),
+      );
+      if (!proyecto) continue;
+
+      if (proyecto.estado !== spec.estadoFinal) {
+        try {
+          const payload = {estado: spec.estadoFinal};
+          if (spec.estadoFinal === "finalizado") {
+            payload.fechaTermino = "2026-06-30";
+          }
+          proyecto = await proyectoService.actualizarProyecto(
+              proyecto.id, payload, ACTOR_FALSO,
+          );
+          log(`  ✓ Proyecto: "${spec.nombre}" → ${spec.estadoFinal}.`);
+        } catch (err) {
+          log(`  ✗ Proyecto: "${spec.nombre}" no transicionó a ` +
+              `${spec.estadoFinal}: ${err.message}`);
+          resumen.fallidos.push({
+            tipo: "Proyecto",
+            descripcion: `${spec.nombre} → ${spec.estadoFinal}`,
+            motivo: err.message,
+          });
+        }
+      }
+      proyectos[spec.nombre] = proyecto;
+    }
+  }
+  return proyectos;
+}
+
+/**
+ * Paso 4: Empresas (catálogo global).
+ * @return {Promise<Object<string, Object>>} Mapa razónSocial → Empresa.
+ */
+async function seedEmpresas() {
+  log("\n[4/15] Empresas");
+  const datos = [
+    {
+      razonSocial: "Transportes del Valle Ltda.",
+      rut: rutDesdeBase(90001001),
+      giro: "Transporte de carga terrestre",
+    },
+    {
+      razonSocial: "Ingeniería Cordillera SpA",
+      rut: rutDesdeBase(90001002),
+      giro: "Servicios de ingeniería y consultoría",
+    },
+    {
+      razonSocial: "Servicios Industriales Maule Ltda.",
+      rut: rutDesdeBase(90001003),
+      giro: "Mantención industrial",
+    },
+    {
+      razonSocial: "Logística Puerto Sur SpA",
+      rut: rutDesdeBase(90001004),
+      giro: "Logística y almacenaje",
+    },
+  ];
+
+  const empresas = {};
+  for (const d of datos) {
+    const creado = await seedItem(
+        "Empresa", d.razonSocial,
+        () => empresaRepository.getByRut(cleanRut(d.rut)),
+        () => empresaService.crearEmpresa({
+          rut: d.rut,
+          razonSocial: d.razonSocial,
+          giro: d.giro,
+          estado: "activo",
+        }),
+    );
+    if (creado) empresas[d.razonSocial] = creado;
+  }
+  return empresas;
+}
+
+/**
+ * Paso 5: Personas (2-3 por Empresa).
+ * @param {Object<string, Object>} empresas Mapa razónSocial → Empresa.
+ * @return {Promise<Object<string, Object[]>>} Mapa empresaId → Personas.
+ */
+async function seedPersonas(empresas) {
+  log("\n[5/15] Personas");
+  const nombresBase = [
+    ["Juan", "Pérez"], ["María", "González"], ["Pedro", "Soto"],
+  ];
+
+  const personasPorEmpresaId = {};
+  let indiceEmpresa = 0;
+  let baseRut = 90002001;
+
+  for (const [razonSocial, empresa] of Object.entries(empresas)) {
+    personasPorEmpresaId[empresa.id] = [];
+    const cantidad = 2 + (indiceEmpresa % 2);
+
+    for (let i = 0; i < cantidad; i++) {
+      const [nombre, apellido] = nombresBase[i % nombresBase.length];
+      const nombreCompleto = `${nombre} ${apellido} (${razonSocial})`;
+      const rut = rutDesdeBase(baseRut++);
+
+      const creado = await seedItem(
+          "Persona", nombreCompleto,
+          () => personaRepository.getByRut(cleanRut(rut)),
+          () => personaService.crearPersona({
+            rut,
+            nombre,
+            apellido,
+            empresaId: empresa.id,
+            estado: "activo",
+            tipoRelacion: "Trabajador",
+            cargo: "Operario",
+            tipoContrato: "Indefinido",
+            fechaInicio: new Date().toISOString(),
+          }),
+      );
+      if (creado) personasPorEmpresaId[empresa.id].push(creado);
+    }
+    indiceEmpresa++;
+  }
+  return personasPorEmpresaId;
+}
+
+/**
+ * Paso 6: Recursos (1-2 por Empresa). Sin unicidad server-side — el
+ * script chequea por nombre dentro de la misma Empresa.
+ * @param {Object<string, Object>} empresas Mapa razónSocial → Empresa.
+ * @return {Promise<Object<string, Object[]>>} Mapa empresaId → Recursos.
+ */
+async function seedRecursos(empresas) {
+  log("\n[6/15] Recursos");
+  // Misma grafía que los Perfiles de Recurso de tipo "recurso" (ver
+  // seedPerfilesRecurso): la clasificación de la Maquinaria se resuelve por
+  // nombre mientras dure la transición del bloque 2.
+  const tipos = CLASIFICACIONES_MAQUINARIA;
+
+  const recursosPorEmpresaId = {};
+  let indice = 0;
+
+  for (const [razonSocial, empresa] of Object.entries(empresas)) {
+    recursosPorEmpresaId[empresa.id] = [];
+    const cantidad = 1 + (indice % 2);
+
+    for (let j = 0; j < cantidad; j++) {
+      const tipo = tipos[(indice + j) % tipos.length];
+      const nombre = `${tipo} ${j + 1} (${razonSocial})`;
+
+      const creado = await seedItem(
+          "Recurso", nombre,
+          async () => {
+            const existentes = await recursoRepository.list({
+              empresaId: empresa.id,
+            });
+            return existentes.find((r) => r.nombre === nombre) || null;
+          },
+          () => recursoService.crearRecurso({
+            nombre, tipo, empresaId: empresa.id, estado: "activo",
+          }),
+      );
+      if (creado) recursosPorEmpresaId[empresa.id].push(creado);
+    }
+    indice++;
+  }
+  return recursosPorEmpresaId;
+}
+
+/**
+ * Paso 7: Perfiles de Participación (2 por Mandante).
+ * @param {Object<string, Object>} mandantes Mapa nombreFantasia →
+ *     Mandante.
+ * @return {Promise<Object<string, Object>>} Mapa "nombre|mandante" →
+ *     Perfil.
+ */
+async function seedPerfiles(mandantes) {
+  log("\n[7/15] Perfiles de Participación");
+  const perfiles = {};
+
+  for (const [mandanteNombre, mandante] of Object.entries(mandantes)) {
+    for (const nombrePerfil of ["Permanente", "Temporal"]) {
+      const creado = await seedItem(
+          "PerfilParticipacion", `${nombrePerfil} (${mandanteNombre})`,
+          () => perfilParticipacionRepository.getByNombre(
+              mandante.id, nombrePerfil,
+          ),
+          () => perfilParticipacionService.crearPerfil({
+            nombre: nombrePerfil, mandanteId: mandante.id,
+          }, ACTOR_FALSO),
+      );
+      if (creado) perfiles[`${nombrePerfil}|${mandanteNombre}`] = creado;
+    }
+  }
+  return perfiles;
+}
+
+/**
+ * Paso 7b: Perfiles de Recurso por Mandante — roles de Persona (Operador,
+ * Trabajador) y las clasificaciones de Maquinaria que usan los Recursos.
+ * @param {Object<string, Object>} mandantes Mapa nombreFantasia →
+ *     Mandante.
+ * @return {Promise<void>}
+ */
+async function seedPerfilesRecurso(mandantes) {
+  log("\n[7b/15] Perfiles de Recurso");
+  const datos = [
+    ...ROLES_PERSONA.map((nombre) => ({tipo: "persona", nombre})),
+    ...CLASIFICACIONES_MAQUINARIA.map((nombre) => ({tipo: "recurso", nombre})),
+  ];
+  for (const [mandanteNombre, mandante] of Object.entries(mandantes)) {
+    for (const d of datos) {
+      await seedItem(
+          "PerfilRecurso", `${d.nombre} (${d.tipo}, ${mandanteNombre})`,
+          () => perfilRecursoRepository.getByNombre(
+              mandante.id, d.tipo, d.nombre,
+          ),
+          () => perfilRecursoService.crearPerfil({
+            mandanteId: mandante.id, tipo: d.tipo, nombre: d.nombre,
+          }, ACTOR_FALSO),
+      );
+    }
+  }
+}
+
+/**
+ * Paso 8: Requerimientos (catálogo global, 5 registros mezclando
+ * tipos de entidad).
+ * @return {Promise<Object<string, Object>>} Mapa nombre → Requerimiento.
+ */
+async function seedRequerimientos() {
+  log("\n[8/15] Requerimientos");
+  const datos = [
+    {
+      nombre: "Certificado de Antecedentes", nombreCorto: "Antecedentes",
+      tipoEntidad: "empresa",
+    },
+    {
+      nombre: "Licencia de Conducir Clase B", nombreCorto: "Licencia B",
+      tipoEntidad: "persona",
+    },
+    {
+      nombre: "Examen Ocupacional", nombreCorto: "Examen ocupacional",
+      tipoEntidad: "persona",
+    },
+    {
+      nombre: "Revisión Técnica", nombreCorto: "Revisión técnica",
+      tipoEntidad: "recurso",
+    },
+    {
+      nombre: "Póliza de Seguro", nombreCorto: "Póliza de seguro",
+      tipoEntidad: "empresa",
+    },
+  ];
+
+  const requerimientos = {};
+  for (const d of datos) {
+    const creado = await seedItem(
+        "Requerimiento", d.nombre,
+        () => requerimientoRepository.getByNombreYTipo(
+            d.nombre, d.tipoEntidad,
+        ),
+        () => requerimientoService.crearRequerimiento({
+          nombre: d.nombre,
+          nombreCorto: d.nombreCorto,
+          tipoEntidad: d.tipoEntidad,
+          estado: "activo",
+        }),
+    );
+    if (creado) requerimientos[d.nombre] = creado;
+  }
+  return requerimientos;
+}
+
+/**
+ * Paso 9: Perfil-Requerimiento — vincula 3-4 Requerimientos a cada
+ * Perfil.
+ * @param {Object<string, Object>} perfiles Mapa "nombre|mandante" →
+ *     Perfil.
+ * @param {Object<string, Object>} requerimientos Mapa nombre →
+ *     Requerimiento.
+ * @return {Promise<void>}
+ */
+async function seedPerfilRequerimientos(perfiles, requerimientos) {
+  log("\n[9/15] Perfil-Requerimiento");
+  const permanente = [
+    "Certificado de Antecedentes",
+    "Licencia de Conducir Clase B",
+    "Revisión Técnica",
+    "Póliza de Seguro",
+  ];
+  const temporal = [
+    "Certificado de Antecedentes",
+    "Licencia de Conducir Clase B",
+    "Revisión Técnica",
+  ];
+
+  for (const [clave, perfil] of Object.entries(perfiles)) {
+    const esPermanente = clave.startsWith("Permanente|");
+    const lista = esPermanente ? permanente : temporal;
+
+    for (const nombreReq of lista) {
+      const requerimiento = requerimientos[nombreReq];
+      if (!requerimiento) continue;
+
+      await seedItem(
+          "PerfilRequerimiento", `${clave} ↔ ${nombreReq}`,
+          async () => (await perfilRequerimientoRepository
+              .getByPerfilYRequerimiento(perfil.id, requerimiento.id))[0] ||
+              null,
+          () => perfilRequerimientoService.crearVinculo({
+            perfilParticipacionId: perfil.id,
+            requerimientoId: requerimiento.id,
+          }, ACTOR_FALSO),
+      );
+    }
+  }
+}
+
+/**
+ * Paso 10: Participaciones — cruza Empresas con Proyectos elegibles
+ * (nunca finalizado/archivado) bajo un Perfil del mismo Mandante.
+ * @param {Object<string, Object>} empresas Mapa razónSocial → Empresa.
+ * @param {Object<string, Object>} proyectos Mapa nombre → Proyecto.
+ * @param {Object<string, Object>} perfiles Mapa "nombre|mandante" →
+ *     Perfil.
+ * @return {Promise<Object<string, Object>>} Mapa descripción →
+ *     Participación.
+ */
+async function seedParticipaciones(empresas, proyectos, perfiles) {
+  log("\n[10/15] Participaciones");
+  const specs = [
+    {
+      empresa: "Transportes del Valle Ltda.",
+      proyecto: "Proyecto Planificado AND",
+      perfil: "Permanente|Constructora Andina",
+    },
+    {
+      empresa: "Ingeniería Cordillera SpA",
+      proyecto: "Proyecto en Ejecución AND",
+      perfil: "Temporal|Constructora Andina",
+    },
+    {
+      empresa: "Servicios Industriales Maule Ltda.",
+      proyecto: "Proyecto Planificado MIN",
+      perfil: "Permanente|Minera del Sur",
+    },
+  ];
+
+  const participaciones = {};
+  for (const spec of specs) {
+    const empresa = empresas[spec.empresa];
+    const proyecto = proyectos[spec.proyecto];
+    const perfil = perfiles[spec.perfil];
+    const descripcion = `${spec.empresa} / ${spec.proyecto}`;
+
+    if (!empresa || !proyecto || !perfil) {
+      log(`  ✗ Participación: faltan dependencias para ` +
+          `"${descripcion}", omitiendo.`);
+      resumen.fallidos.push({
+        tipo: "Participacion", descripcion, motivo: "Dependencia faltante.",
+      });
+      continue;
+    }
+
+    const creado = await seedItem(
+        "Participacion", descripcion,
+        () => participacionRepository.getActivaByProyectoYEmpresa(
+            proyecto.id, empresa.id,
+        ),
+        () => participacionService.crearParticipacion({
+          proyectoId: proyecto.id,
+          empresaId: empresa.id,
+          perfilParticipacionId: perfil.id,
+          fechaInicio: "2026-02-01",
+        }, ACTOR_FALSO),
+    );
+    if (creado) participaciones[descripcion] = creado;
+  }
+  return participaciones;
+}
+
+/**
+ * Paso 11: Expedientes — uno por Participación (snapshot automático).
+ * @param {Object<string, Object>} participaciones Mapa descripción →
+ *     Participación.
+ * @return {Promise<Object<string, Object>>} Mapa descripción →
+ *     Expediente.
+ */
+async function seedExpedientes(participaciones) {
+  log("\n[11/15] Expedientes");
+  const expedientes = {};
+
+  for (const [descripcion, participacion] of Object.entries(participaciones)) {
+    const creado = await seedItem(
+        "Expediente", descripcion,
+        async () => {
+          const existentes = await expedienteRepository.getByParticipacion(
+              participacion.id,
+          );
+          return existentes.find((e) => e.estado !== "cerrado") || null;
+        },
+        () => expedienteService.crearExpediente({
+          participacionId: participacion.id,
+        }, ACTOR_FALSO),
+    );
+    if (creado) expedientes[descripcion] = creado;
+  }
+  return expedientes;
+}
+
+/**
+ * Pasos 12-13: Evidencias + Evidencia-Requerimiento (el vínculo se crea
+ * inmediatamente después de cada Evidencia, igual que la UI real).
+ * @param {Object<string, Object>} expedientes Mapa descripción →
+ *     Expediente.
+ * @param {Object<string, Object[]>} personasPorEmpresaId Índice de
+ *     Personas por empresaId.
+ * @param {Object<string, Object[]>} recursosPorEmpresaId Índice de
+ *     Recursos por empresaId.
+ * @return {Promise<Object<string, string[]>>} Mapa
+ *     "expedienteId|requerimientoId" → [evidenciaId, ...].
+ */
+async function seedEvidencias(
+    expedientes, personasPorEmpresaId, recursosPorEmpresaId,
+) {
+  log("\n[12-13/15] Evidencias y Evidencia-Requerimiento");
+  const evidenciasPorClave = {};
+  let vencimientosAsignados = 0;
+
+  for (const [descripcion, expediente] of Object.entries(expedientes)) {
+    const requerimientos = expediente.requerimientosAplicables || [];
+    const porNivel = {empresa: null, persona: null, recurso: null};
+    for (const r of requerimientos) {
+      if (!porNivel[r.tipoEntidad]) porNivel[r.tipoEntidad] = r;
+    }
+
+    for (const [nivel, requerimiento] of Object.entries(porNivel)) {
+      if (!requerimiento) continue;
+
+      const nombreCorto = requerimiento.nombre.replace("[SEED] ", "");
+      const archivoNombre = `[SEED] ${nombreCorto} - ${descripcion}.pdf`;
+      const payload = {
+        expedienteId: expediente.id,
+        archivoUrl: "https://storage.googleapis.com/smartone-v3." +
+            `appspot.com/seed/${encodeURIComponent(archivoNombre)}`,
+        archivoNombre,
+        archivoTipo: "application/pdf",
+      };
+
+      if (nivel === "persona") {
+        const persona = personasDeEmpresa(
+            personasPorEmpresaId, expediente.empresaId,
+        )[0];
+        if (persona) payload.personaId = persona.id;
+      } else if (nivel === "recurso") {
+        const recurso = recursosDeEmpresa(
+            recursosPorEmpresaId, expediente.empresaId,
+        )[0];
+        if (recurso) payload.recursoId = recurso.id;
+      }
+
+      if (vencimientosAsignados < 2) {
+        const dias = vencimientosAsignados === 0 ? 15 : 25;
+        const fecha = new Date();
+        fecha.setDate(fecha.getDate() + dias);
+        payload.fechaVencimiento = fecha.toISOString().slice(0, 10);
+        vencimientosAsignados++;
+      }
+
+      const evidencia = await seedItem(
+          "Evidencia", archivoNombre,
+          async () => {
+            const activas = await evidenciaRepository.getActivasByExpediente(
+                expediente.id,
+            );
+            return activas.find((e) => e.archivoNombre === archivoNombre) ||
+                null;
+          },
+          () => evidenciaService.crearEvidencia(payload, ACTOR_FALSO),
+      );
+      if (!evidencia) continue;
+
+      await seedItem(
+          "EvidenciaRequerimiento",
+          `${archivoNombre} ↔ ${requerimiento.nombre}`,
+          () => evidenciaRequerimientoRepository.getByEvidenciaYRequerimiento(
+              evidencia.id, requerimiento.requerimientoId,
+          ),
+          () => evidenciaRequerimientoService.crearVinculo({
+            evidenciaId: evidencia.id,
+            requerimientoId: requerimiento.requerimientoId,
+          }, ACTOR_FALSO),
+      );
+
+      const clave = `${expediente.id}|${requerimiento.requerimientoId}`;
+      if (!evidenciasPorClave[clave]) evidenciasPorClave[clave] = [];
+      evidenciasPorClave[clave].push(evidencia.id);
+    }
+  }
+  return evidenciasPorClave;
+}
+
+/**
+ * Pasos 14-15: Evaluaciones + Evaluación-Evidencia (el vínculo se crea
+ * dentro de la misma llamada a crearEvaluacion, vía evidenciaIds — así
+ * funciona la API real). Deja al menos un Requerimiento sin evaluar por
+ * Expediente.
+ * @param {Object<string, Object>} expedientes Mapa descripción →
+ *     Expediente.
+ * @param {Object<string, string[]>} evidenciasPorClave Mapa
+ *     "expedienteId|requerimientoId" → [evidenciaId, ...].
+ * @param {?Object} evaluador Usuario evaluador ya sembrado.
+ * @return {Promise<void>}
+ */
+async function seedEvaluaciones(expedientes, evidenciasPorClave, evaluador) {
+  log("\n[14-15/15] Evaluaciones");
+  if (!evaluador) {
+    log("  ✗ No hay usuario evaluador disponible, se omite este paso.");
+    return;
+  }
+
+  const actorEvaluador = {
+    rol: "evaluador",
+    mandanteId: null,
+    uid: evaluador.id,
+    email: evaluador.email,
+  };
+  const resultadosCiclo = ["cumple", "no_cumple", "pendiente"];
+
+  for (const [descripcion, expediente] of Object.entries(expedientes)) {
+    const requerimientos = expediente.requerimientosAplicables || [];
+    if (requerimientos.length === 0) continue;
+
+    const existentes = await evaluacionRepository.getByExpediente(
+        expediente.id,
+    );
+
+    // Nunca más de 2, y siempre deja al menos 1 Requerimiento sin evaluar.
+    const maxAEvaluar = Math.max(0, requerimientos.length - 1);
+    const aEvaluar = requerimientos.slice(0, Math.min(2, maxAEvaluar));
+
+    for (let idx = 0; idx < aEvaluar.length; idx++) {
+      const requerimiento = aEvaluar[idx];
+      const yaVigente = existentes.find((e) =>
+        e.requerimientoId === requerimiento.requerimientoId &&
+        e.estado === "vigente",
+      );
+      const resultado = resultadosCiclo[idx % resultadosCiclo.length];
+      const clave = `${expediente.id}|${requerimiento.requerimientoId}`;
+      const evidenciaIds = evidenciasPorClave[clave] || [];
+
+      await seedItem(
+          "Evaluacion",
+          `${descripcion} — ${requerimiento.nombre} (${resultado})`,
+          () => yaVigente || null,
+          () => evaluacionService.crearEvaluacion({
+            expedienteId: expediente.id,
+            requerimientoId: requerimiento.requerimientoId,
+            resultado,
+            observaciones:
+                `[SEED] Evaluación de prueba — resultado: ${resultado}.`,
+            evidenciaIds,
+          }, actorEvaluador),
+      );
+    }
+  }
+}
+
+/**
+ * Imprime el resumen final: creados/omitidos/fallidos por tipo, y las
+ * credenciales de los usuarios de prueba.
+ * @param {Object<string, Object>} usuarios Mapa email → Usuario creado.
+ * @return {void}
+ */
+function imprimirResumen(usuarios) {
+  log("\n\n=== RESUMEN ===");
+
+  log("\nCreados:");
+  const tiposCreados = Object.keys(resumen.creados);
+  if (tiposCreados.length === 0) log("  (ninguno)");
+  tiposCreados.forEach((tipo) => log(`  ${tipo}: ${resumen.creados[tipo]}`));
+
+  log("\nYa existían (omitidos):");
+  const tiposOmitidos = Object.keys(resumen.omitidos);
+  if (tiposOmitidos.length === 0) log("  (ninguno)");
+  tiposOmitidos.forEach(
+      (tipo) => log(`  ${tipo}: ${resumen.omitidos[tipo]}`),
+  );
+
+  log("\nFallidos:");
+  if (resumen.fallidos.length === 0) {
+    log("  (ninguno)");
+  } else {
+    resumen.fallidos.forEach((f) => {
+      log(`  ${f.tipo} — "${f.descripcion}": ${f.motivo}`);
+    });
+  }
+
+  log(`\n=== CREDENCIALES DE PRUEBA (password: ${PASSWORD_PRUEBA}) ===`);
+  EMAILS_USUARIOS.forEach((email) => {
+    const marca = usuarios[email] ? "✓" : "?";
+    log(`  ${marca} ${email}`);
+  });
+  log(
+      "\nSuperadmin: clepez@gmail.com " +
+      "(sin cambios, definido en seedSuperAdmin.js)",
+  );
+}
+
+/**
+ * Punto de entrada: ejecuta los 15 pasos en orden.
+ * @return {Promise<void>}
+ */
+async function main() {
+  log("=== SmartOne v3 — Seed de datos de prueba ===");
+  const modo = process.env.USE_EMULATOR === "true" ?
+      "EMULADOR" :
+      "PROYECTO REAL (smartone-v3)";
+  log(`Modo: ${modo}`);
+
+  const mandantes = await seedMandantes();
+  const usuarios = await seedUsuarios(mandantes);
+  const proyectos = await seedProyectos(mandantes);
+  const empresas = await seedEmpresas();
+  const personasPorEmpresaId = await seedPersonas(empresas);
+  const recursosPorEmpresaId = await seedRecursos(empresas);
+  const perfiles = await seedPerfiles(mandantes);
+  await seedPerfilesRecurso(mandantes);
+  const requerimientos = await seedRequerimientos();
+  await seedPerfilRequerimientos(perfiles, requerimientos);
+  const participaciones = await seedParticipaciones(
+      empresas, proyectos, perfiles,
+  );
+  const expedientes = await seedExpedientes(participaciones);
+  const evidenciasPorClave = await seedEvidencias(
+      expedientes, personasPorEmpresaId, recursosPorEmpresaId,
+  );
+  const evaluador = usuarios["evaluador@seed.smartone.cl"];
+  await seedEvaluaciones(expedientes, evidenciasPorClave, evaluador);
+
+  imprimirResumen(usuarios);
+}
+
+main()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error("Error fatal en el script de seed:", err);
+      process.exit(1);
+    });

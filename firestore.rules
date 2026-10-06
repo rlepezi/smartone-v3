@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Funciones auxiliares de seguridad
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Custom claims (rol, mandanteId) — mismos dos únicos claims de todo
+    // el sistema, ver authMiddleware.js en el backend.
+    function tieneRol(rol) {
+      return isAuthenticated() && request.auth.token.rol == rol;
+    }
+
+    function esDelPropioMandante(mandanteId) {
+      return isAuthenticated() && request.auth.token.mandanteId == mandanteId;
+    }
+
+    // Regla para la colección de usuarios
+    match /usuarios/{userId} {
+      // Cada usuario autenticado solo puede leer su propio perfil
+      allow read: if isOwner(userId);
+
+      // La creación y edición se restringe al Backend / Admin SDK
+      allow write: if false;
+    }
+
+    // Sesiones (telemetría de accesos, Fase B de "Usuarios: actividad,
+    // métricas y gestión de accesos"): sin escritura desde el cliente en
+    // ningún caso — iniciar/latido/cerrar pasan siempre por la API
+    // (Admin SDK). Lectura: superadmin a todas; mandante_admin a las de
+    // su propio Mandante; cada usuario a las propias.
+    match /sesiones/{sesionId} {
+      allow read: if tieneRol("superadmin") ||
+          (tieneRol("mandante_admin") &&
+           esDelPropioMandante(resource.data.mandanteId)) ||
+          isOwner(resource.data.usuarioId);
+      allow write: if false;
+    }
+
+    // Métricas diarias de usuario (Fase C): mismo criterio de lectura que
+    // Sesiones, nunca escritura desde el cliente — el trigger de
+    // Bitácora y sesionService (Admin SDK) son los únicos que escriben.
+    match /metricasUsuarioDiarias/{docId} {
+      allow read: if tieneRol("superadmin") ||
+          (tieneRol("mandante_admin") &&
+           esDelPropioMandante(resource.data.mandanteId)) ||
+          isOwner(resource.data.usuarioId);
+      allow write: if false;
+    }
+
+    // Regla base para el resto de colecciones (gestión vía Cloud Functions)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

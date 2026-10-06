@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Evidencias documentales de un Expediente. El archivo lo sube directo
+    // el cliente (el backend nunca maneja bytes); la lectura/escritura
+    // queda scoped al mandanteId del Expediente vía un lookup cross-service
+    // a Firestore (el mandanteId viene como custom claim del ID token).
+    match /expedientes/{expedienteId}/evidencias/{allPaths=**} {
+      allow read: if request.auth != null &&
+        (request.auth.token.rol in ["superadmin", "evaluador"] ||
+         firestore.get(/databases/(default)/documents/expedientes/$(expedienteId)).data.mandanteId == request.auth.token.mandanteId);
+      allow write: if request.auth != null &&
+        (request.auth.token.rol == "superadmin" ||
+         (request.auth.token.rol == "mandante_admin" &&
+          firestore.get(/databases/(default)/documents/expedientes/$(expedienteId)).data.mandanteId == request.auth.token.mandanteId)) &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('application/pdf|image/.*');
+    }
+
+    // Logo del Mandante. Se sube directo con nombre fijo (logo.<ext>,
+    // sobrescribe) — no hay lookup a Firestore porque mandanteId ya viene
+    // en el path y en el custom claim del token. Lectura abierta a
+    // cualquier autenticado (no es información sensible y debe verse en
+    // listas de otros roles); escritura: superadmin/admin_comercial sin
+    // restricción (mismo alcance que tienen sobre Mandante en Firestore),
+    // o el propio mandante_admin.
+    match /mandantes/{mandanteId}/{nombreArchivo} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        (request.auth.token.rol in ["superadmin", "admin_comercial"] ||
+         (request.auth.token.rol == "mandante_admin" &&
+          request.auth.token.mandanteId == mandanteId)) &&
+        request.resource.size < 2 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(png|jpeg|jpg|svg\\+xml)');
+    }
+
+    // Logo de la Empresa. Mismo criterio que el logo del Mandante, pero
+    // sin scope de mandanteId: Empresa es un catálogo global (RN-021),
+    // así que cualquier mandante_admin puede editar cualquier Empresa,
+    // igual que ya permite empresaService.js en Firestore.
+    match /empresas/{empresaId}/{nombreArchivo} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        request.auth.token.rol in ["superadmin", "mandante_admin"] &&
+        request.resource.size < 2 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(png|jpeg|jpg|svg\\+xml)');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

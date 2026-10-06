@@ -1,0 +1,261 @@
+import React, { useEffect, useState } from "react";
+import { X, CheckCircle2 } from "lucide-react";
+import { acreditacionService } from "../../services/acreditacionService";
+import { proyectoService } from "../../services/proyectoService";
+import { perfilParticipacionService } from "../../services/perfilParticipacionService";
+import { perfilRecursoService } from "../../services/perfilRecursoService";
+
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+
+// Modal "Cambiar Proyecto" / "Asignar a Proyecto" — compartido entre
+// Persona y Recurso (parametrizado por `entidadTipo`, en vez de dos
+// componentes casi idénticos) y entre PersonaDetailPage.jsx/
+// PersonaFormPage.jsx y RecursoDetailPage.jsx/RecursoFormPage.jsx.
+// Llama al endpoint corto correspondiente de acreditacionService, que
+// reutiliza toda la lógica de "Reemplazar Acreditación" (RN-064, motor de
+// reutilización documental) sin reimplementarla acá.
+//
+// El campo Rol solo existe para `entidadTipo: "persona"`, y solo se pide
+// cuando la Persona no tiene ninguna Asignación activa de la que
+// heredarlo (`!tieneParticipacionActiva`) — si ya tiene una, el backend
+// la hereda automáticamente. Para `entidadTipo: "recurso"` el campo Rol
+// no existe nunca: la clasificación de la Maquinaria vive en el propio
+// Recurso (`tipo`), no en la Asignación.
+export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacionActiva, onCambiado, onCerrar }) => {
+  const esPersona = entidadTipo === "persona";
+
+  const [proyectos, setProyectos] = useState([]);
+  const [perfilesOpciones, setPerfilesOpciones] = useState([]);
+  const [rolesOpciones, setRolesOpciones] = useState([]);
+  const [formData, setFormData] = useState({
+    proyectoDestinoId: "", perfilParticipacionId: "", rol: "", fechaInicio: hoyISO(),
+  });
+  const [errors, setErrors] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [serverError, setServerError] = useState(null);
+  const [resultado, setResultado] = useState(null);
+
+  useEffect(() => {
+    proyectoService.listar({})
+      .then((data) => setProyectos(data || []))
+      .catch((err) => console.error("Error al cargar proyectos:", err));
+  }, []);
+
+  const proyectoSeleccionado = proyectos.find((p) => p.id === formData.proyectoDestinoId) || null;
+
+  useEffect(() => {
+    if (!proyectoSeleccionado?.mandanteId) {
+      setPerfilesOpciones([]);
+      setRolesOpciones([]);
+      return;
+    }
+    const mandanteId = proyectoSeleccionado.mandanteId;
+    perfilParticipacionService.listar({ mandanteId, estado: "activo" })
+      .then((data) => setPerfilesOpciones(data || []))
+      .catch((err) => console.error("Error al cargar perfiles de participación:", err));
+
+    if (esPersona && !tieneParticipacionActiva) {
+      perfilRecursoService.listar({ mandanteId, tipo: "persona", estado: "activo" })
+        .then((data) => setRolesOpciones(data || []))
+        .catch((err) => console.error("Error al cargar roles disponibles:", err));
+    }
+  }, [proyectoSeleccionado?.mandanteId, esPersona, tieneParticipacionActiva]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+      // Cambiar de Proyecto invalida el Perfil/Rol ya elegidos — podrían
+      // ser de otro Mandante.
+      ...(name === "proyectoDestinoId" ? { perfilParticipacionId: "", rol: "" } : {}),
+    }));
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
+  };
+
+  const validar = () => {
+    const errs = {};
+    if (!formData.proyectoDestinoId) errs.proyectoDestinoId = "Debe seleccionar un Proyecto.";
+    if (esPersona && !tieneParticipacionActiva && !formData.rol) errs.rol = "Debe seleccionar un Rol.";
+    if (!formData.fechaInicio) errs.fechaInicio = "La fecha de inicio es obligatoria.";
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError(null);
+    if (!validar()) return;
+    setGuardando(true);
+    try {
+      const payload = {
+        proyectoDestinoId: formData.proyectoDestinoId,
+        perfilParticipacionId: formData.perfilParticipacionId || undefined,
+        fechaInicio: formData.fechaInicio,
+      };
+      const data = esPersona ?
+        await acreditacionService.cambiarProyectoPersona(entidadId, { ...payload, rol: formData.rol || undefined }) :
+        await acreditacionService.cambiarProyectoRecurso(entidadId, payload);
+      setResultado(data);
+    } catch (err) {
+      console.error("Error al cambiar el Proyecto:", err);
+      setServerError(err.message || "No se pudo cambiar el Proyecto.");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const etiquetaEntidad = esPersona ? "esta Persona" : "esta Maquinaria";
+  const titulo = tieneParticipacionActiva ? "Cambiar Proyecto" : "Asignar a Proyecto";
+
+  if (resultado) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => onCambiado(resultado)}>
+        <div
+          className="bg-white rounded-2xl shadow-dropdown w-full max-w-md p-6 text-center space-y-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-12 h-12 rounded-2xl bg-sage-lighter text-sage-darker flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-carbon-dark">Proyecto actualizado</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {resultado.requerimientosTotal > 0
+                ? `${resultado.requerimientosReutilizados} de ${resultado.requerimientosTotal} Requerimientos quedaron pre-cumplidos por reutilización de documentación vigente.`
+                : "Se reutilizará documentación vigente cuando corresponda."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onCambiado(resultado)}
+            className="w-full px-5 py-2.5 text-xs font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all"
+          >
+            Listo
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCerrar}>
+      <div
+        className="bg-white rounded-2xl shadow-dropdown w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">{titulo}</h3>
+          <button type="button" onClick={onCerrar} className="text-slate-400 hover:text-slate-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {serverError && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">{serverError}</div>
+          )}
+          <p className="text-xs text-slate-500">
+            {tieneParticipacionActiva
+              ? `Esto cierra la Asignación activa actual y crea una nueva en el Proyecto destino, reutilizando su documentación vigente. La Empresa se mantiene (la actual de ${etiquetaEntidad}).`
+              : `Crea la primera Asignación de ${etiquetaEntidad} a un Proyecto, bajo su Empresa actual.`}
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Proyecto Destino *</label>
+            <select
+              name="proyectoDestinoId"
+              value={formData.proyectoDestinoId}
+              onChange={handleChange}
+              className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                errors.proyectoDestinoId ? "border-red-400 bg-red-50/30" : "border-gray-200"
+              }`}
+            >
+              <option value="">Seleccione un Proyecto...</option>
+              {proyectos.map((p) => (
+                <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
+              ))}
+            </select>
+            {errors.proyectoDestinoId && <p className="text-xs text-red-500 mt-1">{errors.proyectoDestinoId}</p>}
+          </div>
+
+          {esPersona && !tieneParticipacionActiva && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Rol *</label>
+              <select
+                name="rol"
+                value={formData.rol}
+                onChange={handleChange}
+                disabled={!proyectoSeleccionado}
+                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-400 ${
+                  errors.rol ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                }`}
+              >
+                {!proyectoSeleccionado ? (
+                  <option value="">Seleccione primero un Proyecto</option>
+                ) : (
+                  <>
+                    <option value="">Seleccione un Rol...</option>
+                    {rolesOpciones.map((r) => (
+                      <option key={r.id} value={r.nombre}>{r.nombre}</option>
+                    ))}
+                  </>
+                )}
+              </select>
+              {errors.rol && <p className="text-xs text-red-500 mt-1">{errors.rol}</p>}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+              Perfil de Participación {!tieneParticipacionActiva && "(solo si la Empresa aún no participa en este Proyecto)"}
+            </label>
+            <select
+              name="perfilParticipacionId"
+              value={formData.perfilParticipacionId}
+              onChange={handleChange}
+              disabled={!proyectoSeleccionado}
+              className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              {!proyectoSeleccionado ? (
+                <option value="">Seleccione primero un Proyecto</option>
+              ) : (
+                <>
+                  <option value="">Sin especificar</option>
+                  {perfilesOpciones.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nombre}</option>
+                  ))}
+                </>
+              )}
+            </select>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Obligatorio solo si la Empresa de {etiquetaEntidad} todavía no tiene una Participación activa en el Proyecto elegido.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
+            <input
+              type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
+              className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
+              }`}
+            />
+            {errors.fechaInicio && <p className="text-xs text-red-500 mt-1">{errors.fechaInicio}</p>}
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button type="button" onClick={onCerrar} className="px-4 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 rounded-xl transition-all">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={guardando}
+              className="px-5 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
+            >
+              {guardando ? "Guardando..." : "Confirmar"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
