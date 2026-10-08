@@ -4,7 +4,6 @@ import { Briefcase } from "lucide-react-native";
 import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { personaService } from "../services/personaService";
-import { empresasApi } from "../api/empresas";
 import { proyectosApi } from "../api/proyectos";
 import { colors, entityColors } from "../theme/colors";
 import { spacing, radius } from "../theme/spacing";
@@ -56,23 +55,18 @@ export default function DetallePersonaScreen({ route, navigation }) {
   const asignaciones = base.data?.resumen?.participacionesActivas || [];
   const asignacionActiva = asignaciones[asignacionIdx] || null;
 
-  const empresaActual = useAsync(async () => {
-    if (!base.data?.persona?.empresaId) return null;
-    return empresasApi.obtener(base.data.persona.empresaId);
-  }, [base.data?.persona?.empresaId]);
-
   const proyectoActivo = useAsync(async () => {
     if (!asignacionActiva) return null;
     return proyectosApi.obtener(asignacionActiva.proyectoId);
   }, [asignacionActiva?.proyectoId]);
 
   const detalle = useAsync(async () => {
-    if (!asignacionActiva || !base.data?.persona?.empresaId) return null;
+    if (!asignacionActiva?.empresaId) return null;
     return personaService.obtenerDetalleParticipacion(
-        mandanteId, personaId, base.data.persona.empresaId,
+        mandanteId, personaId, asignacionActiva.empresaId,
         asignacionActiva.proyectoId, asignacionActiva.perfilRecursoIds,
     );
-  }, [asignacionActiva?.proyectoId, mandanteId]);
+  }, [asignacionActiva?.participacionId, mandanteId]);
 
   const avance = useMemo(
       () => calcularAvance(detalle.data?.filas || []),
@@ -92,6 +86,8 @@ export default function DetallePersonaScreen({ route, navigation }) {
   if (!base.data) return null;
 
   const { persona } = base.data;
+  // Relación activa con su Empresa (null si no tiene, o si es con una Empresa fuera del alcance).
+  const empresaActual = persona.empresaActual;
 
   return (
     <View style={styles.screen}>
@@ -129,11 +125,11 @@ export default function DetallePersonaScreen({ route, navigation }) {
       >
         <SectionCard title="Empresa actual">
           <Text style={[typography.body, { color: colors.ink }]}>
-            {empresaActual.data?.razonSocial || "—"}
+            {empresaActual?.empresaNombre || "—"}
           </Text>
-          {persona.cargoActivo && (
+          {empresaActual?.cargo && (
             <Text style={[typography.caption, { color: colors.muted }]}>
-              {persona.cargoActivo}
+              {empresaActual.cargo}
             </Text>
           )}
         </SectionCard>

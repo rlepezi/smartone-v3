@@ -45,7 +45,7 @@ class AcreditacionController {
         search,
         page: page ? Number(page) : undefined,
         pageSize: pageSize ? Number(pageSize) : undefined,
-      });
+      }, req.user);
       res.status(200).json(resultado);
     } catch (error) {
       next(error);

@@ -70,7 +70,7 @@ const CargadorResumen = ({ empresaId, onNecesitaCargar }) => {
 export const EmpresasListPage = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const puedeEscribir = ["superadmin", "mandante_admin"].includes(profile?.rol);
+  const puedeEscribir = ["superadmin", "mandante_admin", "admin_comercial"].includes(profile?.rol);
 
   // Filtro inicial desde la URL (ej. desde la KPI "Empresas Activas" del
   // Dashboard, "?estado=activo") — se lee una sola vez al montar.

@@ -2,6 +2,9 @@ const evidenciaRepository = require("../repositories/evidenciaRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const personaRepository = require("../repositories/personaRepository");
 const recursoRepository = require("../repositories/recursoRepository");
+const {
+  sujetoActivoEnParticipacion,
+} = require("../utils/sujetosParticipacion");
 const AppError = require("../utils/AppError");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
@@ -176,11 +179,12 @@ class EvidenciaService {
       if (persona.estado !== "activo") {
         throw new AppError(400, "La Persona indicada no está activa.");
       }
-      if (persona.empresaId !== expediente.empresaId) {
+      if (!(await sujetoActivoEnParticipacion(
+          "persona", personaId, expediente.participacionId))) {
         throw new AppError(
             400,
-            "La Persona indicada no pertenece a la Empresa de este " +
-            "Expediente.",
+            "La Persona indicada no está asignada a la Participación de " +
+            "este Expediente.",
         );
       }
     }
@@ -193,11 +197,12 @@ class EvidenciaService {
       if (recurso.estado !== "activo") {
         throw new AppError(400, "El Recurso indicado no está activo.");
       }
-      if (recurso.empresaId !== expediente.empresaId) {
+      if (!(await sujetoActivoEnParticipacion(
+          "recurso", recursoId, expediente.participacionId))) {
         throw new AppError(
             400,
-            "El Recurso indicado no pertenece a la Empresa de este " +
-            "Expediente.",
+            "El Recurso indicado no está asignado a la Participación de " +
+            "este Expediente.",
         );
       }
     }

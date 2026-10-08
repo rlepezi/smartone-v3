@@ -45,6 +45,7 @@ import { ReemplazarAcreditacionWizardPage } from "./pages/acreditaciones/Reempla
 // Módulos operacionales: abiertos a todos los roles del catálogo EXCEPTO
 // admin_comercial (su alcance es exclusivamente Mandante + Usuario).
 const ROLES_OPERACIONAL = ["superadmin", "mandante_admin", "mandante_lector", "evaluador"];
+const ROLES_EMPRESAS = [...ROLES_OPERACIONAL, "admin_comercial"];
 
 function App() {
   return (
@@ -207,12 +208,13 @@ function App() {
                       }
                     />
 
-                    {/* Módulo Empresas (catálogo global, lectura abierta a
-                        roles operacionales) */}
+                    {/* Módulo Empresas: roles operacionales y admin_comercial (que lee,
+                        crea, edita y gestiona sus Mandantes; el alcance por
+                        Mandante lo aplica el backend) */}
                     <Route
                       path="/empresas"
                       element={
-                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
+                        <ProtectedRoute allowedRoles={ROLES_EMPRESAS}>
                           <EmpresasListPage />
                         </ProtectedRoute>
                       }
@@ -220,7 +222,7 @@ function App() {
                     <Route
                       path="/empresas/nuevo"
                       element={
-                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "admin_comercial"]}>
                           <EmpresaFormPage />
                         </ProtectedRoute>
                       }
@@ -228,7 +230,7 @@ function App() {
                     <Route
                       path="/empresas/:id"
                       element={
-                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
+                        <ProtectedRoute allowedRoles={ROLES_EMPRESAS}>
                           <EmpresaDetailPage />
                         </ProtectedRoute>
                       }
@@ -236,7 +238,7 @@ function App() {
                     <Route
                       path="/empresas/:id/editar"
                       element={
-                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "admin_comercial"]}>
                           <EmpresaFormPage />
                         </ProtectedRoute>
                       }

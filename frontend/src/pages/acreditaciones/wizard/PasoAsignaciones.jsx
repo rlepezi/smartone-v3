@@ -63,11 +63,11 @@ export const PasoAsignaciones = ({ mandanteId, empresaId, proyectoSel, seleccion
 
   const perfilesDe = (tipo) => perfilesMandante.filter((p) => p.tipo === (tipo === "persona" ? "persona" : "recurso"));
 
-  // Perfil preseleccionado: el del mismo nombre que la Función propia de la Persona (cargoActivo)
+  // Perfil preseleccionado: el del mismo nombre que la Función propia de la Persona (cargo de su relación activa)
   // o que la clasificación descriptiva de la Maquinaria (tipo) — nunca el primero del catálogo,
   // que es arbitrario. Si no hay coincidencia queda vacío y se elige a mano.
   const perfilSugerido = (tipo, item) => {
-    const texto = (tipo === "persona" ? item.cargoActivo : item.tipo || "").trim().toLowerCase();
+    const texto = ((tipo === "persona" ? item.empresaActual?.cargo : item.tipo) || "").trim().toLowerCase();
     const p = perfilesDe(tipo).find((x) => x.nombre.trim().toLowerCase() === texto);
     return p ? [p.id] : [];
   };

@@ -5,17 +5,23 @@ import { formatRutDisplay, validateRut, cleanRut } from "../../../utils/rutForma
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
 import { EntityIconTile } from "../../../components/shared/EntityIconTile";
+import { ConfirmacionModal } from "../../../components/shared/ConfirmacionModal";
 
 // Mismos campos/validaciones que EmpresaFormPage.jsx (modo creación) —
 // reutiliza empresaService.crear tal cual, sin reimplementar la
-// validación de RUT.
-const CrearEmpresaInline = ({ onCreada, onCancelar }) => {
+// validación de RUT. La Empresa nueva queda asociada al Mandante del flujo
+// (empresaMandantes); si el RUT ya existe, se ofrece asociar la existente en
+// vez de duplicarla.
+const CrearEmpresaInline = ({ mandanteId, onCreada, onCancelar }) => {
   const [formData, setFormData] = useState({
     rut: "", razonSocial: "", nombreFantasia: "", giro: "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
+  // 409 RUT_EXISTENTE: Empresa ya registrada con ese RUT, pendiente de asociar.
+  const [rutExistente, setRutExistente] = useState(null);
+  const [asociando, setAsociando] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -52,12 +58,35 @@ const CrearEmpresaInline = ({ onCreada, onCancelar }) => {
         giro: formData.giro.trim(),
         estado: "activo",
         contacto: null,
+        mandanteId,
       });
       onCreada(creada);
     } catch (err) {
-      setServerError(err.message);
+      if (err.codigo === "RUT_EXISTENTE") {
+        setRutExistente(err.detalle || {});
+      } else {
+        setServerError(err.message);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Asocia (o deja asociada) la Empresa existente al Mandante del flujo y la usa.
+  const usarExistente = async () => {
+    setAsociando(true);
+    try {
+      if (!rutExistente.yaAsociada) {
+        await empresaService.asociarMandante(rutExistente.empresaId, mandanteId);
+      }
+      const empresa = await empresaService.obtenerPorId(rutExistente.empresaId);
+      setRutExistente(null);
+      onCreada(empresa);
+    } catch (err) {
+      setRutExistente(null);
+      setServerError(err.message || "No se pudo asociar la Empresa.");
+    } finally {
+      setAsociando(false);
     }
   };
 
@@ -123,11 +152,24 @@ const CrearEmpresaInline = ({ onCreada, onCancelar }) => {
           {loading ? "Creando..." : "Crear y usar esta Empresa"}
         </button>
       </div>
+      {rutExistente && (
+        <ConfirmacionModal
+          titulo="Ya existe una Empresa con este RUT"
+          mensaje={rutExistente.yaAsociada
+            ? `${rutExistente.razonSocial || "La Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada y asociada a este Mandante. Puede usarla directamente.`
+            : `${rutExistente.razonSocial || "La Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada. Puede asociarla a este Mandante y usarla, en vez de crear un duplicado.`}
+          textoConfirmar={rutExistente.yaAsociada ? "Usar esta Empresa" : "Asociar y usar esta Empresa"}
+          ocupado={asociando}
+          onCancelar={() => setRutExistente(null)}
+          onConfirmar={usarExistente}
+        />
+      )}
     </form>
   );
 };
 
-export const PasoEmpresa = ({ empresaId, onSeleccionar }) => {
+// `mandanteId`: Mandante del flujo; solo se listan las Empresas asociadas a él (empresaMandantes).
+export const PasoEmpresa = ({ mandanteId, empresaId, onSeleccionar }) => {
   const [empresas, setEmpresas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -135,15 +177,17 @@ export const PasoEmpresa = ({ empresaId, onSeleccionar }) => {
   const [mostrarCrear, setMostrarCrear] = useState(false);
 
   const cargar = () => {
+    if (!mandanteId) return;
     setLoading(true);
     setError(null);
-    empresaService.listar("activo")
+    empresaService.listar("activo", { mandanteId })
       .then((data) => setEmpresas(data || []))
       .catch((err) => setError(err.message || "No se pudieron cargar las empresas."))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { cargar(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { cargar(); }, [mandanteId]);
 
   const filtradas = empresas.filter((e) => {
     const term = search.toLowerCase();
@@ -163,7 +207,7 @@ export const PasoEmpresa = ({ empresaId, onSeleccionar }) => {
     <div className="space-y-4">
       <div>
         <h3 className="text-sm font-bold text-gray-900">Selecciona la Empresa a acreditar</h3>
-        <p className="text-xs text-gray-500 mt-0.5">Elige una Empresa activa del catálogo, o crea una nueva sin salir de este flujo.</p>
+        <p className="text-xs text-gray-500 mt-0.5">Elige una Empresa activa asociada al Mandante, o crea una nueva sin salir de este flujo.</p>
       </div>
 
       <div className="flex items-center gap-3">
@@ -183,13 +227,13 @@ export const PasoEmpresa = ({ empresaId, onSeleccionar }) => {
       <ErrorBanner message={error} />
 
       {mostrarCrear && (
-        <CrearEmpresaInline onCreada={handleCreada} onCancelar={() => setMostrarCrear(false)} />
+        <CrearEmpresaInline mandanteId={mandanteId} onCreada={handleCreada} onCancelar={() => setMostrarCrear(false)} />
       )}
 
       {loading ? (
         <p className="text-xs text-slate-400 py-8 text-center">Cargando empresas...</p>
       ) : filtradas.length === 0 ? (
-        <p className="text-xs text-slate-400 py-8 text-center">No se encontraron empresas activas.</p>
+        <p className="text-xs text-slate-400 py-8 text-center">No se encontraron empresas activas asociadas a este Mandante.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtradas.map((e) => (

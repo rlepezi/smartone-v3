@@ -257,8 +257,8 @@ export const ProyectoDetailPage = () => {
     setFormData((prev) => ({ ...prev, tipo: "recurso", recursoId: recurso.id, perfilRecursoIds: perfilSugerido(recurso) }));
   };
 
-  const opcionesPersona = personasActivas.filter((p) => p.empresaId === formData.empresaId);
-  const opcionesRecurso = recursosActivos.filter((r) => r.empresaId === formData.empresaId);
+  const opcionesPersona = personasActivas.filter((p) => p.empresaActual?.empresaId === formData.empresaId);
+  const opcionesRecurso = recursosActivos.filter((r) => r.empresaActual?.empresaId === formData.empresaId);
   const perfilesDelTipo = perfilesMandante.filter((p) => p.tipo === formData.tipo);
   // La clasificación descriptiva del Recurso (tipo) solo PRESELECCIONA el perfil del mismo nombre.
   function perfilSugerido(recurso) {

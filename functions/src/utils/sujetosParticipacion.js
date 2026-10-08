@@ -89,18 +89,20 @@ async function sujetosActivosDeParticipacion(participacionId) {
 }
 
 /**
- * Sujeto activo de una Persona o Recurso en un Proyecto, o null.
+ * Sujeto activo de una Persona o Recurso en una Participación, o null.
  * @param {"persona"|"recurso"} tipoEntidad Tipo del sujeto.
  * @param {string} sujetoId personaId o recursoId.
- * @param {string} proyectoId ID del Proyecto.
+ * @param {string} participacionId ID de la Participación.
  * @return {Promise<?Object>} El sujeto (ver agruparSujetos) o null.
  */
-async function sujetoActivoEnProyecto(tipoEntidad, sujetoId, proyectoId) {
+async function sujetoActivoEnParticipacion(
+    tipoEntidad, sujetoId, participacionId,
+) {
   const repo = tipoEntidad === "persona" ?
       participacionPersonaRepository : participacionRecursoRepository;
   const campo = tipoEntidad === "persona" ? "personaId" : "recursoId";
   const docs = await repo.list({
-    [campo]: sujetoId, proyectoId, estado: "activa",
+    [campo]: sujetoId, participacionId, estado: "activa",
   });
   const [sujeto] = tipoEntidad === "persona" ?
       agruparSujetos(docs, []) : agruparSujetos([], docs);
@@ -108,6 +110,6 @@ async function sujetoActivoEnProyecto(tipoEntidad, sujetoId, proyectoId) {
 }
 
 module.exports = {
-  agruparSujetos, sujetosActivosDeProyecto, sujetosActivosDeParticipacion,
-  sujetoActivoEnProyecto,
+  agruparSujetos, sujetoActivoEnParticipacion, sujetosActivosDeProyecto,
+  sujetosActivosDeParticipacion,
 };

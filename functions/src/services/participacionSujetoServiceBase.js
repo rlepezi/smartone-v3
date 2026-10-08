@@ -168,7 +168,18 @@ class ParticipacionSujetoService {
   }
 
   /**
-   * Valida que el sujeto exista, esté activo y pertenezca a la Empresa.
+   * Relación empresa-sujeto del tipo (empresaPersonas / empresaRecursos).
+   * @return {Object} Repositorio de la relación.
+   */
+  _relacionRepo() {
+    return this.tipo === "persona" ?
+      require("../repositories/empresaPersonaRepository") :
+      require("../repositories/empresaRecursoRepository");
+  }
+
+  /**
+   * Valida que el sujeto exista, esté activo y tenga relación ACTIVA con la
+   * Empresa de la Participación (empresaPersonas / empresaRecursos).
    * @param {string} sujetoId personaId o recursoId.
    * @param {string} empresaId Empresa de la Participación.
    * @return {Promise<Object>} La Persona o el Recurso.
@@ -184,11 +195,12 @@ class ParticipacionSujetoService {
     if (sujeto.estado !== "activo") {
       throw new AppError(400, `La ${this.etiqueta} indicada no está activa.`);
     }
-    if (sujeto.empresaId !== empresaId) {
+    const relacion = await this._relacionRepo().getActivaBySujeto(sujetoId);
+    if (relacion?.empresaId !== empresaId) {
       throw new AppError(
           400,
-          `La ${this.etiqueta} indicada no pertenece a la Empresa de esta ` +
-          "Participación.",
+          `La ${this.etiqueta} indicada no tiene una relación activa con la ` +
+          "Empresa de esta Participación.",
       );
     }
     return sujeto;
@@ -453,6 +465,34 @@ class ParticipacionSujetoService {
       updatedAt: FieldValue.serverTimestamp(),
     }));
     return activos;
+  }
+
+  /**
+   * Finaliza documentos activos (fija estado y fechaTermino), registra la
+   * bitácora y recalcula los Expedientes afectados. Lo usan terminar o
+   * cambiar la relación con la Empresa.
+   * @param {Object[]} docs Documentos activos a finalizar.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<void>}
+   */
+  async finalizarDocumentos(docs, actor) {
+    if (!docs || docs.length === 0) return;
+    const batch = db.batch();
+    docs.forEach((d) => batch.update(this.repo.coleccion().doc(d.id), {
+      estado: "finalizada",
+      fechaTermino: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }));
+    await batch.commit();
+    await this.registrarFinalizados(docs, actor);
+    const pares = new Set(docs.map((d) => `${d.proyectoId}|${d.empresaId}`));
+    for (const par of pares) {
+      const [proyectoId, empresaId] = par.split("|");
+      // eslint-disable-next-line no-await-in-loop
+      await this._expedienteService().recalcularPorProyectoEmpresa(
+          proyectoId, empresaId, actor,
+      );
+    }
   }
 
   /**

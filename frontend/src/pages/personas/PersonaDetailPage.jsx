@@ -7,7 +7,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { personaService } from "../../services/personaService";
 import { AnonimizarPersonaModal } from "../../components/personas/AnonimizarPersonaModal";
 import { DocumentosIdentidadPurga } from "../../components/personas/DocumentosIdentidadPurga";
-import { relacionLaboralService } from "../../services/relacionLaboralService";
 import { empresaService } from "../../services/empresaService";
 import { proyectoService } from "../../services/proyectoService";
 import { participacionService } from "../../services/participacionService";
@@ -25,6 +24,7 @@ import { StatusBadge, MAPA_ACTIVO_INACTIVO, MAPA_ESTADO_PARTICIPACION, MAPA_EVAL
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { CambiarEmpresaModal } from "../../components/personas/CambiarEmpresaModal";
+import { TerminarRelacionAccion } from "../../components/shared/TerminarRelacionAccion";
 import { CambiarProyectoModal } from "../../components/shared/CambiarProyectoModal";
 import { DetalleEntidadLayout } from "../../components/shared/DetalleEntidadLayout";
 import { KpiCard, KpiValor, KpiAnillo, TarjetaPanel, CampoInfo } from "../../components/shared/DetalleUI";
@@ -147,7 +147,8 @@ export const PersonaDetailPage = () => {
       sujetoService.listar({ personaId: id }),
       expedienteService.listar({}),
       evaluacionService.listarVigentes(),
-      relacionLaboralService.listarPorPersona(id),
+      // Historial de relaciones visible para el usuario (empresaPersonas, con nombre de Empresa).
+      personaService.listarRelaciones(id).catch(() => []),
       // Mandante por Proyecto — se resuelve desde acá (no desde
       // mandanteService.listar()) porque GET /mandantes está restringido
       // a superadmin/admin_comercial; personaService.obtenerResumen ya lo
@@ -374,7 +375,7 @@ export const PersonaDetailPage = () => {
       <KpiCard titulo="Empresa">
         {cargandoContexto ? <KpiValor listo={false} /> : (
           <p className="text-sm font-black text-carbon-dark leading-snug">
-            {relacionActiva ? (empresasMap[relacionActiva.empresaId] || relacionActiva.empresaId) : <span className="text-slate-400 italic font-medium">Sin Empresa activa</span>}
+            {relacionActiva ? (relacionActiva.empresaNombre || empresasMap[relacionActiva.empresaId] || "-") : <span className="text-slate-400 italic font-medium">Sin Empresa activa</span>}
           </p>
         )}
       </KpiCard>
@@ -394,7 +395,7 @@ export const PersonaDetailPage = () => {
               : null}
           </CampoInfo>
           <CampoInfo etiqueta="Empresa Activa">
-            {cargandoContexto ? "…" : (persona.empresaActivaId && empresasMap[persona.empresaActivaId]) || null}
+            {cargandoContexto ? "…" : persona.empresaActual?.empresaNombre || null}
           </CampoInfo>
           <CampoInfo etiqueta="Último Proyecto">
             {cargandoContexto ? "…" : (filaMasReciente && proyectosMap[filaMasReciente.proyectoId]) || null}
@@ -427,9 +428,20 @@ export const PersonaDetailPage = () => {
       titulo="Empresa Activa"
       Icono={Briefcase}
       accion={completa && puedeEscribir && modoEdicion ? (
-        <ActionButton onClick={() => setCambiarEmpresaAbierto(true)} icon={Building2}>
-          Cambiar Empresa
-        </ActionButton>
+        <div className="flex items-center gap-2">
+          {relacionActiva && (
+            <TerminarRelacionAccion
+              tipo="persona"
+              id={id}
+              empresaNombre={relacionActiva.empresaNombre}
+              onTerminada={handleEmpresaCambiada}
+              onError={setError}
+            />
+          )}
+          <ActionButton onClick={() => setCambiarEmpresaAbierto(true)} icon={Building2}>
+            Cambiar Empresa
+          </ActionButton>
+        </div>
       ) : null}
     >
       {cargandoContexto ? cargandoTexto : !relacionActiva ? (
@@ -438,7 +450,7 @@ export const PersonaDetailPage = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <CampoInfo etiqueta="Empresa">{empresasMap[relacionActiva.empresaId] || relacionActiva.empresaId}</CampoInfo>
+          <CampoInfo etiqueta="Empresa">{relacionActiva.empresaNombre || empresasMap[relacionActiva.empresaId] || "-"}</CampoInfo>
           <CampoInfo etiqueta="Función">{relacionActiva.cargo}</CampoInfo>
           {completa && <CampoInfo etiqueta="Tipo de Contrato">{relacionActiva.tipoContrato}</CampoInfo>}
           {completa && <CampoInfo etiqueta="Jornada">{relacionActiva.jornada}</CampoInfo>}
@@ -576,7 +588,7 @@ export const PersonaDetailPage = () => {
                     <tbody className="divide-y divide-slate-100">
                       {historialOrdenado.map((r) => (
                         <tr key={r.id} className="hover:bg-slate-50/60 transition-colors">
-                          <td className="py-2.5 px-2 font-bold text-carbon-dark">{empresasMap[r.empresaId] || r.empresaId}</td>
+                          <td className="py-2.5 px-2 font-bold text-carbon-dark">{r.empresaNombre || empresasMap[r.empresaId] || "-"}</td>
                           <td className="py-2.5 px-2 text-slate-600 font-medium">
                             {r.tipoRelacion || <span className="text-slate-400 italic">-</span>}
                           </td>
@@ -787,7 +799,7 @@ export const PersonaDetailPage = () => {
       {cambiarEmpresaAbierto && (
         <CambiarEmpresaModal
           personaId={id}
-          empresaActualNombre={relacionActiva ? empresasMap[relacionActiva.empresaId] : null}
+          empresaActualNombre={relacionActiva ? relacionActiva.empresaNombre : null}
           onCambiado={handleEmpresaCambiada}
           onCerrar={() => setCambiarEmpresaAbierto(false)}
         />

@@ -508,6 +508,62 @@
       ]
     },
     {
+      "collectionGroup": "empresaPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresaPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresaRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresaRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresaMandantes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empresaMandantes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "recursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "patente", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "bitacora",
       "queryScope": "COLLECTION",
       "fields": [

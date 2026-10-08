@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { relacionRecursoService } from "../../services/relacionRecursoService";
+import { recursoService } from "../../services/recursoService";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { empresaService } from "../../services/empresaService";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
@@ -15,14 +16,15 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 // Recurso solo lleva `tipoRelacion` (sin cargo/tipoContrato/jornada), por
 // eso es un componente propio y no uno parametrizado — los campos del
 // formulario son genuinamente distintos, no una copia casi idéntica.
-// Reutiliza relacionRecursoService.cambiarEmpresa (RN-122) tal cual, sin
-// reimplementar la transacción de cierre/apertura.
+// Usa recursoService.cambiarEmpresa (empresaRecursos, RN-122): si la relación anterior tiene
+// asignaciones activas, muestra la lista para confirmar (ConfirmacionModal) antes de reenviar.
 export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onCambiado, onCerrar }) => {
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
   const [formData, setFormData] = useState({ empresaId: "", tipoRelacion: "", fechaInicio: hoyISO() });
   const [errors, setErrors] = useState({});
   const [guardando, setGuardando] = useState(false);
   const [serverError, setServerError] = useState(null);
+  const [confirmacion, setConfirmacion] = useState(null);
 
   useEffect(() => {
     empresaService.listar("activo")
@@ -50,24 +52,35 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
     return Object.keys(errs).length === 0;
   };
 
+  const enviar = async (confirmado) => {
+    setGuardando(true);
+    try {
+      const nuevaRelacion = await recursoService.cambiarEmpresa(recursoId, {
+        empresaId: formData.empresaId,
+        tipoRelacion: formData.tipoRelacion.trim(),
+        fechaInicio: formData.fechaInicio,
+        confirmado,
+      });
+      setConfirmacion(null);
+      onCambiado(nuevaRelacion);
+    } catch (err) {
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setConfirmacion({ mensaje: err.message, asignaciones: err.detalle?.asignaciones || [] });
+      } else {
+        console.error("Error al cambiar la empresa:", err);
+        setConfirmacion(null);
+        setServerError(err.message || "No se pudo cambiar la Empresa.");
+      }
+    } finally {
+      setGuardando(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setServerError(null);
     if (!validar()) return;
-    setGuardando(true);
-    try {
-      const nuevaRelacion = await relacionRecursoService.cambiarEmpresa(recursoId, {
-        empresaId: formData.empresaId,
-        tipoRelacion: formData.tipoRelacion.trim(),
-        fechaInicio: formData.fechaInicio,
-      });
-      onCambiado(nuevaRelacion);
-    } catch (err) {
-      console.error("Error al cambiar la empresa:", err);
-      setServerError(err.message || "No se pudo cambiar la Empresa.");
-    } finally {
-      setGuardando(false);
-    }
+    await enviar(false);
   };
 
   return (
@@ -88,7 +101,7 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
           )}
           <p className="text-xs text-slate-500">
             {empresaActualNombre && <>Empresa actual: <strong className="text-slate-700">{empresaActualNombre}</strong>. </>}
-            Esto cierra la relación con la Empresa actual y crea una nueva — el historial de Asignaciones a Proyectos ya existentes no se ve afectado.
+            Esto termina la relación con la Empresa actual y crea una nueva; el historial se conserva. Si tiene asignaciones activas en proyectos con la empresa actual, se finalizarán (se pedirá confirmación).
           </p>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Nueva Empresa *</label>
@@ -147,6 +160,18 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
           </div>
         </form>
       </div>
+      {confirmacion && (
+        <ConfirmacionModal
+          peligro
+          titulo={(confirmacion?.asignaciones?.length || 0) > 0 ? "Se finalizarán asignaciones activas" : "Se terminará la relación vigente"}
+          mensaje={confirmacion.mensaje}
+          items={confirmacion.asignaciones.map((a) => ({ key: a.participacionId, principal: a.proyectoNombre }))}
+          textoConfirmar={(confirmacion?.asignaciones?.length || 0) > 0 ? "Cambiar de empresa y finalizarlas" : "Cambiar de empresa"}
+          ocupado={guardando}
+          onCancelar={() => setConfirmacion(null)}
+          onConfirmar={() => enviar(true)}
+        />
+      )}
     </div>
   );
 };

@@ -7,6 +7,16 @@ const recursoRepository = require("../repositories/recursoRepository");
 const participacionRepository =
     require("../repositories/participacionRepository");
 const participacionPersonaService = require("./participacionPersonaService");
+const empresaMandanteRepository =
+    require("../repositories/empresaMandanteRepository");
+const empresaPersonaRepository =
+    require("../repositories/empresaPersonaRepository");
+const empresaRecursoRepository =
+    require("../repositories/empresaRecursoRepository");
+const {
+  sujetoIdsVisibles, empresaIdsVisibles,
+} = require("../utils/alcanceMandante");
+const {MENSAJE_FUERA_DE_ALCANCE} = require("./empresaSujetoServiceBase");
 const participacionRecursoService = require("./participacionRecursoService");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const expedienteService = require("./expedienteService");
@@ -94,6 +104,112 @@ class AcreditacionService {
   }
 
   /**
+   * Relación ACTIVA de una Persona o Recurso con su Empresa (única fuente
+   * de su "empresa actual").
+   * @param {boolean} esPersona Tipo del sujeto.
+   * @param {string} sujetoId personaId o recursoId.
+   * @return {Promise<?Object>} Relación activa o null.
+   */
+  _relacionActiva(esPersona, sujetoId) {
+    return (esPersona ? empresaPersonaRepository : empresaRecursoRepository)
+        .getActivaBySujeto(sujetoId);
+  }
+
+  /**
+   * Exige que la Empresa esté asociada al Mandante del Proyecto antes de
+   * crearle una Participación.
+   * @param {string} empresaId ID de la Empresa.
+   * @param {string} mandanteId ID del Mandante.
+   * @return {Promise<void>}
+   */
+  async _exigirAsociacion(empresaId, mandanteId) {
+    if (!(await empresaMandanteRepository.estaActiva(empresaId, mandanteId))) {
+      throw new AppError(
+          400, "La Empresa no está asociada al Mandante de este Proyecto.",
+      );
+    }
+  }
+
+  /**
+   * Documentos activos de un sujeto que "mover" finalizará: los de su
+   * Participación más reciente y los que tenga en otras Participaciones
+   * del Proyecto destino. Función pura (la usan la verificación previa y
+   * la transacción).
+   * @param {Object[]} activos Documentos activos del sujeto.
+   * @param {Object} participacion Participación destino ({id, proyectoId}).
+   * @return {{aFinalizar: Object[], origenParticipacionId: ?string}}
+   *     Selección.
+   */
+  _seleccionarAFinalizar(activos, participacion) {
+    let origenParticipacionId = null;
+    let origenMillis = -1;
+    activos.forEach((a) => {
+      const millis = reutilizacionDocumentalService.aMillis(a.fechaInicio);
+      if (millis > origenMillis) {
+        origenMillis = millis;
+        origenParticipacionId = a.participacionId;
+      }
+    });
+    const aFinalizar = activos.filter((a) =>
+      a.participacionId === origenParticipacionId ||
+      (a.proyectoId === participacion.proyectoId &&
+          a.participacionId !== participacion.id));
+    return {aFinalizar, origenParticipacionId};
+  }
+
+  /**
+   * Verificación previa a "mover": si se finalizará alguna asignación,
+   * exige confirmación explícita (409 CONFIRMACION_REQUERIDA con la lista
+   * de afectados: nombre, Empresa actual y Proyecto). Un rol de Mandante no
+   * puede mover a quien tiene asignaciones vigentes de otro Mandante (403,
+   * sin revelar datos).
+   * @param {{esPersona: boolean, entidadId: string,
+   *     participacion: Object, confirmado: (boolean|undefined)}} datos
+   *     Datos del movimiento.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<void>}
+   */
+  async _confirmarMovimiento({esPersona, entidadId, participacion, confirmado},
+      actor) {
+    const activos = await this._servicio(esPersona).repo
+        .getActivosBySujeto(entidadId);
+    const {aFinalizar} = this._seleccionarAFinalizar(activos, participacion);
+    if (aFinalizar.length === 0) return;
+    if (ROLES_ALCANCE_FORZADO.includes(actor.rol) &&
+        aFinalizar.some((a) => a.mandanteId !== actor.mandanteId)) {
+      throw new AppError(403, MENSAJE_FUERA_DE_ALCANCE,
+          {codigo: "FUERA_DE_ALCANCE"});
+    }
+    if (confirmado === true) return;
+    const entidad = esPersona ?
+        await personaRepository.getById(entidadId) :
+        await recursoRepository.getById(entidadId);
+    const nombre = esPersona ?
+        `${entidad?.nombre || ""} ${entidad?.apellido || ""}`.trim() :
+        entidad?.nombre || entidadId;
+    const porParticipacion = [...new Map(
+        aFinalizar.map((a) => [a.participacionId, a]),
+    ).values()];
+    const afectados = await Promise.all(porParticipacion.map(async (a) => ({
+      tipo: esPersona ? "persona" : "maquinaria",
+      id: entidadId,
+      nombre,
+      empresaId: a.empresaId,
+      empresaNombre: (await empresaRepository.getById(a.empresaId))
+          ?.razonSocial || null,
+      proyectoId: a.proyectoId,
+      proyectoNombre: (await proyectoRepository.getById(a.proyectoId))
+          ?.nombre || null,
+    })));
+    throw new AppError(
+        409,
+        "Esta operación finalizará asignaciones vigentes. Revise la lista y " +
+        "confirme para continuar.",
+        {codigo: "CONFIRMACION_REQUERIDA", detalle: {afectados}},
+    );
+  }
+
+  /**
    * Perfiles de Recurso actuales de un sujeto: los de su Participación
    * activa más reciente (para heredarlos al cambiarlo de Proyecto).
    * @param {boolean} esPersona Tipo del sujeto.
@@ -124,7 +240,7 @@ class AcreditacionService {
   async reemplazar(payload, actor) {
     const {
       entidadTipo, entidadId, proyectoDestinoId, perfilParticipacionId,
-      fechaInicio, fechaFin,
+      fechaInicio, fechaFin, confirmado,
     } = payload;
     const perfilRecursoIds = perfilesDelPayload(payload);
 
@@ -183,6 +299,7 @@ class AcreditacionService {
     return this._reemplazarPersonaOMaquinaria({
       entidadTipo, entidadId, proyecto, mandanteId, perfilParticipacionId,
       perfilRecursoIds, fechaInicioDate, fechaFinDate, creadoPorNombre,
+      confirmado,
     }, actor);
   }
 
@@ -224,6 +341,7 @@ class AcreditacionService {
       perfilParticipacionId,
       perfilRecursoIds,
       fechaInicio,
+      confirmado: payload.confirmado,
     }, actor);
   }
 
@@ -261,6 +379,7 @@ class AcreditacionService {
       perfilParticipacionId,
       perfilRecursoIds,
       fechaInicio,
+      confirmado: payload.confirmado,
     }, actor);
   }
 
@@ -292,10 +411,13 @@ class AcreditacionService {
       throw new AppError(400, `${etiquetaEntidad} indicada no está activa.`);
     }
 
-    const empresaId = entidad.empresaId;
+    const relacion = await this._relacionActiva(esPersona, entidadId);
+    const empresaId = relacion?.empresaId || null;
     if (!empresaId) {
       throw new AppError(
-          400, `${etiquetaEntidad} indicada no tiene una Empresa asociada.`,
+          400,
+          `${etiquetaEntidad} indicada no tiene una relación activa con una ` +
+          "Empresa.",
       );
     }
     const empresa = await empresaRepository.getById(empresaId);
@@ -336,21 +458,8 @@ class AcreditacionService {
         servicio.repo.queryActivosSujeto(entidadId),
     );
     const activos = snap.docs.map((d) => ({id: d.id, ref: d.ref, ...d.data()}));
-
-    // Participación de origen: la de fechaInicio más reciente.
-    let origenParticipacionId = null;
-    let origenMillis = -1;
-    activos.forEach((a) => {
-      const millis = reutilizacionDocumentalService.aMillis(a.fechaInicio);
-      if (millis > origenMillis) {
-        origenMillis = millis;
-        origenParticipacionId = a.participacionId;
-      }
-    });
-    const aFinalizar = activos.filter((a) =>
-      a.participacionId === origenParticipacionId ||
-      (a.proyectoId === participacion.proyectoId &&
-          a.participacionId !== participacion.id));
+    const {aFinalizar, origenParticipacionId} =
+        this._seleccionarAFinalizar(activos, participacion);
     const proyectoOrigenId = aFinalizar.find(
         (a) => a.participacionId === origenParticipacionId,
     )?.proyectoId || null;
@@ -409,6 +518,7 @@ class AcreditacionService {
     if (empresa.estado !== "activo") {
       throw new AppError(400, "La Empresa indicada no está activa.");
     }
+    await this._exigirAsociacion(empresaId, mandanteId);
 
     const perfil = await perfilParticipacionRepository.getById(
         perfilParticipacionId,
@@ -467,7 +577,7 @@ class AcreditacionService {
     // Transacción: cierra la Participación activa anterior de la Empresa
     // (si existe, en cualquier Proyecto) + su Expediente en curso, y crea
     // la nueva Participación + Expediente + Evaluaciones reutilizadas.
-    // Mismo patrón que relacionLaboralService.cambiarEmpresa: la consulta
+    // Mismo patrón que empresaPersonaService.cambiarEmpresa: la consulta
     // de "activa a cerrar" se hace vía transaction.get para que el cierre
     // sea atómico con la creación.
     await db.runTransaction(async (transaction) => {
@@ -588,7 +698,7 @@ class AcreditacionService {
   async _reemplazarPersonaOMaquinaria({
     entidadTipo, entidadId, proyecto, mandanteId, perfilParticipacionId,
     perfilRecursoIds: perfilesPedidos, fechaInicioDate, fechaFinDate,
-    creadoPorNombre,
+    creadoPorNombre, confirmado,
   }, actor) {
     const proyectoDestinoId = proyecto.id;
     const esPersona = entidadTipo === "persona";
@@ -647,6 +757,7 @@ class AcreditacionService {
             "destino: perfilParticipacionId es obligatorio para crearla.",
         );
       }
+      await this._exigirAsociacion(empresaId, mandanteId);
       const perfil = await perfilParticipacionRepository.getById(
           perfilParticipacionId,
       );
@@ -722,6 +833,11 @@ class AcreditacionService {
         mandanteId,
       } :
       participacionExistente;
+
+    // Antes de escribir nada: lista de afectados y confirmación explícita.
+    await this._confirmarMovimiento({
+      esPersona, entidadId, participacion: participacionDestino, confirmado,
+    }, actor);
 
     let movimiento;
 
@@ -932,6 +1048,11 @@ class AcreditacionService {
       );
     }
 
+    await this._confirmarMovimiento({
+      esPersona, entidadId, participacion: participacionDestino,
+      confirmado: payload.confirmado,
+    }, actor);
+
     let movimiento;
     await db.runTransaction(async (transaction) => {
       movimiento = await this._moverSujeto(transaction, {
@@ -1005,9 +1126,23 @@ class AcreditacionService {
     }
     const esPersona = tipo === "persona";
 
-    const entidades = esPersona ?
-        await personaRepository.list({estado: "activo", empresaId}) :
-        await recursoRepository.list({estado: "activo", empresaId});
+    // Personas/Recursos con relación ACTIVA con la Empresa (empresaPersonas
+    // / empresaRecursos), con su cargo actual.
+    const relaciones = await (esPersona ?
+      empresaPersonaRepository : empresaRecursoRepository)
+        .listActivasByEmpresa(empresaId);
+    const docs = await Promise.all(relaciones.map((r) => (esPersona ?
+      personaRepository.getById(r.personaId) :
+      recursoRepository.getById(r.recursoId))));
+    const entidades = docs
+        .map((d, i) => (d ? {
+          ...d,
+          empresaActual: {
+            empresaId, relacionId: relaciones[i].id,
+            cargo: relaciones[i].cargo || null,
+          },
+        } : null))
+        .filter((d) => d && d.estado === "activo");
 
     const proyectosCache = {};
     const resolverProyecto = async (proyectoId) => {
@@ -1052,10 +1187,13 @@ class AcreditacionService {
    * @param {{tipo: string, search: (string|undefined),
    *     page: (number|undefined), pageSize: (number|undefined)}} filtros
    *     Filtros de búsqueda.
+   * @param {?Object} [actor] Usuario autenticado (aplica su alcance).
    * @return {Promise<{data: Object[], total: number, page: number,
    *     pageSize: number}>} Página de resultados.
    */
-  async listarEntidades({tipo, search = "", page = 1, pageSize = 10} = {}) {
+  async listarEntidades(
+      {tipo, search = "", page = 1, pageSize = 10} = {}, actor = null,
+  ) {
     if (!ENTIDADES_VALIDAS.includes(tipo)) {
       throw new AppError(
           400, "El query param 'tipo' debe ser 'persona', 'maquinaria' o " +
@@ -1070,6 +1208,15 @@ class AcreditacionService {
       filas = await this._listarFilasPersona();
     } else {
       filas = await this._listarFilasRecurso();
+    }
+    // Alcance por Mandante (utils/alcanceMandante.js).
+    if (actor) {
+      const visibles = tipo === "empresa" ?
+          await empresaIdsVisibles(actor) :
+          await sujetoIdsVisibles(
+              actor, tipo === "persona" ? "persona" : "recurso",
+          );
+      if (visibles) filas = filas.filter((f) => visibles.has(f.id));
     }
 
     const termino = search.trim().toLowerCase();
@@ -1095,7 +1242,11 @@ class AcreditacionService {
    * @return {Promise<Object[]>} Filas de Persona.
    */
   async _listarFilasPersona() {
-    const personas = await personaRepository.list({estado: "activo"});
+    const [personas, activas] = await Promise.all([
+      personaRepository.list({estado: "activo"}),
+      empresaPersonaRepository.listActivas(),
+    ]);
+    const relacionDe = new Map(activas.map((r) => [r.personaId, r]));
     return Promise.all(personas.map(async (p) => {
       const docs = await this._servicio(true).repo
           .list({personaId: p.id});
@@ -1107,8 +1258,8 @@ class AcreditacionService {
         id: p.id,
         nombre: `${p.nombre} ${p.apellido}`.trim(),
         rut: p.rut,
-        cargo: p.cargoActivo || null,
-        empresaId: p.empresaId || null,
+        cargo: relacionDe.get(p.id)?.cargo || null,
+        empresaId: relacionDe.get(p.id)?.empresaId || null,
         participacionesActivas: distintas("activa"),
         participacionesFinalizadas: distintas("finalizada"),
         estado: p.estado,
@@ -1121,7 +1272,11 @@ class AcreditacionService {
    * @return {Promise<Object[]>} Filas de Recurso.
    */
   async _listarFilasRecurso() {
-    const recursos = await recursoRepository.list({estado: "activo"});
+    const [recursos, activas] = await Promise.all([
+      recursoRepository.list({estado: "activo"}),
+      empresaRecursoRepository.listActivas(),
+    ]);
+    const relacionDe = new Map(activas.map((x) => [x.recursoId, x]));
     return Promise.all(recursos.map(async (r) => {
       const docs = await this._servicio(false).repo
           .list({recursoId: r.id});
@@ -1134,7 +1289,7 @@ class AcreditacionService {
         nombre: r.nombre,
         rut: r.patente || null,
         cargo: r.tipo || null,
-        empresaId: r.empresaId || null,
+        empresaId: relacionDe.get(r.id)?.empresaId || null,
         participacionesActivas: distintas("activa"),
         participacionesFinalizadas: distintas("finalizada"),
         estado: r.estado,
@@ -1202,7 +1357,9 @@ class AcreditacionService {
           await personaRepository.getById(entidadId) :
           await recursoRepository.getById(entidadId);
       if (!entidad) throw new AppError(400, "La entidad indicada no existe.");
-      empresaId = entidad.empresaId;
+      empresaId = (await this._relacionActiva(
+          entidadTipo === "persona", entidadId,
+      ))?.empresaId || null;
     }
 
     const requerimientosAplicables =

@@ -6,6 +6,7 @@ import { ErrorBanner } from "../shared/ErrorBanner";
 import { ActionButton } from "../shared/ActionButton";
 import { ModalCrearPersona } from "../shared/ModalCrearPersona";
 import { ModalCrearRecurso } from "../shared/ModalCrearRecurso";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { disponibilidadDe, BadgesDisponibilidad } from "../acreditaciones/PanelSeleccionEntidades";
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
@@ -41,6 +42,9 @@ export const IngresarRecursoModal = ({
   const [enviando, setEnviando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState(null);
   const [modalCrearAbierto, setModalCrearAbierto] = useState(false);
+  // Traslado desde otro Proyecto: el backend responde 409 CONFIRMACION_REQUERIDA con las
+  // asignaciones que se finalizarán (Empresa actual y Proyecto); se confirman en un modal.
+  const [afectados, setAfectados] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -62,13 +66,13 @@ export const IngresarRecursoModal = ({
   // clasificación descriptiva (Maquinaria); si no hay coincidencia, se elige a mano.
   const elegir = (item) => {
     setSeleccionadoId(item.id);
-    const texto = ((esPersona ? item.cargoActivo : item.tipo) || "").trim().toLowerCase();
+    const texto = ((esPersona ? item.empresaActual?.cargo : item.tipo) || "").trim().toLowerCase();
     const p = perfilesDisponibles.find((x) => x.nombre.trim().toLowerCase() === texto);
     setPerfilRecursoIds(p ? [p.id] : []);
   };
 
   const textoDe = (i) => (esPersona
-    ? `${i.nombre} ${i.apellido || ""} ${i.rut || ""} ${i.cargo || ""}`
+    ? `${i.nombre} ${i.apellido || ""} ${i.rut || ""} ${i.empresaActual?.cargo || ""}`
     : `${i.nombre} ${i.patente || ""} ${i.tipo || ""}`);
   const nombreDe = (i) => (esPersona ? `${i.nombre} ${i.apellido || ""}`.trim() : i.nombre);
   const secundarioDe = (i) => (esPersona ? i.rut : i.patente) || "";
@@ -96,14 +100,8 @@ export const IngresarRecursoModal = ({
     setModalCrearAbierto(false);
   };
 
-  const confirmar = async () => {
+  const confirmar = async (confirmado = false) => {
     if (!seleccionado) return;
-    if (requiereTraslado && !window.confirm(
-      `${nombreDe(seleccionado)} está activa/o en "${seleccionado.participacionActiva?.proyectoNombre || "otro proyecto"}". ` +
-      `¿Trasladarla/o a "${proyectoDestinoNombre || "este proyecto"}"? Se cerrará su participación anterior y se reutilizará su documentación vigente.`,
-    )) {
-      return;
-    }
     setEnviando(true);
     setErrorEnvio(null);
     try {
@@ -114,10 +112,17 @@ export const IngresarRecursoModal = ({
         empresaId,
         perfilRecursoIds,
         fechaInicio: hoyISO(),
+        confirmado,
       });
+      setAfectados(null);
       onIngresado?.();
     } catch (err) {
-      setErrorEnvio(err.message || "No se pudo ingresar.");
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setAfectados(err.detalle?.afectados || []);
+      } else {
+        setAfectados(null);
+        setErrorEnvio(err.message || "No se pudo ingresar.");
+      }
     } finally {
       setEnviando(false);
     }
@@ -256,7 +261,7 @@ export const IngresarRecursoModal = ({
               busy={enviando}
               busyLabel="Ingresando..."
               disabled={!seleccionado || perfilRecursoIds.length === 0}
-              onClick={confirmar}
+              onClick={() => confirmar(false)}
             >
               {requiereTraslado ? "Trasladar e ingresar" : "Ingresar"}
             </ActionButton>
@@ -280,6 +285,23 @@ export const IngresarRecursoModal = ({
             onCerrar={() => setModalCrearAbierto(false)}
           />
         )
+      )}
+
+      {afectados && seleccionado && (
+        <ConfirmacionModal
+          peligro
+          titulo={`¿Trasladar a ${nombreDe(seleccionado)}?`}
+          mensaje={`Se finalizarán sus asignaciones vigentes y se ingresará a "${proyectoDestinoNombre || "este proyecto"}", reutilizando su documentación vigente.`}
+          items={afectados.map((a) => ({
+            key: `${a.tipo}-${a.id}-${a.proyectoId}`,
+            principal: a.proyectoNombre || "Proyecto",
+            secundario: `Empresa actual: ${a.empresaNombre || "—"}`,
+          }))}
+          textoConfirmar="Trasladar e ingresar"
+          ocupado={enviando}
+          onCancelar={() => setAfectados(null)}
+          onConfirmar={() => confirmar(true)}
+        />
       )}
     </div>
   );

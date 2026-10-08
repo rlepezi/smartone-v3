@@ -37,7 +37,13 @@ export const apiClient = async (endpoint, { body, method = "GET", ...customConfi
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.message || "Error en la petición a la API");
+    // `status`, `codigo` y `detalle` permiten a la pantalla resolver casos de negocio (ej. pedir
+    // confirmación con la lista de afectados, u ofrecer asociar una empresa con RUT existente).
+    const error = new Error(data.message || "Error en la petición a la API");
+    error.status = response.status;
+    error.codigo = data.codigo || null;
+    error.detalle = data.detalle ?? null;
+    throw error;
   }
 
   return data;

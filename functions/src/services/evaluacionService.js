@@ -15,7 +15,9 @@ const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
 const {aplicaRequerimientoASujeto} =
     require("../utils/aplicabilidadRequerimiento");
-const {sujetoActivoEnProyecto} = require("../utils/sujetosParticipacion");
+const {
+  sujetoActivoEnParticipacion,
+} = require("../utils/sujetosParticipacion");
 
 const db = admin.firestore();
 
@@ -361,21 +363,21 @@ class EvaluacionService {
       if (persona.estado !== "activo") {
         throw new AppError(400, "La Persona indicada no está activa.");
       }
-      if (persona.empresaId !== expediente.empresaId) {
+      // Debe estar asignada en la Participación del Expediente.
+      const sujeto = await sujetoActivoEnParticipacion(
+          "persona", personaId, expediente.participacionId,
+      );
+      if (!sujeto) {
         throw new AppError(
             400,
-            "La Persona indicada no pertenece a la Empresa de este " +
-            "Expediente.",
+            "La Persona indicada no está asignada a la Participación de " +
+            "este Expediente.",
         );
       }
-      if (requerimientoAplicable.perfilRecursoIds) {
-        await validarPerfilDelSujeto(
-            await sujetoActivoEnProyecto(
-                "persona", personaId, expediente.proyectoId,
-            ),
-            "Esta persona no tiene el rol requerido para este Requerimiento.",
-        );
-      }
+      await validarPerfilDelSujeto(
+          sujeto,
+          "Esta persona no tiene el rol requerido para este Requerimiento.",
+      );
     } else if (tipoEntidad === "recurso") {
       if (!recursoId) {
         throw new AppError(
@@ -391,15 +393,6 @@ class EvaluacionService {
             "nivel 'maquinaria'.",
         );
       }
-      if (requerimientoAplicable.perfilRecursoIds) {
-        await validarPerfilDelSujeto(
-            await sujetoActivoEnProyecto(
-                "recurso", recursoId, expediente.proyectoId,
-            ),
-            "Esta maquinaria no tiene la clasificación requerida para este " +
-            "Requerimiento.",
-        );
-      }
       const recurso = await recursoRepository.getById(recursoId);
       if (!recurso) {
         throw new AppError(400, "El Recurso indicado no existe.");
@@ -407,13 +400,22 @@ class EvaluacionService {
       if (recurso.estado !== "activo") {
         throw new AppError(400, "El Recurso indicado no está activo.");
       }
-      if (recurso.empresaId !== expediente.empresaId) {
+      // Debe estar asignado en la Participación del Expediente.
+      const sujeto = await sujetoActivoEnParticipacion(
+          "recurso", recursoId, expediente.participacionId,
+      );
+      if (!sujeto) {
         throw new AppError(
             400,
-            "El Recurso indicado no pertenece a la Empresa de este " +
-            "Expediente.",
+            "El Recurso indicado no está asignado a la Participación de " +
+            "este Expediente.",
         );
       }
+      await validarPerfilDelSujeto(
+          sujeto,
+          "Esta maquinaria no tiene la clasificación requerida para este " +
+          "Requerimiento.",
+      );
     }
 
     const metodoFinal = await this._resolverMetodoVerificacion({

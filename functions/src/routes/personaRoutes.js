@@ -40,6 +40,18 @@ router.post(
     requireRole(["superadmin"]),
     personaController.anonimizar,
 );
+router.get(
+    "/:id/relaciones", requireRole(ROLES_LECTURA),
+    personaController.listarRelaciones,
+);
+router.post(
+    "/:id/cambiar-empresa", requireRole(ROLES_ESCRITURA),
+    personaController.cambiarEmpresa,
+);
+router.post(
+    "/:id/terminar-relacion", requireRole(ROLES_ESCRITURA),
+    personaController.terminarRelacion,
+);
 router.put("/:id", requireRole(ROLES_ESCRITURA), personaController.update);
 router.delete(
     "/:id",

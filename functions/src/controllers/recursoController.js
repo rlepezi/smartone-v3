@@ -1,5 +1,5 @@
 const recursoService = require("../services/recursoService");
-const relacionRecursoService = require("../services/relacionRecursoService");
+const empresaRecursoService = require("../services/empresaRecursoService");
 
 /**
  * Controlador HTTP para el recurso Recurso.
@@ -15,7 +15,7 @@ class RecursoController {
   async getById(req, res, next) {
     try {
       const {id} = req.params;
-      const recurso = await recursoService.getRecursoById(id);
+      const recurso = await recursoService.obtenerRecurso(id, req.user);
       res.status(200).json({data: recurso});
     } catch (error) {
       next(error);
@@ -33,7 +33,7 @@ class RecursoController {
     try {
       const {estado, empresaId} = req.query;
       const recursos = await recursoService.listarRecursos(
-          {estado, empresaId},
+          {estado, empresaId}, req.user,
       );
       res.status(200).json({data: recursos});
     } catch (error) {
@@ -122,8 +122,7 @@ class RecursoController {
   }
 
   /**
-   * Lista las RelacionesRecurso de un Recurso (historial completo con
-   * cualquier Empresa).
+   * Historial de relaciones con Empresas visible para el actor.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -131,17 +130,19 @@ class RecursoController {
    */
   async listarRelaciones(req, res, next) {
     try {
-      const {id} = req.params;
-      const relaciones = await relacionRecursoService.listarPorRecurso(id);
-      res.status(200).json({data: relaciones});
+      const data = await empresaRecursoService.listarPorSujeto(
+          req.params.id, req.user,
+      );
+      res.status(200).json({data});
     } catch (error) {
       next(error);
     }
   }
 
   /**
-   * Cambia la Empresa activa de un Recurso (cierra la RelaciónRecurso
-   * activa actual y crea una nueva, en una sola transacción).
+   * Cambia la Empresa (finaliza la relación activa y crea la nueva). Si hay
+   * asignaciones afectadas responde 409 CONFIRMACION_REQUERIDA hasta que
+   * llegue `confirmado: true`.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -149,14 +150,30 @@ class RecursoController {
    */
   async cambiarEmpresa(req, res, next) {
     try {
-      const {id} = req.params;
-      const nuevaRelacion = await relacionRecursoService.cambiarEmpresa(
-          id, req.body, req.user,
+      const data = await empresaRecursoService.cambiarEmpresa(
+          req.params.id, req.body, req.user,
       );
       res.status(200).json({
-        message: "Empresa del recurso actualizada exitosamente.",
-        data: nuevaRelacion,
+        message: "Empresa del recurso actualizada exitosamente.", data,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Termina la relación activa con su Empresa (sin crear otra).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async terminarRelacion(req, res, next) {
+    try {
+      const data = await empresaRecursoService.terminarRelacion(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({message: "Relación terminada.", data});
     } catch (error) {
       next(error);
     }

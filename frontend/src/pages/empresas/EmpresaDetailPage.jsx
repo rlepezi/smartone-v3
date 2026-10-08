@@ -36,6 +36,7 @@ import { UltimosEventos, HistorialEventos } from "../../components/shared/Evento
 import { GrupoRequerimientos } from "../../components/shared/RequerimientosLista";
 import { BotonesEdicion } from "../../components/shared/BotonesEdicion";
 import { EmpresaEdicionForm } from "../../components/empresas/EmpresaEdicionForm";
+import { MandantesAsociadosPanel } from "../../components/empresas/MandantesAsociadosPanel";
 import { useEdicionInPlace } from "../../hooks/useEdicionInPlace";
 import { RecursosBloques } from "../../components/shared/RecursosBloques";
 import { ParticipantesCell } from "../../components/shared/ParticipantesCell";
@@ -43,8 +44,10 @@ import { BarraCumplimiento } from "../../components/proyectos/EmpresasParticipan
 
 // Mismos roles que ya exige el backend en POST /evaluaciones: mandante_admin
 // es intencionalmente solo lectura acá (no evalúa a sus propias contratistas).
-const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
+const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 const ROLES_EVALUACION = ["superadmin", "evaluador"];
+// Gestión de la asociación Empresa-Mandante (pestaña Mandantes).
+const ROLES_GESTION_MANDANTES = ["superadmin", "admin_comercial"];
 
 // Espejo de MAPEO_ESTADO_KPI_EMPRESA (reporteService.js) y del listado de
 // Empresas: estado del Expediente más reciente -> categoría de acreditación.
@@ -78,6 +81,7 @@ export const EmpresaDetailPage = () => {
   const { profile } = useAuth();
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
   const puedeEvaluar = ROLES_EVALUACION.includes(profile?.rol);
+  const gestionaMandantes = ROLES_GESTION_MANDANTES.includes(profile?.rol);
 
   const [tab, setTab] = useState("resumen");
 
@@ -570,6 +574,9 @@ export const EmpresaDetailPage = () => {
       )}
 
       {/* ---------------- Mandantes ---------------- */}
+      {tab === "mandantes" && gestionaMandantes && (
+        <MandantesAsociadosPanel empresaId={id} empresaNombre={empresa.razonSocial} />
+      )}
       {tab === "mandantes" && (
         cargando0 ? (
           <p className="text-xs text-slate-400 py-6 text-center">Cargando...</p>

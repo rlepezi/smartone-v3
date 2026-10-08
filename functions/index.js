@@ -63,8 +63,6 @@ const usuarioRoutes = require("./src/routes/usuarioRoutes");
 const proyectoRoutes = require("./src/routes/proyectoRoutes");
 const empresaRoutes = require("./src/routes/empresaRoutes");
 const personaRoutes = require("./src/routes/personaRoutes");
-const relacionLaboralRoutes =
-    require("./src/routes/relacionLaboralRoutes");
 const recursoRoutes = require("./src/routes/recursoRoutes");
 const perfilParticipacionRoutes =
     require("./src/routes/perfilParticipacionRoutes");
@@ -109,7 +107,6 @@ app.use("/usuarios", usuarioRoutes);
 app.use("/proyectos", proyectoRoutes);
 app.use("/empresas", empresaRoutes);
 app.use("/personas", personaRoutes);
-app.use("/relaciones-laborales", relacionLaboralRoutes);
 app.use("/recursos", recursoRoutes);
 app.use("/perfiles-participacion", perfilParticipacionRoutes);
 app.use("/perfiles-recurso", perfilRecursoRoutes);
@@ -145,6 +142,8 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({
     error: err.name || "InternalServerError",
     message: err.message || "Error interno en el servidor de SmartOne.",
+    ...(err.codigo ? {codigo: err.codigo} : {}),
+    ...(err.detalle !== undefined ? {detalle: err.detalle} : {}),
   });
 });
 

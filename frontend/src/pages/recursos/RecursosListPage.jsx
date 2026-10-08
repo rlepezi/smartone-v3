@@ -10,7 +10,6 @@ import { formatCatalogo } from "../../utils/formatCatalogo";
 import { proyectoService } from "../../services/proyectoService";
 import { sujetoService } from "../../services/participacionSujetoService";
 import { evaluacionService } from "../../services/evaluacionService";
-import { empresaService } from "../../services/empresaService";
 import { expedienteService } from "../../services/expedienteService";
 import { mandanteService } from "../../services/mandanteService";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
@@ -48,7 +47,6 @@ export const RecursosListPage = () => {
   const [proyectosMap, setProyectosMap] = useState({});
   // Para las columnas Mandante / Empresa / Evaluación (una línea por participación activa).
   const [proyectosPorId, setProyectosPorId] = useState({});
-  const [empresasMap, setEmpresasMap] = useState({});
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [mandantesCache, setMandantesCache] = useState({});
   const mandantesEnCursoRef = useRef(new Set());
@@ -104,14 +102,6 @@ export const RecursosListPage = () => {
         setProyectosPorId(porId);
       })
       .catch((err) => console.error("Error al cargar proyectos:", err));
-
-    empresaService.listar()
-      .then((data) => {
-        const map = {};
-        (data || []).forEach((e) => { map[e.id] = e.razonSocial; });
-        setEmpresasMap(map);
-      })
-      .catch((err) => console.error("Error al cargar empresas:", err));
 
     expedienteService.listar({})
       .then((data) => setExpedientesTodos(data || []))
@@ -416,7 +406,7 @@ export const RecursosListPage = () => {
                     ))}
                   </td>
                   <td className="py-4 px-6 text-slate-600 font-medium">
-                    {empresasMap[item.empresaId] || item.empresaId}
+                    {item.empresaActual?.empresaNombre || <span className="text-slate-400 italic">-</span>}
                   </td>
                   <td className="py-2 px-6 text-slate-600 font-medium">
                     {lineas((pt) => <p className="text-xs">{pt.proyectoNombre}</p>, "Sin asignación activa")}

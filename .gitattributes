@@ -1,0 +1,8 @@
+# Todo el texto se versiona y se trabaja con saltos de línea LF (lo exige
+# eslint linebreak-style en functions/). Evita que autocrlf de Windows
+# convierta el árbol de trabajo a CRLF al cambiar de rama.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.webp binary

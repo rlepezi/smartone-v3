@@ -7,11 +7,16 @@ const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 router.use(authMiddleware);
 
 // Lectura: catálogo global, visible para todos los roles del sistema.
+// admin_comercial lee, crea y edita Empresas y gestiona su asociación con
+// Mandantes (no tiene acceso a Personas ni Recursos). La visibilidad por
+// Mandante se decide en el servicio (utils/alcanceMandante.js).
 const ROLES_LECTURA = [
   "superadmin", "mandante_admin", "mandante_lector", "evaluador",
+  "admin_comercial",
 ];
 // Escritura: solo superadmin y CUALQUIER mandante_admin (no hay "dueño").
-const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
+const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
+const ROLES_GESTION_MANDANTES = ["superadmin", "admin_comercial"];
 
 router.get("/", requireRole(ROLES_LECTURA), empresaController.list);
 router.get("/:id", requireRole(ROLES_LECTURA), empresaController.getById);
@@ -22,6 +27,19 @@ router.get(
     "/:id/eventos-recientes",
     requireRole(ROLES_LECTURA),
     empresaController.eventosRecientes,
+);
+router.get(
+    "/:id/mandantes", requireRole(ROLES_LECTURA),
+    empresaController.listarMandantes,
+);
+// mandante_admin solo asocia a su propio Mandante (lo valida el servicio).
+router.post(
+    "/:id/mandantes", requireRole(ROLES_ESCRITURA),
+    empresaController.asociarMandante,
+);
+router.delete(
+    "/:id/mandantes/:mandanteId", requireRole(ROLES_GESTION_MANDANTES),
+    empresaController.desasociarMandante,
 );
 router.post("/", requireRole(ROLES_ESCRITURA), empresaController.create);
 router.put("/:id", requireRole(ROLES_ESCRITURA), empresaController.update);

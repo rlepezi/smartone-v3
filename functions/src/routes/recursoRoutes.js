@@ -32,14 +32,16 @@ router.delete(
     recursoController.deactivate,
 );
 router.get(
-    "/:id/relaciones",
-    requireRole(ROLES_LECTURA),
+    "/:id/relaciones", requireRole(ROLES_LECTURA),
     recursoController.listarRelaciones,
 );
 router.post(
-    "/:id/cambiar-empresa",
-    requireRole(ROLES_ESCRITURA),
+    "/:id/cambiar-empresa", requireRole(ROLES_ESCRITURA),
     recursoController.cambiarEmpresa,
+);
+router.post(
+    "/:id/terminar-relacion", requireRole(ROLES_ESCRITURA),
+    recursoController.terminarRelacion,
 );
 
 module.exports = router;
