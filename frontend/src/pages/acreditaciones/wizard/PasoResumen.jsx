@@ -2,9 +2,9 @@ import React, { useState } from "react";
 import {
   CheckCircle2, Loader2, AlertCircle, Building2, FolderKanban, IdCard, Users, Truck, X, ArrowRightLeft, Info,
 } from "lucide-react";
-import { formatCatalogo } from "../../../utils/formatCatalogo";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
-import { NuevoPerfilRecursoModal } from "../../../components/perfiles-recurso/NuevoPerfilRecursoModal";
+import { nombresPerfiles } from "../../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
 import { etiquetaTipoEntidad } from "../../../services/requerimientoService";
 
 const ItemProgreso = ({ estado, label }) => {
@@ -79,9 +79,7 @@ export const PasoResumen = ({
 }) => {
   const [detalle, setDetalle] = useState(null); // "personas" | "maquinarias" | "traslados" | "requisitos"
   const [confirmando, setConfirmando] = useState(false);
-  // Modal "Nuevo Perfil de Recurso" precargado desde el error, y los Perfiles ya creados desde aquí.
-  const [perfilModal, setPerfilModal] = useState(null); // { tipo, nombre }
-  const [perfilesCreados, setPerfilesCreados] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
 
   const personas = seleccion.filter((s) => s.tipo === "persona");
   const recursos = seleccion.filter((s) => s.tipo === "recurso");
@@ -100,10 +98,10 @@ export const PasoResumen = ({
 
   const estadoParticipacion = progreso?.participacionId ? "hecho" : ejecutando && !errorEjecucion ? "en_curso" : errorEjecucion?.paso === "participacion" ? "error" : "pendiente";
   const estadoAsignaciones = seleccion.length === 0 ? "hecho" :
-    progreso?.asignacionesListo ? "hecho" :
-    errorEjecucion?.paso === "asignaciones" ? "error" :
+    progreso?.sujetosListo ? "hecho" :
+    errorEjecucion?.paso === "sujetos" ? "error" :
     (progreso?.participacionId && ejecutando) ? "en_curso" : "pendiente";
-  const estadoExpediente = progreso?.expedienteId ? "hecho" : errorEjecucion?.paso === "expediente" ? "error" : (progreso?.asignacionesListo || (progreso?.participacionId && seleccion.length === 0)) && ejecutando ? "en_curso" : "pendiente";
+  const estadoExpediente = progreso?.expedienteId ? "hecho" : errorEjecucion?.paso === "expediente" ? "error" : (progreso?.sujetosListo || (progreso?.participacionId && seleccion.length === 0)) && ejecutando ? "en_curso" : "pendiente";
 
   const handleCrear = () => {
     // Un reintento (ya se creó algo) continúa directo; la primera vez pide confirmación final.
@@ -115,7 +113,9 @@ export const PasoResumen = ({
     <li key={`${e.tipo}-${e.id}`} className="flex items-center justify-between gap-3 text-xs border-b border-slate-100 last:border-0 pb-2 last:pb-0">
       <span className="font-semibold text-carbon-dark">
         {e.nombre}
-        {e.tipo === "persona" && e.rol && <span className="text-slate-500 font-normal"> — {formatCatalogo(e.rol)}</span>}
+        {(e.perfilRecursoIds || []).length > 0 && (
+          <span className="text-slate-500 font-normal"> — {nombresPerfiles(e.perfilRecursoIds, perfilesPorId)}</span>
+        )}
       </span>
       {e.participacionActiva && e.participacionActiva.proyectoId !== proyectoSel?.id ? (
         <span className="text-[10px] font-bold text-amber-700 whitespace-nowrap">Desde {e.participacionActiva.proyectoNombre}</span>
@@ -284,29 +284,6 @@ export const PasoResumen = ({
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <div className="space-y-2">
             <span>{errorEjecucion.mensaje}</span>
-            {errorEjecucion.solucionables?.length > 0 && (
-              <div className="flex flex-col gap-1 pt-1">
-                {/* Un enlace por cada rol/clasificación distinto: abre "Nuevo Perfil" precargado, en un modal. */}
-                {[...new Map(errorEjecucion.solucionables.map((e) => [`${e.tipo === "persona" ? "persona" : "recurso"}|${e.valor}`, e])).values()].map((e) => {
-                  const tipoPerfil = e.tipo === "persona" ? "persona" : "recurso";
-                  const yaCreado = perfilesCreados.includes(`${tipoPerfil}|${e.valor}`);
-                  return yaCreado ? (
-                    <span key={`${tipoPerfil}-${e.valor}`} className="font-bold text-sage-dark">
-                      Perfil «{e.valor}» creado — ya puedes reintentar.
-                    </span>
-                  ) : (
-                    <button
-                      key={`${tipoPerfil}-${e.valor}`}
-                      type="button"
-                      onClick={() => setPerfilModal({ tipo: tipoPerfil, nombre: e.valor || "" })}
-                      className="font-bold text-red-800 underline underline-offset-2 w-fit text-left"
-                    >
-                      Gestionar Perfiles de Recurso →{e.valor ? ` (crear «${e.valor}»)` : ""}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -328,17 +305,6 @@ export const PasoResumen = ({
           {ejecutando ? "Procesando..." : errorEjecucion ? "Reintentar" : "Crear acreditación"}
         </button>
       </div>
-
-      {perfilModal && (
-        <NuevoPerfilRecursoModal
-          inicial={{ nombre: perfilModal.nombre, tipo: perfilModal.tipo, mandanteId: errorEjecucion?.mandanteId || "" }}
-          onCerrar={() => setPerfilModal(null)}
-          onGuardado={() => {
-            setPerfilesCreados((prev) => [...prev, `${perfilModal.tipo}|${perfilModal.nombre}`]);
-            setPerfilModal(null);
-          }}
-        />
-      )}
 
       {confirmando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setConfirmando(false)}>

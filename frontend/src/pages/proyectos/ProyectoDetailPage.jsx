@@ -19,7 +19,9 @@ import { participacionService } from "../../services/participacionService";
 import { empresaService } from "../../services/empresaService";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
-import { asignacionService } from "../../services/asignacionService";
+import {
+  sujetoService, participacionPersonaService, participacionRecursoService,
+} from "../../services/participacionSujetoService";
 import { reporteService } from "../../services/reporteService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
 import { formatFecha } from "../../utils/fechaFormatters";
@@ -57,7 +59,7 @@ const FORM_INICIAL = {
   tipo: "persona",
   personaId: "",
   recursoId: "",
-  rol: "",
+  perfilRecursoIds: [],
   fechaInicio: "",
   fechaTermino: "",
 };
@@ -75,11 +77,13 @@ export const ProyectoDetailPage = () => {
   const [error, setError] = useState(null);
 
   const [participaciones, setParticipaciones] = useState([]);
-  const [asignaciones, setAsignaciones] = useState([]);
+  // Personas y Maquinarias activas del Proyecto, agrupadas por sujeto (con sus perfiles).
+  const [sujetos, setSujetos] = useState([]);
   const [empresasMap, setEmpresasMap] = useState({});
   const [personasActivas, setPersonasActivas] = useState([]);
   const [recursosActivos, setRecursosActivos] = useState([]);
-  const [rolesDisponibles, setRolesDisponibles] = useState([]);
+  // Perfiles de Recurso activos del Mandante (persona y maquinaria), elegidos por ID.
+  const [perfilesMandante, setPerfilesMandante] = useState([]);
 
   const [formAbierto, setFormAbierto] = useState(false);
   const [formData, setFormData] = useState(FORM_INICIAL);
@@ -111,14 +115,12 @@ export const ProyectoDetailPage = () => {
   };
 
   const cargarRelaciones = async (proyectoId) => {
-    const [participacionesData, asignacionesData] = await Promise.all([
+    const [participacionesData, sujetosData] = await Promise.all([
       participacionService.listar({ proyectoId }),
-      asignacionService.listar({ proyectoId, estado: "activa" }),
+      sujetoService.listar({ proyectoId, estado: "activa" }),
     ]);
     setParticipaciones((participacionesData || []).filter((p) => p.proyectoId === proyectoId));
-    // Para mandante_admin/lector el backend ignora el filtro proyectoId (fuerza
-    // su Mandante), así que se acota acá al Proyecto de esta pantalla.
-    setAsignaciones((asignacionesData || []).filter((a) => a.proyectoId === proyectoId));
+    setSujetos((sujetosData || []).filter((a) => a.proyectoId === proyectoId));
     cargarCumplimiento(proyectoId);
   };
 
@@ -168,9 +170,9 @@ export const ProyectoDetailPage = () => {
   useEffect(() => {
     if (!proyecto?.mandanteId) return;
     perfilRecursoService
-      .listar({ mandanteId: proyecto.mandanteId, tipo: "persona", estado: "activo" })
-      .then((data) => setRolesDisponibles(data || []))
-      .catch((err) => console.error("Error al cargar roles disponibles:", err));
+      .listar({ mandanteId: proyecto.mandanteId, estado: "activo" })
+      .then((data) => setPerfilesMandante(data || []))
+      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
   }, [proyecto?.mandanteId]);
 
   const participacionesActivas = participaciones.filter((p) => p.estado === "activa");
@@ -208,14 +210,16 @@ export const ProyectoDetailPage = () => {
     }
   };
 
-  const handleQuitarAsignacion = async (asignacionId) => {
-    if (!window.confirm("¿Quitar del Proyecto? Se finaliza la Asignación; es una transición terminal, no podrá revertirse.")) return;
-    setAccionandoId(asignacionId);
+  const handleQuitarSujeto = async (sujetoKey) => {
+    const sujeto = sujetos.find((a) => a.id === sujetoKey);
+    if (!sujeto) return;
+    if (!window.confirm("¿Quitar del Proyecto? Se finaliza su participación (con todos sus perfiles); es una transición terminal, no podrá revertirse.")) return;
+    setAccionandoId(sujetoKey);
     try {
-      await asignacionService.transicionar(asignacionId, "finalizada");
+      await sujetoService.finalizar(sujeto);
       await cargarRelaciones(proyecto.id);
     } catch (err) {
-      setError(err.message || "No se pudo quitar la Asignación.");
+      setError(err.message || "No se pudo quitar del Proyecto.");
     } finally {
       setAccionandoId(null);
     }
@@ -234,13 +238,13 @@ export const ProyectoDetailPage = () => {
   };
 
   const handleTipoChange = (tipo) => {
-    setFormData((prev) => ({ ...prev, tipo, personaId: "", recursoId: "", rol: "" }));
+    setFormData((prev) => ({ ...prev, tipo, personaId: "", recursoId: "", perfilRecursoIds: [] }));
   };
 
   // Alta al vuelo desde el propio formulario de "Nueva Asignación": crea
   // la Persona/Maquinaria en la Empresa ya elegida (vía modal, mismo
   // patrón que PasoAsignaciones.jsx) y la deja preseleccionada, sin salir
-  // del formulario ni perder lo ya llenado (fechas, rol, etc.).
+  // del formulario ni perder lo ya llenado (fechas, perfiles, etc.).
   const handlePersonaCreada = (persona) => {
     setModalPersonaAbierto(false);
     setPersonasActivas((prev) => [...prev, persona]);
@@ -250,11 +254,22 @@ export const ProyectoDetailPage = () => {
   const handleRecursoCreado = (recurso) => {
     setModalRecursoAbierto(false);
     setRecursosActivos((prev) => [...prev, recurso]);
-    setFormData((prev) => ({ ...prev, tipo: "recurso", recursoId: recurso.id }));
+    setFormData((prev) => ({ ...prev, tipo: "recurso", recursoId: recurso.id, perfilRecursoIds: perfilSugerido(recurso) }));
   };
 
   const opcionesPersona = personasActivas.filter((p) => p.empresaId === formData.empresaId);
   const opcionesRecurso = recursosActivos.filter((r) => r.empresaId === formData.empresaId);
+  const perfilesDelTipo = perfilesMandante.filter((p) => p.tipo === formData.tipo);
+  // La clasificación descriptiva del Recurso (tipo) solo PRESELECCIONA el perfil del mismo nombre.
+  function perfilSugerido(recurso) {
+    const p = perfilesMandante.find((x) => x.tipo === "recurso" && x.nombre === recurso?.tipo);
+    return p ? [p.id] : [];
+  }
+  const alternarPerfilPersona = (id) => setFormData((prev) => ({
+    ...prev,
+    perfilRecursoIds: prev.perfilRecursoIds.includes(id)
+      ? prev.perfilRecursoIds.filter((x) => x !== id) : [...prev.perfilRecursoIds, id],
+  }));
 
   const handleGuardarAsignacion = async () => {
     setErrorForm(null);
@@ -271,8 +286,8 @@ export const ProyectoDetailPage = () => {
       setErrorForm("Debe seleccionar una Maquinaria.");
       return;
     }
-    if (formData.tipo === "persona" && !formData.rol) {
-      setErrorForm("Debe seleccionar un Rol.");
+    if (formData.perfilRecursoIds.length === 0) {
+      setErrorForm("Debe seleccionar el Perfil de Recurso.");
       return;
     }
     if (!formData.fechaInicio) {
@@ -289,21 +304,19 @@ export const ProyectoDetailPage = () => {
       const payload = {
         proyectoId: proyecto.id,
         empresaId: formData.empresaId,
+        perfilRecursoIds: formData.perfilRecursoIds,
         fechaInicio: formData.fechaInicio,
         fechaTermino: formData.fechaTermino || null,
       };
       if (formData.tipo === "persona") {
-        payload.personaId = formData.personaId;
-        payload.rol = formData.rol;
+        await participacionPersonaService.crear({ ...payload, personaId: formData.personaId });
       } else {
-        payload.recursoId = formData.recursoId;
+        await participacionRecursoService.crear({ ...payload, recursoId: formData.recursoId });
       }
-
-      await asignacionService.crear(payload);
       await cargarRelaciones(proyecto.id);
       cerrarFormulario();
     } catch (err) {
-      console.error("Error al crear la asignación:", err);
+      console.error("Error al asignar:", err);
       setErrorForm(err.message || "No se pudo crear la asignación.");
     } finally {
       setGuardando(false);
@@ -369,7 +382,7 @@ export const ProyectoDetailPage = () => {
 
   const campoInfo = (etiqueta, valor) => <CampoInfo etiqueta={etiqueta}>{valor}</CampoInfo>;
 
-  // Gestión de Asignaciones ("+ Nueva Asignación"): mismo bloque de siempre, ahora dentro de la pestaña Recursos.
+  // Gestión de Personas/Maquinarias asignadas ("+ Nueva Asignación"), dentro de la pestaña Recursos.
   const gestionAsignaciones = (
       <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-gray-100">
@@ -463,7 +476,10 @@ export const ProyectoDetailPage = () => {
                 <div className="flex items-center gap-2">
                   <select
                     value={formData.recursoId}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, recursoId: e.target.value }))}
+                    onChange={(e) => {
+                      const recurso = opcionesRecurso.find((r) => r.id === e.target.value);
+                      setFormData((prev) => ({ ...prev, recursoId: e.target.value, perfilRecursoIds: perfilSugerido(recurso) }));
+                    }}
                     disabled={!formData.empresaId}
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white disabled:bg-slate-100 disabled:text-slate-400"
                   >
@@ -489,21 +505,42 @@ export const ProyectoDetailPage = () => {
               </div>
             )}
 
-            {formData.tipo === "persona" && (
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Rol *</label>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                {formData.tipo === "persona" ? "Perfiles de Recurso * (uno o más)" : "Perfil de Recurso *"}
+              </label>
+              {formData.tipo === "persona" ? (
+                <div className="flex flex-wrap gap-2">
+                  {perfilesDelTipo.map((p) => {
+                    const activo = formData.perfilRecursoIds.includes(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        aria-pressed={activo}
+                        onClick={() => alternarPerfilPersona(p.id)}
+                        className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
+                          activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        {p.nombre}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
                 <select
-                  value={formData.rol}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, rol: e.target.value }))}
+                  value={formData.perfilRecursoIds[0] || ""}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, perfilRecursoIds: e.target.value ? [e.target.value] : [] }))}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
                 >
-                  <option value="">Seleccione un Rol...</option>
-                  {rolesDisponibles.map((r) => (
-                    <option key={r.id} value={r.nombre}>{r.nombre}</option>
+                  <option value="">Seleccione un Perfil de Recurso...</option>
+                  {perfilesDelTipo.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nombre}</option>
                   ))}
                 </select>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -765,7 +802,7 @@ export const ProyectoDetailPage = () => {
           proyectoId={proyecto.id}
           participantes={listaParticipantes}
           participaciones={participaciones}
-          asignaciones={asignaciones}
+          sujetos={sujetos}
           personas={personasActivas}
           recursos={recursosActivos}
           cabecera={modoEdicion ? gestionAsignaciones : null}
@@ -774,7 +811,7 @@ export const ProyectoDetailPage = () => {
               icon={UserMinus}
               busy={accionandoId === fila.key}
               busyLabel="..."
-              onClick={() => handleQuitarAsignacion(fila.key)}
+              onClick={() => handleQuitarSujeto(fila.key)}
             >
               Quitar
             </ActionButton>
@@ -786,7 +823,7 @@ export const ProyectoDetailPage = () => {
         <RequerimientosProyecto
           proyectoId={proyecto.id}
           participantes={listaParticipantes}
-          asignaciones={asignaciones}
+          sujetos={sujetos}
           personas={personasActivas}
           recursos={recursosActivos}
           modoEdicion={modoEdicion}
@@ -798,7 +835,7 @@ export const ProyectoDetailPage = () => {
           proyectoId={proyecto.id}
           participantes={listaParticipantes}
           modoEdicion={modoEdicion}
-          asignaciones={asignaciones}
+          sujetos={sujetos}
           personas={personasActivas}
           recursos={recursosActivos}
           onCambio={() => cargarCumplimiento(proyecto.id)}

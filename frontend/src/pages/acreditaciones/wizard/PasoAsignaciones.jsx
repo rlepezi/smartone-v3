@@ -12,14 +12,16 @@ import {
 
 const MAX_FILAS_CORTAS = 5;
 
-// Paso opcional: arma en memoria la lista de Personas/Recursos a asignar — no crea ninguna
-// Asignación ni traslado todavía. Eso ocurre recién al confirmar en el paso de Confirmación,
+// Paso opcional: arma en memoria la lista de Personas/Recursos a asignar, cada una con sus
+// Perfiles de Recurso (por ID, de los activos del Mandante; Personas: uno o más, Maquinarias:
+// uno) — no crea nada ni traslada todavía. Eso ocurre recién al confirmar en el paso de Confirmación,
 // vía acreditacionService.asignarEntidad (mismo mecanismo de "Cambiar Proyecto"/"Reemplazar
 // Acreditación": si ya están activos en otro Proyecto, los mueve en vez de fallar).
 export const PasoAsignaciones = ({ mandanteId, empresaId, proyectoSel, seleccion, onCambiarSeleccion }) => {
   const [personas, setPersonas] = useState([]);
   const [recursos, setRecursos] = useState([]);
-  const [rolesDisponibles, setRolesDisponibles] = useState([]);
+  // Perfiles de Recurso activos del Mandante (persona y maquinaria).
+  const [perfilesMandante, setPerfilesMandante] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchPersonas, setSearchPersonas] = useState("");
@@ -51,24 +53,30 @@ export const PasoAsignaciones = ({ mandanteId, empresaId, proyectoSel, seleccion
   useEffect(() => {
     if (!mandanteId) return;
     perfilRecursoService
-      .listar({ mandanteId, tipo: "persona", estado: "activo" })
-      .then((data) => setRolesDisponibles(data || []))
-      .catch((err) => console.error("Error al cargar roles disponibles:", err));
+      .listar({ mandanteId, estado: "activo" })
+      .then((data) => setPerfilesMandante(data || []))
+      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
   }, [mandanteId]);
 
   const estaSeleccionado = (tipo, id) => seleccion.some((s) => s.tipo === tipo && s.id === id);
   const buscarSeleccion = (tipo, id) => seleccion.find((s) => s.tipo === tipo && s.id === id);
 
-  // El rol por defecto debe ser la Función propia de la Persona
-  // (cargoActivo, la que se ve al crearla o editarla) — nunca el primer
-  // ítem del catálogo del Mandante, que es arbitrario y no tiene relación
-  // con la Persona seleccionada (bug: mostraba siempre el mismo rol para
-  // todas, ej. "prevencionista" en vez de la Función real de cada una).
+  const perfilesDe = (tipo) => perfilesMandante.filter((p) => p.tipo === (tipo === "persona" ? "persona" : "recurso"));
+
+  // Perfil preseleccionado: el del mismo nombre que la Función propia de la Persona (cargoActivo)
+  // o que la clasificación descriptiva de la Maquinaria (tipo) — nunca el primero del catálogo,
+  // que es arbitrario. Si no hay coincidencia queda vacío y se elige a mano.
+  const perfilSugerido = (tipo, item) => {
+    const texto = (tipo === "persona" ? item.cargoActivo : item.tipo || "").trim().toLowerCase();
+    const p = perfilesDe(tipo).find((x) => x.nombre.trim().toLowerCase() === texto);
+    return p ? [p.id] : [];
+  };
+
   const armarItem = (tipo, item) => ({
     tipo,
     id: item.id,
     nombre: tipo === "persona" ? `${item.nombre} ${item.apellido || ""}`.trim() : item.nombre,
-    rol: tipo === "persona" ? (item.cargoActivo || rolesDisponibles[0]?.nombre || "") : null,
+    perfilRecursoIds: perfilSugerido(tipo, item),
     participacionActiva: item.participacionActiva || null,
   });
 
@@ -83,12 +91,18 @@ export const PasoAsignaciones = ({ mandanteId, empresaId, proyectoSel, seleccion
     }
   };
 
-  const cambiarRol = (id, rol) => {
-    onCambiarSeleccion(seleccion.map((s) => (s.tipo === "persona" && s.id === id ? { ...s, rol } : s)));
+  // Persona: los perfiles se alternan (uno o más). Maquinaria: uno solo.
+  const cambiarPerfiles = (tipo, id, perfilRecursoIds) => {
+    onCambiarSeleccion(seleccion.map((s) => (s.tipo === tipo && s.id === id ? { ...s, perfilRecursoIds } : s)));
+  };
+  const alternarPerfilPersona = (sel, perfilId) => {
+    const actuales = sel.perfilRecursoIds || [];
+    cambiarPerfiles("persona", sel.id, actuales.includes(perfilId)
+      ? actuales.filter((x) => x !== perfilId) : [...actuales, perfilId]);
   };
 
   // El panel "Ver todas" entrega los ids finales de ese tipo; se conservan las entradas ya
-  // existentes (con su rol elegido) y se agregan/quitan solo las diferencias.
+  // existentes (con sus perfiles elegidos) y se agregan/quitan solo las diferencias.
   const aplicarSeleccionPanel = (tipo, ids) => {
     const catalogo = tipo === "persona" ? personas : recursos;
     const idsSet = new Set(ids);
@@ -174,13 +188,38 @@ export const PasoAsignaciones = ({ mandanteId, empresaId, proyectoSel, seleccion
                     <BadgesDisponibilidad item={i} proyectoActualId={proyectoActualId} seleccionada={Boolean(sel)} />
                   </label>
                   {sel && tipo === "persona" && (
+                    <div className="mt-1.5 ml-6 flex flex-wrap gap-1.5" aria-label="Perfiles de Recurso">
+                      {perfilesDe("persona").map((p) => {
+                        const activo = (sel.perfilRecursoIds || []).includes(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            aria-pressed={activo}
+                            onClick={() => alternarPerfilPersona(sel, p.id)}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-colors ${
+                              activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            {p.nombre}
+                          </button>
+                        );
+                      })}
+                      {(sel.perfilRecursoIds || []).length === 0 && (
+                        <span className="text-[10px] font-semibold text-red-500 self-center">Elige al menos un perfil</span>
+                      )}
+                    </div>
+                  )}
+                  {sel && tipo === "recurso" && (
                     <select
-                      value={sel.rol}
-                      onChange={(e) => cambiarRol(i.id, e.target.value)}
+                      value={(sel.perfilRecursoIds || [])[0] || ""}
+                      onChange={(e) => cambiarPerfiles("recurso", i.id, e.target.value ? [e.target.value] : [])}
+                      aria-label="Perfil de Recurso"
                       className="mt-1.5 ml-6 px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                     >
-                      {rolesDisponibles.map((r) => (
-                        <option key={r.id} value={r.nombre}>{r.nombre}</option>
+                      <option value="">Perfil de Recurso...</option>
+                      {perfilesDe("recurso").map((p) => (
+                        <option key={p.id} value={p.id}>{p.nombre}</option>
                       ))}
                     </select>
                   )}

@@ -9,7 +9,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { proyectoService, ESTADOS_PROYECTO } from "../../services/proyectoService";
 import { mandanteService } from "../../services/mandanteService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService } from "../../services/participacionSujetoService";
 import { participacionService } from "../../services/participacionService";
 import { reporteService } from "../../services/reporteService";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
@@ -104,8 +104,8 @@ export const ProyectosListPage = () => {
   // pantallas (Dashboard/ExpedientesListPage/ReportesPage).
   const [proyectosTodos, setProyectosTodos] = useState([]);
   const [cargandoProyectosTodos, setCargandoProyectosTodos] = useState(true);
-  const [asignacionesActivas, setAsignacionesActivas] = useState([]);
-  const [cargandoAsignaciones, setCargandoAsignaciones] = useState(true);
+  const [sujetosActivos, setSujetosActivos] = useState([]);
+  const [cargandoSujetos, setCargandoSujetos] = useState(true);
   const [participacionesActivas, setParticipacionesActivas] = useState([]);
   const [cargandoParticipaciones, setCargandoParticipaciones] = useState(true);
   const [resumenGeneral, setResumenGeneral] = useState(null);
@@ -166,10 +166,10 @@ export const ProyectosListPage = () => {
       .catch((err) => console.error("Error al cargar proyectos (KPI Mandante):", err))
       .finally(() => setCargandoProyectosTodos(false));
 
-    asignacionService.listar({ estado: "activa" })
-      .then((data) => setAsignacionesActivas(data || []))
-      .catch((err) => console.error("Error al cargar asignaciones:", err))
-      .finally(() => setCargandoAsignaciones(false));
+    sujetoService.listar({ estado: "activa" })
+      .then((data) => setSujetosActivos(data || []))
+      .catch((err) => console.error("Error al cargar personas y maquinarias asignadas:", err))
+      .finally(() => setCargandoSujetos(false));
 
     participacionService.listar({ estado: "activa" })
       .then((data) => setParticipacionesActivas(data || []))
@@ -262,22 +262,22 @@ export const ProyectosListPage = () => {
   const proyectosPaginados = proyectosFiltrados.slice((page - 1) * pageSize, page * pageSize);
 
   // Conteos por Proyecto — derivados de las listas activas ya cargadas
-  // (Participaciones y Asignaciones), sin pedir nada extra por fila.
+  // (Participaciones y personas/maquinarias asignadas), sin pedir nada extra por fila.
   const empresasDe = (proyectoId) =>
     new Set(participacionesActivas.filter((p) => p.proyectoId === proyectoId).map((p) => p.empresaId)).size;
   const personasDe = (proyectoId) =>
-    asignacionesActivas.filter((a) => a.proyectoId === proyectoId && a.personaId).length;
+    sujetosActivos.filter((a) => a.proyectoId === proyectoId && a.personaId).length;
   const recursosDe = (proyectoId) =>
-    asignacionesActivas.filter((a) => a.proyectoId === proyectoId && a.recursoId).length;
+    sujetosActivos.filter((a) => a.proyectoId === proyectoId && a.recursoId).length;
 
   // KPIs — sobre el alcance completo del actor (mismo criterio que las
   // tarjetas KPI del Dashboard: no varían con los filtros de la tabla).
   const proyectosActivosCount = proyectos.filter((p) => p.estado === "en_ejecucion").length;
   const empresasParticipandoCount = new Set(participacionesActivas.map((p) => p.empresaId)).size;
-  // Recursos: mismas Asignaciones activas que alimentan las columnas
+  // Recursos: mismas personas/maquinarias activas que alimentan las columnas
   // "Recursos" de la tabla (personasDe/recursosDe), sumadas en total.
-  const personasActivasCount = asignacionesActivas.filter((a) => a.personaId).length;
-  const maquinariasActivasCount = asignacionesActivas.filter((a) => a.recursoId).length;
+  const personasActivasCount = sujetosActivos.filter((a) => a.personaId).length;
+  const maquinariasActivasCount = sujetosActivos.filter((a) => a.recursoId).length;
   // Mandantes distintos en el alcance del actor. Se cuenta sobre el listado
   // completo de Proyectos (no el filtrado por Estado de la tabla). Un
   // mandante_admin/lector siempre ve solo el suyo.
@@ -308,7 +308,7 @@ export const ProyectosListPage = () => {
       // reemplaza a `value` en el render.
       key: "recursos", title: "Recursos", icon: Users,
       color: "text-sky-600", bg: "bg-sky-100",
-      loading: cargandoAsignaciones, value: null, delta: null,
+      loading: cargandoSujetos, value: null, delta: null,
       recursos: [
         { label: "Personas", icon: Users, valor: personasActivasCount },
         { label: "Maquinarias", icon: Truck, valor: maquinariasActivasCount },
@@ -354,8 +354,8 @@ export const ProyectosListPage = () => {
   // reutilizado por la tabla y por la tarjeta de la vista en grilla.
   const participantesResumen = (proyectoId) => (
     <ParticipantesCell
-      personas={cargandoAsignaciones ? "…" : personasDe(proyectoId)}
-      maquinarias={cargandoAsignaciones ? "…" : recursosDe(proyectoId)}
+      personas={cargandoSujetos ? "…" : personasDe(proyectoId)}
+      maquinarias={cargandoSujetos ? "…" : recursosDe(proyectoId)}
     />
   );
 

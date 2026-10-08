@@ -7,18 +7,17 @@ const requerimientoRepository =
     require("../repositories/requerimientoRepository");
 const participacionRepository =
     require("../repositories/participacionRepository");
-const asignacionRepository = require("../repositories/asignacionRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const evaluacionRepository = require("../repositories/evaluacionRepository");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
 const proyectoService = require("./proyectoService");
 const AppError = require("../utils/AppError");
+const {aplicaRequerimientoASujeto} =
+    require("../utils/aplicabilidadRequerimiento");
 const {
-  aplicaRequerimientoASujeto, sujetoDeAsignacion,
-} = require("../utils/aplicabilidadRequerimiento");
-// TRANSICIÓN bloque 2: perfilRecursoId de cada Asignación.
-const {resolverPerfilesRecurso} = require("../utils/transicionPerfilRecurso");
+  sujetosActivosDeParticipacion, sujetosActivosDeProyecto,
+} = require("../utils/sujetosParticipacion");
 
 // Mapeo de estado de Expediente -> categoría del KPI de Empresas. Decisión
 // de diseño deliberada, no cambiar sin revisar el resto del reporte:
@@ -476,13 +475,10 @@ class ReporteService {
    *     expedienteEstado: ?string}}>} El resumen.
    */
   async resumirParticipacion(participacion) {
-    const [{expediente, vigentes}, asignaciones] = await Promise.all([
+    const [{expediente, vigentes}, propias] = await Promise.all([
       this._expedienteYVigentes(participacion.id),
-      asignacionRepository.getActivasByProyecto(participacion.proyectoId),
+      sujetosActivosDeParticipacion(participacion.id),
     ]);
-    const propias = asignaciones.filter(
-        (a) => a.empresaId === participacion.empresaId,
-    );
     const distintos = (campo) =>
       new Set(propias.filter((a) => a[campo]).map((a) => a[campo])).size;
     const {avancePct, cumple, noCumple, pendiente, noAplica} =
@@ -500,28 +496,29 @@ class ReporteService {
   }
 
   /**
-   * Cuenta, entre las Asignaciones activas de una Empresa en un Proyecto,
+   * Cuenta, entre los sujetos activos de una Empresa en un Proyecto,
    * cuántas Personas (o Maquinarias) están "acreditadas": todos sus
    * Requerimientos propios aplicables (según aplicaRequerimientoASujeto,
-   * con el Perfil de Recurso de su Asignación) tienen Evaluación vigente en
+   * con el conjunto de sus Perfiles de Recurso) tienen Evaluación vigente en
    * `cumple` o `no_aplica`. Un Requerimiento sin Evaluación cuenta como
    * pendiente (mismo criterio que
    * expedienteService._validarEvaluacionesCompletas). Sin Expediente no
    * hay contra qué evaluar, así que nadie queda acreditado; con
    * Expediente pero sin Requerimientos propios aplicables, el sujeto
    * cuenta como acreditado (no tiene nada pendiente).
-   * @param {Object[]} asignaciones Asignaciones activas de la Empresa.
+   * @param {Object[]} sujetos Sujetos activos de la Empresa (ver
+   *     utils/sujetosParticipacion.js).
    * @param {string} campoId "personaId" o "recursoId".
    * @param {?Object} expediente Expediente de la Participación, o null.
    * @param {Object[]} vigentes Evaluaciones vigentes de ese Expediente.
    * @return {{acreditadas: number, total: number}} El conteo.
    */
-  _contarAcreditados(asignaciones, campoId, expediente, vigentes) {
+  _contarAcreditados(sujetos, campoId, expediente, vigentes) {
     const aplicables = expediente?.requerimientosAplicables || [];
 
     const vistos = new Set();
     let acreditadas = 0;
-    asignaciones.forEach((a) => {
+    sujetos.forEach((a) => {
       const sujetoId = a[campoId];
       if (!sujetoId || vistos.has(sujetoId)) return;
       vistos.add(sujetoId);
@@ -529,8 +526,7 @@ class ReporteService {
 
       const propios = new Set(
           aplicables
-              .filter((r) => aplicaRequerimientoASujeto(
-                  r, sujetoDeAsignacion(a)))
+              .filter((r) => aplicaRequerimientoASujeto(r, a))
               .map((r) => r.requerimientoId),
       );
       const vigentesPropias = vigentes.filter(
@@ -563,10 +559,9 @@ class ReporteService {
     // Proyecto no es visible para él), igual que el resto del módulo.
     await proyectoService.getProyectoById(proyectoId, actor);
 
-    const [participaciones, asignacionesProyecto] = await Promise.all([
+    const [participaciones, sujetosProyecto] = await Promise.all([
       participacionRepository.list({proyectoId, estado: "activa"}),
-      asignacionRepository.getActivasByProyecto(proyectoId)
-          .then(resolverPerfilesRecurso),
+      sujetosActivosDeProyecto(proyectoId),
     ]);
 
     const filas = await Promise.all(participaciones.map(async (p) => {
@@ -578,8 +573,8 @@ class ReporteService {
         this._expedienteYVigentes(p.id),
       ]);
 
-      const asignacionesEmpresa = asignacionesProyecto.filter(
-          (a) => a.empresaId === p.empresaId,
+      const sujetosEmpresa = sujetosProyecto.filter(
+          (a) => a.participacionId === p.id,
       );
 
       return {
@@ -591,10 +586,10 @@ class ReporteService {
         cumplimientoPct:
             this._calcularAvanceRequerimientos(vigentes).avancePct,
         personas: this._contarAcreditados(
-            asignacionesEmpresa, "personaId", expediente, vigentes,
+            sujetosEmpresa, "personaId", expediente, vigentes,
         ),
         maquinarias: this._contarAcreditados(
-            asignacionesEmpresa, "recursoId", expediente, vigentes,
+            sujetosEmpresa, "recursoId", expediente, vigentes,
         ),
         estado: p.estado,
       };

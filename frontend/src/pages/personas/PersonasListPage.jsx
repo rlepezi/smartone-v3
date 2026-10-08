@@ -12,7 +12,8 @@ import { participacionService } from "../../services/participacionService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService } from "../../services/evaluacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { proyectoService } from "../../services/proyectoService";
 import { mandanteService } from "../../services/mandanteService";
 import { formatCatalogo } from "../../utils/formatCatalogo";
@@ -80,9 +81,10 @@ export const PersonasListPage = () => {
   const [personaCambiandoProyecto, setPersonaCambiandoProyecto] = useState(null);
 
   // Una fila por Persona, pero Mandante/Proyecto/Perfil/Rol/Acreditación/
-  // Evaluación se desglosan por Asignación activa (una línea por Proyecto).
-  const [asignacionesActivas, setAsignacionesActivas] = useState([]);
-  const [cargandoAsignaciones, setCargandoAsignaciones] = useState(true);
+  // Evaluación se desglosan por participación activa (una línea por Proyecto, con sus perfiles).
+  const [sujetosActivos, setSujetosActivos] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
+  const [cargandoSujetos, setCargandoSujetos] = useState(true);
   const [proyectosMap, setProyectosMap] = useState({});
   const [mandantesCache, setMandantesCache] = useState({});
   const mandantesEnCursoRef = useRef(new Set());
@@ -111,7 +113,7 @@ export const PersonasListPage = () => {
       .finally(() => resumenesEnCursoRef.current.delete(personaId));
   };
 
-  // Participaciones activas, Expedientes, Evaluaciones vigentes y Asignaciones
+  // Participaciones activas, Expedientes, Evaluaciones vigentes y personas asignadas
   // activas: base de las líneas por Participación y de los filtros.
   const cargarRelacionados = () => {
     participacionService.listar({ estado: "activa" })
@@ -127,10 +129,10 @@ export const PersonasListPage = () => {
       .catch((err) => console.error("Error al cargar evaluaciones:", err))
       .finally(() => setCargandoEvaluaciones(false));
 
-    asignacionService.listar({ estado: "activa" })
-      .then((data) => setAsignacionesActivas(data || []))
-      .catch((err) => console.error("Error al cargar asignaciones:", err))
-      .finally(() => setCargandoAsignaciones(false));
+    sujetoService.listar({ estado: "activa" })
+      .then((data) => setSujetosActivos(data || []))
+      .catch((err) => console.error("Error al cargar participaciones de personas:", err))
+      .finally(() => setCargandoSujetos(false));
   };
 
   const recargarTrasCambio = () => {
@@ -262,26 +264,24 @@ export const PersonasListPage = () => {
 
   const expedientesDe = (persona) => {
     const proyectosAsignados = new Set(
-      (resumenesMap[persona.id]?.asignacionesActivas || []).map((a) => a.proyectoId),
+      (resumenesMap[persona.id]?.participacionesActivas || []).map((a) => a.proyectoId),
     );
     return expedientesTodos.filter(
       (e) => e.empresaId === persona.empresaId && proyectosAsignados.has(e.proyectoId),
     );
   };
 
-  // Una línea por Asignación activa de la Persona, con SU Mandante, Perfil,
+  // Una línea por participación activa de la Persona, con SU Mandante, Perfil,
   // Rol y Evaluación (Expediente de su Empresa en ese Proyecto) — nunca
   // agregados entre Proyectos.
   const participacionesDe = (persona) =>
-    asignacionesActivas
+    sujetosActivos
       .filter((a) => a.personaId === persona.id)
       .map((a) => {
         const proyecto = proyectosMap[a.proyectoId];
-        const participacion = participacionesActivas.find(
-          (p) => p.empresaId === persona.empresaId && p.proyectoId === a.proyectoId,
-        );
+        const participacion = participacionesActivas.find((p) => p.id === a.participacionId);
         const expediente = expedientesTodos.find(
-          (e) => e.empresaId === persona.empresaId && e.proyectoId === a.proyectoId && e.estado !== "cerrado",
+          (e) => e.participacionId === a.participacionId && e.estado !== "cerrado",
         );
         return {
           key: a.id,
@@ -289,11 +289,11 @@ export const PersonasListPage = () => {
           proyectoNombre: proyecto?.nombre || "-",
           mandanteId: proyecto?.mandanteId || null,
           mandante: proyecto?.mandanteId ? mandantesCache[proyecto.mandanteId] : null,
-          rol: a.rol,
+          rol: nombresPerfiles(a.perfilRecursoIds, perfilesPorId),
           perfilNombre: participacion ? perfilesMap[participacion.perfilParticipacionId] || null : null,
           evaluacion: evaluarSujeto({
             expediente, vigentes: evaluacionesTodas, campo: "personaId", sujetoId: persona.id,
-            perfilRecursoId: a.perfilRecursoId,
+            perfilRecursoIds: a.perfilRecursoIds,
           }),
         };
       });
@@ -485,7 +485,7 @@ export const PersonasListPage = () => {
         emptyLabel="No se encontraron personas registradas."
         renderRow={(item) => {
           const partes = participacionesDe(item);
-          const cargandoDesglose = cargandoAsignaciones;
+          const cargandoDesglose = cargandoSujetos;
           const vacio = (texto, cursiva = false) => (
             <span className={`text-[11px] ${cursiva ? "text-slate-400 italic" : "text-slate-400"}`}>{texto}</span>
           );
@@ -582,7 +582,7 @@ export const PersonasListPage = () => {
           {
             icon: FolderKanban,
             label: "Proyectos Asignados",
-            value: resumenesMap[personaSeleccionada.id]?.asignacionesActivas?.length ?? "…",
+            value: resumenesMap[personaSeleccionada.id]?.participacionesActivas?.length ?? "…",
           },
           {
             icon: FileCheck2,
@@ -599,7 +599,7 @@ export const PersonasListPage = () => {
           personaSeleccionada ? (
             <div className="space-y-3">
               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Participaciones activas</p>
-              {cargandoAsignaciones ? (
+              {cargandoSujetos ? (
                 <p className="text-xs text-slate-400">Cargando...</p>
               ) : participacionesDe(personaSeleccionada).length === 0 ? (
                 <p className="text-xs text-slate-400 italic">Sin asignación activa</p>

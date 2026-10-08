@@ -70,16 +70,17 @@ export const describirEvento = (registro) => {
     return `Nueva evaluación: ${resultado}`;
   }
 
-  if (entidad === "asignacion") {
-    if (accion === "creado") return "Asignación creada";
+  if (entidad === "participacionPersona" || entidad === "participacionRecurso") {
+    const sujeto = entidad === "participacionPersona" ? "Persona" : "Maquinaria";
+    if (accion === "creado") return `${sujeto} asignada al Proyecto`;
     if (accion === "transicion_estado") {
-      if (detalle?.estadoNuevo === "finalizada") return "Asignación finalizada";
+      if (detalle?.estadoNuevo === "finalizada") return `${sujeto} quitada del Proyecto`;
       if (detalle?.estadoNuevo === "activa" && detalle?.estadoAnterior === "pendiente") {
-        return "Asignación activada";
+        return `${sujeto} activada en el Proyecto`;
       }
-      return `Asignación transicionada a ${detalle?.estadoNuevo}`;
+      return `${sujeto}: estado ${detalle?.estadoNuevo}`;
     }
-    if (accion === "reemplazo_acreditacion") return "Asignación reemplazada";
+    if (accion === "reemplazo_acreditacion") return `${sujeto} cambiada de Proyecto o Empresa`;
   }
 
   if (entidad === "participacion") {

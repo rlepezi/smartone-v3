@@ -78,7 +78,9 @@ const evidenciaRoutes = require("./src/routes/evidenciaRoutes");
 const evidenciaRequerimientoRoutes =
     require("./src/routes/evidenciaRequerimientoRoutes");
 const evaluacionRoutes = require("./src/routes/evaluacionRoutes");
-const asignacionRoutes = require("./src/routes/asignacionRoutes");
+const {
+  participacionPersonaRoutes, participacionRecursoRoutes,
+} = require("./src/routes/participacionSujetoRoutes");
 const bitacoraRoutes = require("./src/routes/bitacoraRoutes");
 const reporteRoutes = require("./src/routes/reporteRoutes");
 const acreditacionRoutes = require("./src/routes/acreditacionRoutes");
@@ -118,7 +120,8 @@ app.use("/perfil-requerimientos", perfilRequerimientoRoutes);
 app.use("/evidencias", evidenciaRoutes);
 app.use("/evidencia-requerimientos", evidenciaRequerimientoRoutes);
 app.use("/evaluaciones", evaluacionRoutes);
-app.use("/asignaciones", asignacionRoutes);
+app.use("/participacion-personas", participacionPersonaRoutes);
+app.use("/participacion-recursos", participacionRecursoRoutes);
 app.use("/bitacora", bitacoraRoutes);
 app.use("/reportes", reporteRoutes);
 app.use("/acreditaciones", acreditacionRoutes);

@@ -103,7 +103,7 @@ class PersonaController {
   }
 
   /**
-   * Calcula el resumen de una persona (asignaciones activas: rol y
+   * Calcula el resumen de una persona (participaciones activas: perfiles y
    * proyecto).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

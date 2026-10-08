@@ -26,7 +26,7 @@ class ExpedienteController {
   /**
    * Lista expedientes, opcionalmente filtrados por estado. Con
    * `?incluirConteo=true` cada expediente trae `cantidadPersonas` y
-   * `cantidadMaquinarias` (Asignaciones activas).
+   * `cantidadMaquinarias` (personas y maquinarias activas).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.

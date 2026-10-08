@@ -17,18 +17,17 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 //
 // El campo Rol solo existe para `entidadTipo: "persona"`, y solo se pide
 // cuando la Persona no tiene ninguna Asignación activa de la que
-// heredarlo (`!tieneParticipacionActiva`) — si ya tiene una, el backend
-// la hereda automáticamente. Para `entidadTipo: "recurso"` el campo Rol
-// no existe nunca: la clasificación de la Maquinaria vive en el propio
-// Recurso (`tipo`), no en la Asignación.
+// heredarlo. Los Perfiles de Recurso (por ID) se eligen siempre entre los
+// activos del Mandante del Proyecto destino: Persona uno o más, Maquinaria
+// uno (la clasificación descriptiva del Recurso solo lo preselecciona).
 export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacionActiva, onCambiado, onCerrar }) => {
   const esPersona = entidadTipo === "persona";
 
   const [proyectos, setProyectos] = useState([]);
   const [perfilesOpciones, setPerfilesOpciones] = useState([]);
-  const [rolesOpciones, setRolesOpciones] = useState([]);
+  const [perfilesRecursoOpciones, setPerfilesRecursoOpciones] = useState([]);
   const [formData, setFormData] = useState({
-    proyectoDestinoId: "", perfilParticipacionId: "", rol: "", fechaInicio: hoyISO(),
+    proyectoDestinoId: "", perfilParticipacionId: "", perfilRecursoIds: [], fechaInicio: hoyISO(),
   });
   const [errors, setErrors] = useState({});
   const [guardando, setGuardando] = useState(false);
@@ -46,7 +45,7 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
   useEffect(() => {
     if (!proyectoSeleccionado?.mandanteId) {
       setPerfilesOpciones([]);
-      setRolesOpciones([]);
+      setPerfilesRecursoOpciones([]);
       return;
     }
     const mandanteId = proyectoSeleccionado.mandanteId;
@@ -54,21 +53,19 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
       .then((data) => setPerfilesOpciones(data || []))
       .catch((err) => console.error("Error al cargar perfiles de participación:", err));
 
-    if (esPersona && !tieneParticipacionActiva) {
-      perfilRecursoService.listar({ mandanteId, tipo: "persona", estado: "activo" })
-        .then((data) => setRolesOpciones(data || []))
-        .catch((err) => console.error("Error al cargar roles disponibles:", err));
-    }
-  }, [proyectoSeleccionado?.mandanteId, esPersona, tieneParticipacionActiva]);
+    perfilRecursoService.listar({ mandanteId, tipo: esPersona ? "persona" : "recurso", estado: "activo" })
+      .then((data) => setPerfilesRecursoOpciones(data || []))
+      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
+  }, [proyectoSeleccionado?.mandanteId, esPersona]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
       [name]: value,
-      // Cambiar de Proyecto invalida el Perfil/Rol ya elegidos — podrían
+      // Cambiar de Proyecto invalida los perfiles ya elegidos — podrían
       // ser de otro Mandante.
-      ...(name === "proyectoDestinoId" ? { perfilParticipacionId: "", rol: "" } : {}),
+      ...(name === "proyectoDestinoId" ? { perfilParticipacionId: "", perfilRecursoIds: [] } : {}),
     }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
   };
@@ -76,7 +73,7 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
   const validar = () => {
     const errs = {};
     if (!formData.proyectoDestinoId) errs.proyectoDestinoId = "Debe seleccionar un Proyecto.";
-    if (esPersona && !tieneParticipacionActiva && !formData.rol) errs.rol = "Debe seleccionar un Rol.";
+    if (formData.perfilRecursoIds.length === 0) errs.perfilRecursoIds = "Debe seleccionar el Perfil de Recurso.";
     if (!formData.fechaInicio) errs.fechaInicio = "La fecha de inicio es obligatoria.";
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -91,10 +88,11 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
       const payload = {
         proyectoDestinoId: formData.proyectoDestinoId,
         perfilParticipacionId: formData.perfilParticipacionId || undefined,
+        perfilRecursoIds: formData.perfilRecursoIds,
         fechaInicio: formData.fechaInicio,
       };
       const data = esPersona ?
-        await acreditacionService.cambiarProyectoPersona(entidadId, { ...payload, rol: formData.rol || undefined }) :
+        await acreditacionService.cambiarProyectoPersona(entidadId, payload) :
         await acreditacionService.cambiarProyectoRecurso(entidadId, payload);
       setResultado(data);
     } catch (err) {
@@ -177,32 +175,57 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
             {errors.proyectoDestinoId && <p className="text-xs text-red-500 mt-1">{errors.proyectoDestinoId}</p>}
           </div>
 
-          {esPersona && !tieneParticipacionActiva && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Rol *</label>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+              {esPersona ? "Perfiles de Recurso * (uno o más)" : "Perfil de Recurso *"}
+            </label>
+            {!proyectoSeleccionado ? (
+              <p className="text-[11px] text-slate-400">Seleccione primero un Proyecto.</p>
+            ) : esPersona ? (
+              <div className="flex flex-wrap gap-2">
+                {perfilesRecursoOpciones.map((p) => {
+                  const activo = formData.perfilRecursoIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      aria-pressed={activo}
+                      onClick={() => {
+                        setFormData((prev) => ({
+                          ...prev,
+                          perfilRecursoIds: activo
+                            ? prev.perfilRecursoIds.filter((x) => x !== p.id) : [...prev.perfilRecursoIds, p.id],
+                        }));
+                        setErrors((prev) => ({ ...prev, perfilRecursoIds: null }));
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
+                        activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {p.nombre}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
               <select
-                name="rol"
-                value={formData.rol}
-                onChange={handleChange}
-                disabled={!proyectoSeleccionado}
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-400 ${
-                  errors.rol ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                value={formData.perfilRecursoIds[0] || ""}
+                onChange={(e) => {
+                  setFormData((prev) => ({ ...prev, perfilRecursoIds: e.target.value ? [e.target.value] : [] }));
+                  setErrors((prev) => ({ ...prev, perfilRecursoIds: null }));
+                }}
+                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                  errors.perfilRecursoIds ? "border-red-400 bg-red-50/30" : "border-gray-200"
                 }`}
               >
-                {!proyectoSeleccionado ? (
-                  <option value="">Seleccione primero un Proyecto</option>
-                ) : (
-                  <>
-                    <option value="">Seleccione un Rol...</option>
-                    {rolesOpciones.map((r) => (
-                      <option key={r.id} value={r.nombre}>{r.nombre}</option>
-                    ))}
-                  </>
-                )}
+                <option value="">Seleccione un Perfil de Recurso...</option>
+                {perfilesRecursoOpciones.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
               </select>
-              {errors.rol && <p className="text-xs text-red-500 mt-1">{errors.rol}</p>}
-            </div>
-          )}
+            )}
+            {errors.perfilRecursoIds && <p className="text-xs text-red-500 mt-1">{errors.perfilRecursoIds}</p>}
+          </div>
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">

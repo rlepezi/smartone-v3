@@ -14,7 +14,8 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { evaluacionService } from "../../services/evaluacionService";
 import { evidenciaService } from "../../services/evidenciaService";
 import { evidenciaRequerimientoService } from "../../services/evidenciaRequerimientoService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { describirEvento } from "../../utils/bitacoraFormatters";
@@ -27,7 +28,7 @@ import { EmpresaChip } from "../../components/shared/EmpresaChip";
 import { EstadoExpedienteStepper } from "../../components/shared/EstadoExpedienteStepper";
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { formatCatalogo } from "../../utils/formatCatalogo";
-import { aplicaRequerimientoASujeto, sujetoDeAsignacion } from "../../utils/aplicabilidadRequerimiento";
+import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 import { mandanteService } from "../../services/mandanteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { calcularConteosEvaluacion, calcularResumenCumplimiento } from "../../utils/cumplimientoCalculos";
@@ -49,7 +50,7 @@ const ESTADO_MAP = ESTADOS_EXPEDIENTE.reduce((acc, e) => {
 // `totalAplicable === 0` (nadie tiene ningún Requerimiento para su función/nivel) queda Pendiente
 // también, nunca Evaluada — "0 de 0" es matemáticamente 100%, pero no hay nada resuelto de
 // verdad: casi siempre indica una función mal asignada, y merece revisión, no pasar desapercibido.
-const calcularEstadoAsignacion = ({ conteos, sinEvaluar, totalAplicable }) => (
+const calcularEstadoSujeto = ({ conteos, sinEvaluar, totalAplicable }) => (
   (totalAplicable === 0 || sinEvaluar > 0 || conteos.pendiente > 0) ? "pendiente" : "evaluada"
 );
 
@@ -58,19 +59,17 @@ const calcularEstadoAsignacion = ({ conteos, sinEvaluar, totalAplicable }) => (
 // estado ya en memoria) como justo después de Guardar Evaluación, con los datos recién pedidos al
 // servidor, SIN esperar a que termine el siguiente render (evita la sugerencia de "seguir con el
 // siguiente pendiente" trabajando con datos todavía viejos).
-// Requerimientos del snapshot que aplican al sujeto de una Asignación (Persona o Maquinaria),
-// según la regla única de utils/aplicabilidadRequerimiento.js.
-const requerimientosDeAsignacion = (expedienteData, asignacion) => {
-  const sujeto = sujetoDeAsignacion(asignacion);
-  return (expedienteData.requerimientosAplicables || [])
-    .filter((r) => aplicaRequerimientoASujeto(r, sujeto));
-};
+// Requerimientos del snapshot que aplican a un sujeto agrupado (Persona o Maquinaria, con el
+// conjunto de sus Perfiles de Recurso), según la regla única de utils/aplicabilidadRequerimiento.js.
+// Una Persona con varios perfiles recibe la unión, sin duplicados.
+const requerimientosDeSujeto = (expedienteData, sujeto) =>
+  (expedienteData.requerimientosAplicables || []).filter((r) => aplicaRequerimientoASujeto(r, sujeto));
 
-const construirPersonasItems = (expedienteData, evaluacionesData, personasAsignadas, personasOptions) => {
+const construirPersonasItems = (expedienteData, evaluacionesData, personasAsignadas, personasOptions, perfilesPorId = {}) => {
   const vigentesExpediente = evaluacionesData.filter((e) => e.estado === "vigente");
   return personasAsignadas.map((a) => {
     const p = personasOptions.find((x) => x.id === a.personaId);
-    const reqs = requerimientosDeAsignacion(expedienteData, a);
+    const reqs = requerimientosDeSujeto(expedienteData, a);
     const vigentesDeElla = vigentesExpediente.filter((v) =>
       v.personaId === a.personaId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
     const { conteos, avancePct } = calcularConteosEvaluacion(vigentesDeElla);
@@ -78,10 +77,10 @@ const construirPersonasItems = (expedienteData, evaluacionesData, personasAsigna
     return {
       id: a.personaId,
       nombre: p ? `${p.nombre} ${p.apellido || ""}`.trim() : a.personaId,
-      subtitulo: a.rol ? formatCatalogo(a.rol) : "",
+      subtitulo: nombresPerfiles(a.perfilRecursoIds, perfilesPorId),
       busqueda: p?.rut || "",
       avancePct,
-      estado: calcularEstadoAsignacion({ conteos, sinEvaluar, totalAplicable: reqs.length }),
+      estado: calcularEstadoSujeto({ conteos, sinEvaluar, totalAplicable: reqs.length }),
     };
   });
 };
@@ -90,7 +89,7 @@ const construirRecursosItems = (expedienteData, evaluacionesData, recursosAsigna
   const vigentesExpediente = evaluacionesData.filter((e) => e.estado === "vigente");
   return recursosAsignados.map((a) => {
     const r = recursosOptions.find((x) => x.id === a.recursoId);
-    const requerimientosMaquinaria = requerimientosDeAsignacion(expedienteData, a);
+    const requerimientosMaquinaria = requerimientosDeSujeto(expedienteData, a);
     const vigentesDeEl = vigentesExpediente.filter((v) =>
       v.recursoId === a.recursoId && requerimientosMaquinaria.some((req) => req.requerimientoId === v.requerimientoId));
     const { conteos, avancePct } = calcularConteosEvaluacion(vigentesDeEl);
@@ -101,7 +100,7 @@ const construirRecursosItems = (expedienteData, evaluacionesData, recursosAsigna
       subtitulo: r?.tipo ? formatCatalogo(r.tipo) : "",
       busqueda: r?.patente || "",
       avancePct,
-      estado: calcularEstadoAsignacion({ conteos, sinEvaluar, totalAplicable: requerimientosMaquinaria.length }),
+      estado: calcularEstadoSujeto({ conteos, sinEvaluar, totalAplicable: requerimientosMaquinaria.length }),
     };
   });
 };
@@ -235,7 +234,8 @@ export const ExpedienteDetailPage = () => {
   const [evidenciasDoc, setEvidenciasDoc] = useState({ evidencias: [], vinculos: [] });
   const [personasOptions, setPersonasOptions] = useState([]);
   const [recursosOptions, setRecursosOptions] = useState([]);
-  const [asignacionesProyecto, setAsignacionesProyecto] = useState([]);
+  const [sujetosParticipacion, setSujetosParticipacion] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
 
   // Vista General/Empresa/Personas/Maquinarias: controla qué sujeto evalúa la Planilla debajo.
   // `recursoSeleccionadoId` se resetea al cambiar de pestaña para que siempre recaiga en el
@@ -265,11 +265,11 @@ export const ExpedienteDetailPage = () => {
       const data = await expedienteService.obtenerPorId(id);
       setExpediente(data);
 
-      const [proyectoData, empresaData, perfilData, asignacionesData, evaluacionesData, evidenciasData, vinculosData] = await Promise.all([
+      const [proyectoData, empresaData, perfilData, sujetosData, evaluacionesData, evidenciasData, vinculosData] = await Promise.all([
         proyectoService.obtenerPorId(data.proyectoId).catch(() => null),
         empresaService.obtenerPorId(data.empresaId).catch(() => null),
         perfilParticipacionService.obtenerPorId(data.perfilParticipacionId).catch(() => null),
-        asignacionService.listar({ proyectoId: data.proyectoId, estado: "activa" }).catch(() => []),
+        sujetoService.listar({ participacionId: data.participacionId, estado: "activa" }).catch(() => []),
         evaluacionService.listarPorExpediente(data.id, false).catch(() => []),
         evidenciaService.listar({ expedienteId: data.id }).catch(() => []),
         evidenciaRequerimientoService.listarPorExpediente(data.id).catch(() => []),
@@ -279,9 +279,9 @@ export const ExpedienteDetailPage = () => {
       setEmpresa(empresaData);
       setPerfil(perfilData);
       mandanteService.obtenerPorId(data.mandanteId).then(setMandante).catch(() => setMandante(null));
-      setAsignacionesProyecto(asignacionesData || []);
+      setSujetosParticipacion(sujetosData || []);
       setEvaluaciones(evaluacionesData || []);
-      return { expedienteData: data, asignacionesData: asignacionesData || [], evaluacionesData: evaluacionesData || [] };
+      return { expedienteData: data, sujetosData: sujetosData || [], evaluacionesData: evaluacionesData || [] };
     } catch (err) {
       console.error("Error al cargar el expediente:", err);
       setError(err.message || "No se pudo cargar el expediente.");
@@ -368,12 +368,10 @@ export const ExpedienteDetailPage = () => {
 
   const transicionesDisponibles = TRANSICIONES_VALIDAS[expediente.estado] || [];
 
-  // Asignaciones activas del Proyecto, acotadas a la Empresa de ESTE
-  // Expediente (asignacionesProyecto trae todas las del Proyecto, de
-  // cualquier Empresa participante).
-  const asignacionesEmpresa = asignacionesProyecto.filter((a) => a.empresaId === expediente.empresaId);
-  const personasAsignadas = asignacionesEmpresa.filter((a) => a.personaId);
-  const recursosAsignados = asignacionesEmpresa.filter((a) => a.recursoId);
+  // Personas y Maquinarias activas de la Participación de ESTE Expediente (agrupadas: una
+  // entrada por sujeto, con el conjunto de sus Perfiles de Recurso).
+  const personasAsignadas = sujetosParticipacion.filter((a) => a.personaId);
+  const recursosAsignados = sujetosParticipacion.filter((a) => a.recursoId);
 
   const vigentesExpediente = evaluaciones.filter((e) => e.estado === "vigente");
 
@@ -396,7 +394,7 @@ export const ExpedienteDetailPage = () => {
   const paresDocumentacion = (expediente.requerimientosAplicables || []).flatMap((r) => {
     if (r.tipoEntidad === "empresa") return [tieneDocumento(r.requerimientoId)];
     return [...personasAsignadas, ...recursosAsignados]
-      .filter((a) => aplicaRequerimientoASujeto(r, sujetoDeAsignacion(a)))
+      .filter((a) => aplicaRequerimientoASujeto(r, a))
       .map((a) => tieneDocumento(r.requerimientoId, a.personaId
         ? { personaId: a.personaId } : { recursoId: a.recursoId }));
   });
@@ -409,7 +407,7 @@ export const ExpedienteDetailPage = () => {
   // para la vista compacta de la lista. Un solo fetch de evaluaciones (arriba) alimenta ambas
   // vistas, nunca dos consultas por fila. Mismas funciones puras que reutiliza
   // verificarSugerenciaSiguiente tras Guardar Evaluación.
-  const personasItems = construirPersonasItems(expediente, evaluaciones, personasAsignadas, personasOptions);
+  const personasItems = construirPersonasItems(expediente, evaluaciones, personasAsignadas, personasOptions, perfilesPorId);
   const recursosItems = construirRecursosItems(expediente, evaluaciones, recursosAsignados, recursosOptions);
 
   const itemsActivos = nivelActivo === "persona" ? personasItems : nivelActivo === "recurso" ? recursosItems : [];
@@ -440,11 +438,9 @@ export const ExpedienteDetailPage = () => {
   // fetch ni loader de pantalla completa.
   const personaConocida = nivelActivo === "persona" ? personasOptions.find((p) => p.id === seleccionadoId) || null : null;
   const recursoConocido = nivelActivo === "recurso" ? recursosOptions.find((r) => r.id === seleccionadoId) || null : null;
-  const asignacionSeleccionada = nivelActivo === "persona"
-    ? personasAsignadas.find((a) => a.personaId === seleccionadoId)
-    : nivelActivo === "recurso" ? recursosAsignados.find((a) => a.recursoId === seleccionadoId) : null;
-  const rolConocido = nivelActivo === "persona" ? asignacionSeleccionada?.rol || null : null;
-  const perfilRecursoIdConocido = asignacionSeleccionada?.perfilRecursoId || null;
+  const sujetoConocido = nivelActivo === "persona"
+    ? personasAsignadas.find((a) => a.personaId === seleccionadoId) || null
+    : nivelActivo === "recurso" ? recursosAsignados.find((a) => a.recursoId === seleccionadoId) || null : null;
 
   // Resumen: detalle numérico completo por nivel (Empresa/Personas/Maquinarias), agregando TODAS
   // las Personas o Maquinarias entre sí — un total del Expediente completo, independiente de cuál
@@ -456,16 +452,16 @@ export const ExpedienteDetailPage = () => {
   const vigentesEmpresaNivel = vigentesExpediente.filter((v) => !v.personaId && !v.recursoId && reqsEmpresa.some((r) => r.requerimientoId === v.requerimientoId));
   const resumenEmpresa = calcularResumenCumplimiento(reqsEmpresa.length, vigentesEmpresaNivel);
 
-  const totalPersonasNivel = personasAsignadas.reduce((sum, a) => sum + requerimientosDeAsignacion(expediente, a).length, 0);
+  const totalPersonasNivel = personasAsignadas.reduce((sum, a) => sum + requerimientosDeSujeto(expediente, a).length, 0);
   const vigentesPersonasNivel = personasAsignadas.flatMap((a) => {
-    const reqs = requerimientosDeAsignacion(expediente, a);
+    const reqs = requerimientosDeSujeto(expediente, a);
     return vigentesExpediente.filter((v) => v.personaId === a.personaId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
   });
   const resumenPersonas = calcularResumenCumplimiento(totalPersonasNivel, vigentesPersonasNivel);
 
-  const totalMaquinariasNivel = recursosAsignados.reduce((sum, a) => sum + requerimientosDeAsignacion(expediente, a).length, 0);
+  const totalMaquinariasNivel = recursosAsignados.reduce((sum, a) => sum + requerimientosDeSujeto(expediente, a).length, 0);
   const vigentesMaquinariasNivel = recursosAsignados.flatMap((a) => {
-    const reqs = requerimientosDeAsignacion(expediente, a);
+    const reqs = requerimientosDeSujeto(expediente, a);
     return vigentesExpediente.filter((v) => v.recursoId === a.recursoId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
   });
   const resumenMaquinarias = calcularResumenCumplimiento(totalMaquinariasNivel, vigentesMaquinariasNivel);
@@ -551,11 +547,10 @@ export const ExpedienteDetailPage = () => {
   const verificarSugerenciaSiguiente = async (nivel, idAnterior) => {
     const datos = await cargarDatos(true);
     if (!datos) return;
-    const { expedienteData, asignacionesData, evaluacionesData } = datos;
-    const asignacionesEmpresaFrescas = asignacionesData.filter((a) => a.empresaId === expedienteData.empresaId);
+    const { expedienteData, sujetosData, evaluacionesData } = datos;
     const items = nivel === "persona"
-      ? construirPersonasItems(expedienteData, evaluacionesData, asignacionesEmpresaFrescas.filter((a) => a.personaId), personasOptions)
-      : construirRecursosItems(expedienteData, evaluacionesData, asignacionesEmpresaFrescas.filter((a) => a.recursoId), recursosOptions);
+      ? construirPersonasItems(expedienteData, evaluacionesData, sujetosData.filter((a) => a.personaId), personasOptions, perfilesPorId)
+      : construirRecursosItems(expedienteData, evaluacionesData, sujetosData.filter((a) => a.recursoId), recursosOptions);
     const actual = items.find((i) => i.id === idAnterior);
     if (!actual || actual.estado !== "evaluada") return;
     const pendientes = items.filter((i) => i.id !== idAnterior && i.estado !== "evaluada");
@@ -688,8 +683,7 @@ export const ExpedienteDetailPage = () => {
             recursoId={nivelActivo === "recurso" ? seleccionadoId : null}
             personaConocida={personaConocida}
             recursoConocido={recursoConocido}
-            rolConocido={rolConocido}
-            perfilRecursoIdConocido={perfilRecursoIdConocido}
+            sujetoConocido={sujetoConocido}
             embebido
             mostrarResumen
             mostrarDatosEvaluacion

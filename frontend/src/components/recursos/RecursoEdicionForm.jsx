@@ -4,7 +4,7 @@ import { Truck, Building2, AlertCircle, Repeat } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { recursoService } from "../../services/recursoService";
 import { empresaService } from "../../services/empresaService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService } from "../../services/participacionSujetoService";
 import { proyectoService } from "../../services/proyectoService";
 import { mandanteService } from "../../services/mandanteService";
 import { ActionButton } from "../shared/ActionButton";
@@ -58,12 +58,12 @@ export const RecursoEdicionForm = ({
   const [serverError, setServerError] = useState(null);
 
   // Empresa activa (nombre, para el modal "Cambiar Empresa") y si ya
-  // tiene alguna Asignación activa a un Proyecto (para el rótulo
+  // tiene alguna participación activa en un Proyecto (para el rótulo
   // "Cambiar Proyecto" vs "Asignar a Proyecto") — mismo criterio que
   // PersonaFormPage.jsx.
   const [empresaActualNombre, setEmpresaActualNombre] = useState(null);
   const [tieneParticipacionActiva, setTieneParticipacionActiva] = useState(false);
-  // Mandante del Proyecto de la Asignación activa (Recurso no tiene un
+  // Mandante del Proyecto de la participación activa (Recurso no tiene un
   // Mandante propio) — a diferencia de Persona, no hay un
   // recursoService.obtenerResumen que lo resuelva server-side, así que se
   // arma acá con dos llamadas ya existentes (Proyecto → Mandante), mismo
@@ -72,7 +72,7 @@ export const RecursoEdicionForm = ({
   const [cambiarEmpresaAbierto, setCambiarEmpresaAbierto] = useState(false);
   const [cambiarProyectoAbierto, setCambiarProyectoAbierto] = useState(false);
 
-  const resolverMandanteDesdeAsignaciones = (activas) => {
+  const resolverMandanteDesdeParticipaciones = (activas) => {
     const primera = activas?.[0];
     if (!primera?.proyectoId) {
       setMandanteActual(null);
@@ -141,12 +141,12 @@ export const RecursoEdicionForm = ({
       .catch((err) => setServerError(err.message || "No se pudo cargar la maquinaria."))
       .finally(() => setCargandoRegistro(false));
 
-    asignacionService.listar({ recursoId: id, estado: "activa" })
+    sujetoService.listar({ recursoId: id, estado: "activa" })
       .then((data) => {
         setTieneParticipacionActiva((data?.length || 0) > 0);
-        resolverMandanteDesdeAsignaciones(data || []);
+        resolverMandanteDesdeParticipaciones(data || []);
       })
-      .catch((err) => console.error("Error al cargar asignaciones activas:", err));
+      .catch((err) => console.error("Error al cargar participaciones activas:", err));
   }, [id, esEdicion]);
 
   const handleEmpresaCambiada = () => {
@@ -162,12 +162,12 @@ export const RecursoEdicionForm = ({
 
   const handleProyectoCambiado = () => {
     setCambiarProyectoAbierto(false);
-    asignacionService.listar({ recursoId: id, estado: "activa" })
+    sujetoService.listar({ recursoId: id, estado: "activa" })
       .then((data) => {
         setTieneParticipacionActiva((data?.length || 0) > 0);
-        resolverMandanteDesdeAsignaciones(data || []);
+        resolverMandanteDesdeParticipaciones(data || []);
       })
-      .catch((err) => console.error("Error al recargar asignaciones activas:", err));
+      .catch((err) => console.error("Error al recargar participaciones activas:", err));
   };
 
   const tiposFijos = tiposDisponibles.filter((t) => t.origen === "catalogo");

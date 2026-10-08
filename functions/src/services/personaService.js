@@ -4,13 +4,18 @@ const personaRepository = require("../repositories/personaRepository");
 const empresaRepository = require("../repositories/empresaRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
-const asignacionService = require("./asignacionService");
+const participacionPersonaService =
+    require("./participacionPersonaService");
+const perfilRecursoRepository =
+    require("../repositories/perfilRecursoRepository");
+const {agruparSujetos} = require("../utils/sujetosParticipacion");
 const relacionLaboralService = require("./relacionLaboralService");
 const {
   validarIdentificacion, claveIdentificacion,
 } = require("../utils/identificacionValidator");
 const bitacoraService = require("./bitacoraService");
-const asignacionRepository = require("../repositories/asignacionRepository");
+const participacionPersonaRepository =
+    require("../repositories/participacionPersonaRepository");
 const AppError = require("../utils/AppError");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
 
@@ -23,7 +28,8 @@ const ESTADOS_VALIDOS = ["activo", "inactivo"];
  * Reglas de negocio para el recurso Persona.
  * Catálogo global, sin mandanteId ni lógica de alcance por actor — el
  * control de acceso es enteramente por rol a nivel de ruta (ver
- * personaRoutes.js). No incluye rol (pertenece a la Asignación a un
+ * personaRoutes.js). No incluye rol (sus Perfiles de Recurso pertenecen a la
+ * participación en un
  * proyecto, RN-044) ni contacto. El vínculo laboral con una Empresa
  * (cargo, tipo de contrato, etc.) vive en RelaciónLaboral (entidad 17,
  * ver decisions.md) — acá solo se denormalizan `empresaId`/
@@ -245,28 +251,33 @@ class PersonaService {
   }
 
   /**
-   * Calcula el resumen de una Persona: sus Asignaciones activas actuales
-   * (rol y Proyecto), respetando el alcance del actor. El rol NUNCA se
-   * guarda en Persona (RN-044) — se resuelve aquí en tiempo real desde
-   * Asignación.
+   * Calcula el resumen de una Persona: sus Participaciones activas actuales
+   * (Proyecto y Perfiles de Recurso), respetando el alcance del actor. Los
+   * perfiles viven en participacionPersonas (por ID), nunca en Persona
+   * (RN-044); el nombre se resuelve aquí en tiempo real.
    * @param {string} id ID de la persona.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
-   * @return {Promise<{asignacionesActivas: Object[]}>} El resumen
-   *     calculado.
+   * @return {Promise<{participacionesActivas: Object[]}>} El resumen
+   *     calculado: una fila por Participación, con `perfilRecursoIds` y
+   *     `perfilesRecurso` ({id, nombre}).
    */
   async obtenerResumen(id, actor) {
     await this.getPersonaById(id); // Verifica existencia
 
-    const activas = await asignacionService.obtenerActivasPorPersona(
-        id, actor,
+    const docs = await participacionPersonaService.listar(
+        {personaId: id, estado: "activa"}, actor,
+    );
+    const sujetos = agruparSujetos(docs, []);
+    const perfiles = await perfilRecursoRepository.getByIds(
+        sujetos.flatMap((s) => s.perfilRecursoIds),
     );
 
     // Mandante del Proyecto — misma cache local que empresaService.
     // obtenerResumen usa para no repetir la misma consulta si dos
     // Proyectos activos comparten Mandante.
     const mandanteCache = {};
-    const asignacionesActivas = await Promise.all(
-        activas.map(async (a) => {
+    const participacionesActivas = await Promise.all(
+        sujetos.map(async (a) => {
           const proyecto = await proyectoRepository.getById(a.proyectoId);
           let mandante = null;
           if (proyecto?.mandanteId) {
@@ -277,10 +288,15 @@ class PersonaService {
             mandante = mandanteCache[proyecto.mandanteId];
           }
           return {
+            participacionId: a.participacionId,
             proyectoId: a.proyectoId,
+            empresaId: a.empresaId,
             proyectoNombre: proyecto?.nombre || a.proyectoId,
-            rol: a.rol,
-            perfilRecursoId: a.perfilRecursoId || null,
+            perfilRecursoIds: a.perfilRecursoIds,
+            perfilesRecurso: a.perfilRecursoIds.map((pid) => ({
+              id: pid, nombre: perfiles[pid]?.nombre || pid,
+            })),
+            fechaInicio: a.fechaInicio,
             mandanteId: proyecto?.mandanteId || null,
             mandanteNombre: getMandanteDisplayName(mandante) || null,
             mandanteLogoUrl: mandante?.logoUrl || null,
@@ -288,13 +304,14 @@ class PersonaService {
         }),
     );
 
-    return {asignacionesActivas};
+    return {participacionesActivas};
   }
 
   /**
    * Eventos de Bitácora relacionados a una Persona: los propios, los de sus
-   * Asignaciones (cualquier estado) y los de las Participaciones a las que
-   * esas Asignaciones pertenecen. Solo lectura, solo datos reales de
+   * documentos de participación (cualquier estado) y los de las Participaciones
+   * a las que
+   * esos documentos pertenecen. Solo lectura, solo datos reales de
    * Bitácora.
    * @param {string} id ID de una Persona.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -305,18 +322,19 @@ class PersonaService {
   async obtenerEventos(id, actor, {limit} = {}) {
     await this.getPersonaById(id); // Verifica existencia
 
-    const asignaciones = await asignacionRepository.list({personaId: id});
+    const documentos =
+        await participacionPersonaRepository.list({personaId: id});
     const participacionIds = [
-      ...new Set(asignaciones.map((a) => a.participacionId).filter(Boolean)),
+      ...new Set(documentos.map((a) => a.participacionId).filter(Boolean)),
     ];
 
-    // Una consulta por referencia: se acota a las Asignaciones más
+    // Una consulta por referencia: se acota a los documentos más
     // recientes (el repositorio las devuelve de más nueva a más antigua).
-    const MAX_ASIGNACIONES = 30;
+    const MAX_DOCUMENTOS = 30;
     const referencias = [
       {entidad: "persona", entidadId: id},
-      ...asignaciones.slice(0, MAX_ASIGNACIONES).map((a) => ({
-        entidad: "asignacion", entidadId: a.id,
+      ...documentos.slice(0, MAX_DOCUMENTOS).map((a) => ({
+        entidad: "participacionPersona", entidadId: a.id,
       })),
       ...participacionIds.map((pid) => ({
         entidad: "participacion", entidadId: pid,

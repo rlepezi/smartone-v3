@@ -5,17 +5,21 @@ import { formatCatalogo } from "../../utils/formatCatalogo";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { formatFecha } from "../../utils/fechaFormatters";
 import { evaluarSujeto } from "../../utils/evaluacionSujeto";
+import { nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { RecursosBloques } from "../shared/RecursosBloques";
 
 // Pestaña "Recursos" del detalle de Proyecto: Personas y Maquinarias activas,
 // agrupadas por Empresa participante. `cabecera` es el bloque de gestión de
-// asignaciones ("+ Nueva Asignación"), arriba de todo.
+// Personas/Maquinarias asignadas ("+ Nueva Asignación"), arriba de todo. `sujetos`: agrupados
+// por Persona/Maquinaria, con el conjunto de sus Perfiles de Recurso.
 export const RecursosProyecto = ({
-  proyectoId, participantes, participaciones, asignaciones, personas, recursos,
+  proyectoId, participantes, participaciones, sujetos, personas, recursos,
   cabecera, accionFila,
 }) => {
   // undefined = cargando, null = falló, objeto = cargado.
   const [datos, setDatos] = useState(undefined);
+  const perfilesPorId = usePerfilesRecurso();
 
   useEffect(() => {
     let activo = true;
@@ -42,7 +46,7 @@ export const RecursosProyecto = ({
       const participacion = participaciones.find((p) => p.empresaId === emp.empresaId && p.estado === "activa");
       const expediente = datos.expedientes.find((e) => e.empresaId === emp.empresaId);
 
-      const filas = asignaciones
+      const filas = sujetos
         .filter((a) => a.empresaId === emp.empresaId && a[campo])
         .map((a) => {
           const sujeto = esPersonas
@@ -54,8 +58,8 @@ export const RecursosProyecto = ({
               ? (sujeto ? `${sujeto.nombre} ${sujeto.apellido}` : a.personaId)
               : (sujeto?.nombre || a.recursoId),
             secundario: esPersonas ? (sujeto?.rut ? formatRutDisplay(sujeto.rut) : "") : (sujeto?.patente || ""),
-            clasificacion: esPersonas ? formatCatalogo(a.rol) : (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
-            evaluacion: evaluarSujeto({ expediente, vigentes: datos.vigentes, campo, sujetoId: a[campo], perfilRecursoId: a.perfilRecursoId }),
+            clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
+            evaluacion: evaluarSujeto({ expediente, vigentes: datos.vigentes, campo, sujetoId: a[campo], perfilRecursoIds: a.perfilRecursoIds }),
           };
         });
 

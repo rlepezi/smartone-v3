@@ -3,6 +3,8 @@ import { Info, ArrowRight } from "lucide-react";
 import { StatusBadge, MAPA_ESTADO_PARTICIPACION } from "../shared/StatusBadge";
 import { formatFecha } from "../../utils/fechaFormatters";
 import { formatCatalogo } from "../../utils/formatCatalogo";
+import { nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 
 const ETIQUETA_TIPO = { persona: "Persona", maquinaria: "Maquinaria", empresa: "Empresa" };
 
@@ -14,9 +16,10 @@ const ETIQUETA_TIPO = { persona: "Persona", maquinaria: "Maquinaria", empresa: "
 export const ResumenReemplazoPanel = ({
   entidadTipo, entidadSel, empresaNombre,
   origen, cargandoOrigen,
-  proyectoSel, perfilSel, perfilExistenteNombre, rol,
+  proyectoSel, perfilSel, perfilExistenteNombre, perfilRecursoIds = [],
   fechaInicio, fechaFin,
 }) => {
+  const perfilesPorId = usePerfilesRecurso();
   if (!entidadSel) {
     return (
       <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
@@ -81,8 +84,8 @@ export const ResumenReemplazoPanel = ({
         {proyectoSel ? (
           <div className="space-y-1.5 text-[11px] text-slate-600">
             <p><span className="font-semibold text-slate-400">Proyecto destino:</span> {proyectoSel.nombre}</p>
-            {entidadTipo === "persona" && rol && (
-              <p><span className="font-semibold text-slate-400">Rol:</span> {formatCatalogo(rol)}</p>
+            {entidadTipo !== "empresa" && perfilRecursoIds.length > 0 && (
+              <p><span className="font-semibold text-slate-400">Perfil de Recurso:</span> {nombresPerfiles(perfilRecursoIds, perfilesPorId)}</p>
             )}
             {perfilNuevoNombre && (
               <p><span className="font-semibold text-slate-400">Perfil:</span> {perfilNuevoNombre}</p>

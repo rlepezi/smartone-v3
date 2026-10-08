@@ -8,7 +8,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { recursoService } from "../../services/recursoService";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { proyectoService } from "../../services/proyectoService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService } from "../../services/participacionSujetoService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { empresaService } from "../../services/empresaService";
 import { expedienteService } from "../../services/expedienteService";
@@ -46,7 +46,7 @@ export const RecursosListPage = () => {
 
   const [recursos, setRecursos] = useState([]);
   const [proyectosMap, setProyectosMap] = useState({});
-  // Para las columnas Mandante / Empresa / Evaluación (una línea por Asignación activa).
+  // Para las columnas Mandante / Empresa / Evaluación (una línea por participación activa).
   const [proyectosPorId, setProyectosPorId] = useState({});
   const [empresasMap, setEmpresasMap] = useState({});
   const [expedientesTodos, setExpedientesTodos] = useState([]);
@@ -64,13 +64,13 @@ export const RecursosListPage = () => {
 
   // Datos para las 4 tarjetas KPI, "Proyecto Asignado", "Estado de
   // Acreditación" y "Última Actividad" — ninguno se pedía antes en esta
-  // pantalla. asignacionService/evaluacionService ya se usan en otras
+  // pantalla. sujetoService/evaluacionService ya se usan en otras
   // pantallas; acá se cruzan por recursoId en el cliente, sin endpoint
   // nuevo.
   const [recursosTodos, setRecursosTodos] = useState([]);
   const [cargandoRecursosTodos, setCargandoRecursosTodos] = useState(true);
-  const [asignacionesActivas, setAsignacionesActivas] = useState([]);
-  const [cargandoAsignaciones, setCargandoAsignaciones] = useState(true);
+  const [sujetosActivos, setSujetosActivos] = useState([]);
+  const [cargandoSujetos, setCargandoSujetos] = useState(true);
   const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
   const [cargandoEvaluaciones, setCargandoEvaluaciones] = useState(true);
   const [tiposDisponibles, setTiposDisponibles] = useState([]);
@@ -122,10 +122,10 @@ export const RecursosListPage = () => {
       .catch((err) => console.error("Error al cargar recursos:", err))
       .finally(() => setCargandoRecursosTodos(false));
 
-    asignacionService.listar({ estado: "activa" })
-      .then((data) => setAsignacionesActivas(data || []))
-      .catch((err) => console.error("Error al cargar asignaciones:", err))
-      .finally(() => setCargandoAsignaciones(false));
+    sujetoService.listar({ estado: "activa" })
+      .then((data) => setSujetosActivos(data || []))
+      .catch((err) => console.error("Error al cargar participaciones de maquinarias:", err))
+      .finally(() => setCargandoSujetos(false));
 
     evaluacionService.listarVigentes()
       .then((data) => setEvaluacionesTodas(data || []))
@@ -164,15 +164,15 @@ export const RecursosListPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsMandanteKey]);
 
-  // Una línea por Asignación activa de la Maquinaria, con SU Proyecto, Mandante
+  // Una línea por participación activa de la Maquinaria, con SU Proyecto, Mandante
   // y Evaluación (Expediente de su Empresa en ese Proyecto) — nunca agregados.
   const partesDe = (recurso) =>
-    asignacionesActivas
+    sujetosActivos
       .filter((a) => a.recursoId === recurso.id)
       .map((a) => {
         const proyecto = proyectosPorId[a.proyectoId];
         const expediente = expedientesTodos.find(
-          (e) => e.empresaId === a.empresaId && e.proyectoId === a.proyectoId && e.estado !== "cerrado",
+          (e) => e.participacionId === a.participacionId && e.estado !== "cerrado",
         );
         return {
           key: a.id,
@@ -181,7 +181,7 @@ export const RecursosListPage = () => {
           mandante: proyecto?.mandanteId ? mandantesCache[proyecto.mandanteId] : null,
           evaluacion: evaluarSujeto({
             expediente, vigentes: evaluacionesTodas, campo: "recursoId", sujetoId: recurso.id,
-            perfilRecursoId: a.perfilRecursoId,
+            perfilRecursoIds: a.perfilRecursoIds,
           }),
         };
       });
@@ -209,10 +209,10 @@ export const RecursosListPage = () => {
     setPage(1);
   }, [filtroTipo, filtroEstado, filtroProyecto, searchTerm]);
 
-  // Proyecto(s) Asignado(s): vía Asignación activa del Recurso — no es un
+  // Proyecto(s) Asignado(s): vía participación activa del Recurso — no es un
   // campo propio de Recurso.
   const proyectosAsignadosDe = (recursoId) =>
-    asignacionesActivas.filter((a) => a.recursoId === recursoId).map((a) => a.proyectoId);
+    sujetosActivos.filter((a) => a.recursoId === recursoId).map((a) => a.proyectoId);
 
   const evaluacionesDe = (recursoId) => evaluacionesTodas.filter((ev) => ev.recursoId === recursoId);
 
@@ -382,9 +382,9 @@ export const RecursosListPage = () => {
               const vacio = (texto, cursiva = false) => (
                 <span className={`text-[11px] ${cursiva ? "text-slate-400 italic" : "text-slate-400"}`}>{texto}</span>
               );
-              // Una línea alineada por Asignación activa en cada columna desglosada.
+              // Una línea alineada por participación activa en cada columna desglosada.
               const lineas = (renderParte, textoVacio = "-") =>
-                cargandoAsignaciones ? vacio("…")
+                cargandoSujetos ? vacio("…")
                   : partes.length === 0 ? vacio(textoVacio, true)
                     : partes.map((pt) => <div key={pt.key} className={CLASE_LINEA}>{renderParte(pt)}</div>);
               return (

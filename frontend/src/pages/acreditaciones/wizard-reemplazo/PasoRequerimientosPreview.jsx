@@ -15,7 +15,7 @@ const BLOQUES = [
 // (empresa/persona/maquinaria) — mismo cálculo que ejecutará el
 // reemplazo real (acreditacionService.previewRequerimientos).
 export const PasoRequerimientosPreview = ({
-  entidadTipo, entidadId, perfilParticipacionId, fechaInicio,
+  entidadTipo, entidadId, perfilParticipacionId, fechaInicio, perfilRecursoIds = [],
 }) => {
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -26,11 +26,12 @@ export const PasoRequerimientosPreview = ({
     setLoading(true);
     setError(null);
     acreditacionService
-      .previewRequerimientos({ entidadTipo, entidadId, perfilParticipacionId, fechaInicio })
+      .previewRequerimientos({ entidadTipo, entidadId, perfilParticipacionId, fechaInicio, perfilRecursoIds })
       .then(setPreview)
       .catch((err) => setError(err.message || "No se pudo calcular la previsualización."))
       .finally(() => setLoading(false));
-  }, [entidadTipo, entidadId, perfilParticipacionId, fechaInicio]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entidadTipo, entidadId, perfilParticipacionId, fechaInicio, perfilRecursoIds.join(",")]);
 
   const pct = preview && preview.total > 0 ?
       Math.round((preview.reutilizados / preview.total) * 100) :

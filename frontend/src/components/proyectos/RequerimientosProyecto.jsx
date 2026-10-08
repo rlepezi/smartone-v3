@@ -6,7 +6,7 @@ import { RequerimientosLista } from "../shared/RequerimientosLista";
 import { ActionButton } from "../shared/ActionButton";
 import { PlanillaEvaluacion } from "../expedientes/PlanillaEvaluacion";
 import { BarraCumplimiento } from "./EmpresasParticipantesTable";
-import { aplicaRequerimientoASujeto, sujetoDeAsignacion } from "../../utils/aplicabilidadRequerimiento";
+import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 
 const NIVELES = [
   { key: "empresa", label: "Empresa" },
@@ -29,7 +29,7 @@ const RESUELTOS = ["cumple", "no_aplica"];
 // EvaluarExpedientePage (PlanillaEvaluacion), embebida y abierta bajo demanda.
 // `onCambio` avisa al detalle para refrescar sus cifras.
 export const RequerimientosProyecto = ({
-  proyectoId, participantes, asignaciones, personas = [], recursos = [], modoEdicion = false, onCambio,
+  proyectoId, participantes, sujetos, personas = [], recursos = [], modoEdicion = false, onCambio,
 }) => {
   const [version, setVersion] = useState(0);
   const [planillaAbierta, setPlanillaAbierta] = useState(null); // "expId|tipo|id"
@@ -68,7 +68,7 @@ export const RequerimientosProyecto = ({
     <div className="space-y-5">
       {datos.expedientes.map((exp) => {
         const empresa = participantes.find((p) => p.empresaId === exp.empresaId);
-        const asignacionesEmpresa = asignaciones.filter((a) => a.empresaId === exp.empresaId);
+        const sujetosEmpresa = sujetos.filter((a) => a.participacionId === exp.participacionId);
         const evaluacionesExp = datos.vigentes.filter((ev) => ev.expedienteId === exp.id);
         const aplicables = exp.requerimientosAplicables || [];
 
@@ -102,8 +102,8 @@ export const RequerimientosProyecto = ({
                           return <StatusBadge value={ev?.resultado || "pendiente"} map={MAPA_EVALUACION} />;
                         }
                         const sujetos = [...new Set(
-                          asignacionesEmpresa
-                            .filter((a) => a[campo] && aplicaRequerimientoASujeto(r, sujetoDeAsignacion(a)))
+                          sujetosEmpresa
+                            .filter((a) => a[campo] && aplicaRequerimientoASujeto(r, a))
                             .map((a) => a[campo]),
                         )];
                         const cumplen = sujetos.filter((sujetoId) =>
@@ -126,11 +126,11 @@ export const RequerimientosProyecto = ({
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Evaluar</p>
                 {[
                   { clave: `${exp.id}|empresa|`, etiqueta: "Empresa (requerimientos de nivel Empresa)", props: {} },
-                  ...[...new Set(asignacionesEmpresa.filter((a) => a.personaId).map((a) => a.personaId))].map((pid) => {
+                  ...[...new Set(sujetosEmpresa.filter((a) => a.personaId).map((a) => a.personaId))].map((pid) => {
                     const p = personas.find((x) => x.id === pid);
                     return { clave: `${exp.id}|persona|${pid}`, etiqueta: p ? `Persona: ${p.nombre} ${p.apellido}` : `Persona: ${pid}`, props: { personaId: pid } };
                   }),
-                  ...[...new Set(asignacionesEmpresa.filter((a) => a.recursoId).map((a) => a.recursoId))].map((rid) => {
+                  ...[...new Set(sujetosEmpresa.filter((a) => a.recursoId).map((a) => a.recursoId))].map((rid) => {
                     const r = recursos.find((x) => x.id === rid);
                     return { clave: `${exp.id}|recurso|${rid}`, etiqueta: `Maquinaria: ${r?.nombre || rid}`, props: { recursoId: rid } };
                   }),

@@ -12,7 +12,8 @@ import { mandanteService } from "../../services/mandanteService";
 import { proyectoService } from "../../services/proyectoService";
 import { participacionService } from "../../services/participacionService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { expedienteService } from "../../services/expedienteService";
 import { requerimientoService } from "../../services/requerimientoService";
 import { evaluacionService } from "../../services/evaluacionService";
@@ -123,7 +124,9 @@ export const RecursoDetailPage = () => {
   const mandantesEnCursoRef = useRef(new Set());
   const [participaciones, setParticipaciones] = useState([]);
   const [perfilesMap, setPerfilesMap] = useState({});
-  const [asignaciones, setAsignaciones] = useState([]);
+  // Participaciones de la Maquinaria en Proyectos (agrupadas, con su Perfil de Recurso).
+  const [sujetos, setSujetos] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [requerimientosMaquinaria, setRequerimientosMaquinaria] = useState([]);
   const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
@@ -165,14 +168,14 @@ export const RecursoDetailPage = () => {
       try {
         const [
           empresasData, proyectosData, participacionesData, perfilesData,
-          asignacionesData, expedientesData, requerimientosData, evaluacionesData,
+          sujetosData, expedientesData, requerimientosData, evaluacionesData,
           historialData,
         ] = await Promise.all([
           empresaService.listar(),
           proyectoService.listar({}),
           participacionService.listar({}),
           perfilParticipacionService.listar({}),
-          asignacionService.listar({ recursoId: id }),
+          sujetoService.listar({ recursoId: id }),
           expedienteService.listar({}),
           requerimientoService.listar({ estado: "activo" }),
           evaluacionService.listarVigentes(),
@@ -201,7 +204,7 @@ export const RecursoDetailPage = () => {
 
         // Para mandante_admin/lector el backend ignora el filtro recursoId
         // (fuerza su Mandante): se acota acá a este Recurso.
-        setAsignaciones((asignacionesData || []).filter((a) => a.recursoId === id));
+        setSujetos((sujetosData || []).filter((a) => a.recursoId === id));
         setExpedientesTodos(expedientesData || []);
         setRequerimientosMaquinaria((requerimientosData || []).filter((r) => r.tipoEntidad === "recurso"));
         setEvaluacionesTodas(evaluacionesData || []);
@@ -216,7 +219,7 @@ export const RecursoDetailPage = () => {
     return () => { cancelado = true; };
   }, [id]);
 
-  // Mandante de cada Proyecto en el que este Recurso tiene alguna Asignación —
+  // Mandante de cada Proyecto en el que este Recurso tiene alguna participación —
   // Recurso no tiene un Mandante propio, se muestra el del Proyecto. GET
   // /mandantes/:id es accesible para los 5 roles, así que se resuelve por
   // Proyecto con cache y control de "en curso" (mismo patrón que
@@ -277,9 +280,9 @@ export const RecursoDetailPage = () => {
   const handleProyectoCambiado = () => {
     setCambiarProyectoAbierto(false);
     cargarRecurso();
-    asignacionService.listar({ recursoId: id })
-      .then((data) => setAsignaciones((data || []).filter((a) => a.recursoId === id)))
-      .catch((err) => console.error("Error al recargar asignaciones:", err));
+    sujetoService.listar({ recursoId: id })
+      .then((data) => setSujetos((data || []).filter((a) => a.recursoId === id)))
+      .catch((err) => console.error("Error al recargar participaciones:", err));
   };
 
   if (loading) {
@@ -317,24 +320,22 @@ export const RecursoDetailPage = () => {
 
   const proximoVencimiento = proximoVencimientoDe(evaluacionesPropias);
 
-  const asignacionesOrdenadas = [...asignaciones].sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
-  const tieneParticipacionActivaRecurso = asignaciones.some((a) => a.estado === "activa");
-  const ultimoProyecto = asignacionesOrdenadas[0] || null;
+  const sujetosOrdenados = [...sujetos].sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
+  const tieneParticipacionActivaRecurso = sujetos.some((a) => a.estado === "activa");
+  const ultimoProyecto = sujetosOrdenados[0] || null;
 
-  const filaDeAsignacion = (a) => {
-    const participacion = participaciones.find(
-      (p) => p.proyectoId === a.proyectoId && p.empresaId === a.empresaId,
-    );
+  const filaDeSujeto = (a) => {
+    const participacion = participaciones.find((p) => p.id === a.participacionId);
     const perfilNombre = participacion ? perfilesMap[participacion.perfilParticipacionId] : null;
     const expediente = expedientesTodos.find(
-      (e) => e.proyectoId === a.proyectoId && e.empresaId === a.empresaId,
-    );
+      (e) => e.participacionId === a.participacionId && e.estado !== "cerrado",
+    ) || expedientesTodos.find((e) => e.participacionId === a.participacionId);
     const mandanteId = proyectoMandanteIdMap[a.proyectoId];
     const mandante = mandanteId ? mandantesCache[mandanteId] : null;
-    return { ...a, perfilNombre, expediente, mandanteId, mandanteNombre: mandante?.nombre, mandanteLogoUrl: mandante?.logoUrl };
+    return { ...a, perfilNombre, expediente, clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId), mandanteId, mandanteNombre: mandante?.nombre, mandanteLogoUrl: mandante?.logoUrl };
   };
-  const filasAsignaciones = asignacionesOrdenadas.map(filaDeAsignacion);
-  const filasActivas = filasAsignaciones.filter((f) => f.estado === "activa");
+  const filasSujetos = sujetosOrdenados.map(filaDeSujeto);
+  const filasActivas = filasSujetos.filter((f) => f.estado === "activa");
 
   const requerimientosMantencion = requerimientosMaquinaria.filter((r) => r.requiereVencimiento);
 
@@ -346,7 +347,7 @@ export const RecursoDetailPage = () => {
   });
 
   // --- KPIs ---
-  // Acreditación: sobre el Expediente abierto de la Asignación activa más reciente.
+  // Acreditación: sobre el Expediente abierto de la participación activa más reciente.
   const expedienteRelevante = filasActivas[0]?.expediente && filasActivas[0].expediente.estado !== "cerrado"
     ? filasActivas[0].expediente : null;
   const evaluacionesRelevantes = expedienteRelevante
@@ -360,7 +361,7 @@ export const RecursoDetailPage = () => {
   const porcentajes = filasActivas
     .map((f) => evaluarSujeto({
       expediente: f.expediente && f.expediente.estado !== "cerrado" ? f.expediente : null,
-      vigentes: evaluacionesPropias, campo: "recursoId", sujetoId: id, perfilRecursoId: f.perfilRecursoId,
+      vigentes: evaluacionesPropias, campo: "recursoId", sujetoId: id, perfilRecursoIds: f.perfilRecursoIds,
     }).pctCumple)
     .filter((p) => p !== null);
   const cumplimientoPromedio = porcentajes.length > 0
@@ -524,7 +525,7 @@ export const RecursoDetailPage = () => {
 
             <TarjetaPanel titulo="Proyectos Actuales">
               {cargandoContexto ? cargandoTexto : filasActivas.length === 0 ? (
-                <div className="py-6 text-center text-slate-400 text-xs">Sin Asignaciones activas a Proyectos.</div>
+                <div className="py-6 text-center text-slate-400 text-xs">Sin participaciones activas en Proyectos.</div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
                   <table className="w-full text-left border-collapse text-xs">
@@ -542,7 +543,7 @@ export const RecursoDetailPage = () => {
                           <td className="py-2.5 px-2">
                             {f.mandanteNombre ? <MandanteChip nombre={f.mandanteNombre} logoUrl={f.mandanteLogoUrl} size="lg" /> : <span className="text-slate-300 italic">-</span>}
                           </td>
-                          <td className="py-2.5 px-2 text-slate-600 font-medium">{formatCatalogo(recurso.tipo)}</td>
+                          <td className="py-2.5 px-2 text-slate-600 font-medium">{f.clasificacion || formatCatalogo(recurso.tipo)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -596,7 +597,7 @@ export const RecursoDetailPage = () => {
         {/* ---------------- Proyectos ---------------- */}
         {tab === "proyectos" && (
           <TarjetaPanel
-            titulo="Asignaciones a Proyectos"
+            titulo="Participación en Proyectos"
             accion={puedeEscribir && modoEdicion ? (
               <div className="flex items-center gap-2">
                 <ActionButton onClick={() => setCambiarProyectoAbierto(true)} icon={Repeat}>
@@ -608,8 +609,8 @@ export const RecursoDetailPage = () => {
               </div>
             ) : null}
           >
-            {cargandoContexto ? cargandoTexto : filasAsignaciones.length === 0 ? (
-              <div className="py-6 text-center text-slate-400 text-xs">Sin Asignaciones a Proyectos registradas.</div>
+            {cargandoContexto ? cargandoTexto : filasSujetos.length === 0 ? (
+              <div className="py-6 text-center text-slate-400 text-xs">Sin participaciones en Proyectos registradas.</div>
             ) : (
               <div className="overflow-x-auto -mx-2">
                 <table className="w-full text-left border-collapse text-xs">
@@ -626,7 +627,7 @@ export const RecursoDetailPage = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filasAsignaciones.map((f) => (
+                    {filasSujetos.map((f) => (
                       <tr key={f.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-2.5 px-2 font-bold text-carbon-dark">{proyectosMap[f.proyectoId] || f.proyectoId}</td>
                         <td className="py-2.5 px-2">

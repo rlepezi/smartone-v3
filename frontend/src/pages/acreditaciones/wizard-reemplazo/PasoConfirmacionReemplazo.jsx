@@ -1,7 +1,8 @@
 import React from "react";
 import { CheckCircle2 } from "lucide-react";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
-import { formatCatalogo } from "../../../utils/formatCatalogo";
+import { nombresPerfiles } from "../../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
 
 const ETIQUETA_TIPO = { persona: "Persona", maquinaria: "Maquinaria", empresa: "Empresa" };
 
@@ -9,9 +10,10 @@ const ETIQUETA_TIPO = { persona: "Persona", maquinaria: "Maquinaria", empresa: "
 // que llama a acreditacionService.reemplazar — la única escritura real
 // de todo el wizard, ejecutada en una sola transacción en el backend.
 export const PasoConfirmacionReemplazo = ({
-  entidadTipo, entidadSel, proyectoSel, perfilSel, rol, fechaInicio, fechaFin,
+  entidadTipo, entidadSel, proyectoSel, perfilSel, perfilRecursoIds = [], fechaInicio, fechaFin,
   ejecutando, error, resultado, onConfirmar,
 }) => {
+  const perfilesPorId = usePerfilesRecurso();
   return (
     <div className="space-y-5">
       <div>
@@ -24,8 +26,8 @@ export const PasoConfirmacionReemplazo = ({
       <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2 text-xs">
         <p><span className="font-semibold text-slate-500">{ETIQUETA_TIPO[entidadTipo]}:</span> <b>{entidadSel?.nombre}</b></p>
         <p><span className="font-semibold text-slate-500">Proyecto destino:</span> <b>{proyectoSel?.nombre}</b> ({proyectoSel?.codigo})</p>
-        {entidadTipo === "persona" && rol && (
-          <p><span className="font-semibold text-slate-500">Rol:</span> <b>{formatCatalogo(rol)}</b></p>
+        {entidadTipo !== "empresa" && perfilRecursoIds.length > 0 && (
+          <p><span className="font-semibold text-slate-500">Perfil de Recurso:</span> <b>{nombresPerfiles(perfilRecursoIds, perfilesPorId)}</b></p>
         )}
         {perfilSel && (
           <p><span className="font-semibold text-slate-500">Perfil de Participación (nuevo):</span> <b>{perfilSel.nombre}</b></p>

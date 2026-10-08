@@ -11,12 +11,13 @@ export const acreditacionService = {
     return apiClient(`/acreditaciones/entidades${query}`);
   },
 
-  async previewRequerimientos({ entidadTipo, entidadId, perfilParticipacionId, fechaInicio }) {
+  async previewRequerimientos({ entidadTipo, entidadId, perfilParticipacionId, fechaInicio, perfilRecursoIds }) {
     const params = new URLSearchParams();
     if (entidadTipo) params.set("entidadTipo", entidadTipo);
     if (entidadId) params.set("entidadId", entidadId);
     if (perfilParticipacionId) params.set("perfilParticipacionId", perfilParticipacionId);
     if (fechaInicio) params.set("fechaInicio", fechaInicio);
+    if (perfilRecursoIds?.length) params.set("perfilRecursoIds", perfilRecursoIds.join(","));
     const res = await apiClient(`/acreditaciones/preview-requerimientos?${params.toString()}`);
     return res.data;
   },

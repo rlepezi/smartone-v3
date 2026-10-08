@@ -31,7 +31,7 @@ class AcreditacionController {
 
   /**
    * Lista Personas, Recursos (maquinaria) o Empresas con su historial de
-   * participaciones/asignaciones, para el Paso 2 del wizard.
+   * participaciones, para el Paso 2 del wizard.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -65,8 +65,13 @@ class AcreditacionController {
       const {
         entidadTipo, entidadId, perfilParticipacionId, fechaInicio,
       } = req.query;
+      // perfilRecursoIds llega como lista separada por comas (query string).
+      const perfilRecursoIds = req.query.perfilRecursoIds ?
+          String(req.query.perfilRecursoIds).split(",").filter(Boolean) :
+          undefined;
       const resultado = await acreditacionService.previewRequerimientos({
         entidadTipo, entidadId, perfilParticipacionId, fechaInicio,
+        perfilRecursoIds,
       });
       res.status(200).json({data: resultado});
     } catch (error) {
@@ -123,10 +128,10 @@ class AcreditacionController {
   }
 
   /**
-   * Mueve la Participación/Asignación activa de una Persona a otro
+   * Mueve la participación activa de una Persona a otro
    * Proyecto — puerta de entrada corta a "Reemplazar Acreditación" desde
    * la ficha de la Persona, sin pedir de nuevo Empresa/rol si ya puede
-   * heredarlos de su Asignación activa actual.
+   * heredarlos de su participación activa actual.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -147,7 +152,7 @@ class AcreditacionController {
   }
 
   /**
-   * Mueve la Participación/Asignación activa de un Recurso (maquinaria) a
+   * Mueve la participación activa de un Recurso (maquinaria) a
    * otro Proyecto — análogo a `cambiarProyectoPersona`.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
@@ -170,7 +175,7 @@ class AcreditacionController {
 
   /**
    * Lista las Personas o Recursos (maquinaria) activos de una Empresa,
-   * con su Asignación activa actual (en cualquier Proyecto) si tienen
+   * con su participación activa actual (en cualquier Proyecto) si tienen
    * una — paso "Personas y Maquinarias" del wizard de Nueva Acreditación.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

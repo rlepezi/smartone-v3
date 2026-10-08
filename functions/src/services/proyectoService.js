@@ -2,7 +2,7 @@ const proyectoRepository = require("../repositories/proyectoRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
 const participacionRepository =
     require("../repositories/participacionRepository");
-const asignacionRepository = require("../repositories/asignacionRepository");
+const {sujetosActivosDeProyecto} = require("../utils/sujetosParticipacion");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const bitacoraService = require("./bitacoraService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
@@ -555,7 +555,7 @@ class ProyectoService {
 
   /**
    * Calcula, en una sola llamada, los contadores de Empresas participantes
-   * (Participación activa), Personas y Recursos asignados (Asignación
+   * (Participación activa), Personas y Recursos asignados (documentos
    * activa) de un Proyecto.
    * @param {string} id ID del proyecto.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -567,18 +567,18 @@ class ProyectoService {
     // Mandante).
     await this.getProyectoById(id, actor);
 
-    const [participaciones, asignacionesActivas] = await Promise.all([
+    const [participaciones, sujetosActivos] = await Promise.all([
       participacionRepository.list({proyectoId: id}),
-      asignacionRepository.getActivasByProyecto(id),
+      sujetosActivosDeProyecto(id),
     ]);
 
     const empresasCount = participaciones.filter(
         (p) => p.estado === "activa",
     ).length;
-    const personasCount = asignacionesActivas.filter(
+    const personasCount = sujetosActivos.filter(
         (a) => a.personaId,
     ).length;
-    const recursosCount = asignacionesActivas.filter(
+    const recursosCount = sujetosActivos.filter(
         (a) => a.recursoId,
     ).length;
 

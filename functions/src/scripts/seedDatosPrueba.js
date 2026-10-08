@@ -54,6 +54,14 @@ const evidenciaRequerimientoService =
     require("../services/evidenciaRequerimientoService");
 const evaluacionService = require("../services/evaluacionService");
 const perfilRecursoService = require("../services/perfilRecursoService");
+const participacionPersonaService =
+    require("../services/participacionPersonaService");
+const participacionRecursoService =
+    require("../services/participacionRecursoService");
+const {aplicaRequerimientoASujeto} =
+    require("../utils/aplicabilidadRequerimiento");
+const {sujetosActivosDeParticipacion} =
+    require("../utils/sujetosParticipacion");
 
 const mandanteRepository = require("../repositories/mandanteRepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
@@ -741,6 +749,231 @@ async function seedParticipaciones(empresas, proyectos, perfiles) {
 }
 
 /**
+ * Asigna a una Participación una Persona (uno o varios Perfiles de
+ * Recurso) o una Maquinaria (un perfil), de forma idempotente: solo crea
+ * los perfiles que todavía no tiene activos ahí.
+ * @param {Object} participacion Participación destino.
+ * @param {"persona"|"recurso"} tipo Tipo del sujeto.
+ * @param {Object} sujeto Persona o Recurso.
+ * @param {string[]} nombresPerfiles Nombres de Perfiles de Recurso.
+ * @param {string} descripcion Descripción para el resumen.
+ * @return {Promise<void>}
+ */
+async function asignarSujeto(participacion, tipo, sujeto, nombresPerfiles,
+    descripcion) {
+  const servicio = tipo === "persona" ?
+      participacionPersonaService : participacionRecursoService;
+  const campo = tipo === "persona" ? "personaId" : "recursoId";
+  const perfiles = [];
+  for (const nombre of nombresPerfiles) {
+    const perfil = await perfilRecursoRepository.getByNombre(
+        participacion.mandanteId, tipo, nombre,
+    );
+    if (perfil) perfiles.push(perfil);
+  }
+  if (perfiles.length !== nombresPerfiles.length) {
+    resumen.fallidos.push({
+      tipo: tipo === "persona" ?
+          "ParticipacionPersona" : "ParticipacionRecurso",
+      descripcion,
+      motivo: `Perfil de Recurso inexistente: ${nombresPerfiles.join(", ")}`,
+    });
+    return;
+  }
+  const activos = await servicio.repo.list({
+    participacionId: participacion.id, [campo]: sujeto.id, estado: "activa",
+  });
+  const yaTiene = new Set(activos.map((a) => a.perfilRecursoId));
+  for (const perfil of perfiles) {
+    await seedItem(
+        tipo === "persona" ? "ParticipacionPersona" : "ParticipacionRecurso",
+        `${descripcion} — ${perfil.nombre}`,
+        async () => (yaTiene.has(perfil.id) ? {id: perfil.id} : null),
+        async () => (await servicio.crear({
+          participacionId: participacion.id,
+          [campo]: sujeto.id,
+          perfilRecursoIds: [perfil.id],
+          fechaInicio: "2026-02-01",
+        }, ACTOR_FALSO))[0],
+    );
+  }
+}
+
+/**
+ * Paso 10b: Personas y Maquinarias de cada Participación
+ * (participacionPersonas / participacionRecursos). La primera Persona de
+ * la primera Participación tiene DOS perfiles (Operador + Trabajador); las
+ * demás, uno. Cada Maquinaria toma el Perfil de Recurso de su
+ * clasificación.
+ * @param {Object<string, Object>} participaciones Mapa descripción →
+ *     Participación.
+ * @param {Object<string, Object[]>} personasPorEmpresaId Personas por
+ *     empresaId.
+ * @param {Object<string, Object[]>} recursosPorEmpresaId Recursos por
+ *     empresaId.
+ * @return {Promise<void>}
+ */
+async function seedAsignaciones(
+    participaciones, personasPorEmpresaId, recursosPorEmpresaId,
+) {
+  log("\n[10b/15] Personas y Maquinarias de cada Participación");
+  let primera = true;
+  for (const [descripcion, participacion] of Object.entries(participaciones)) {
+    const personas = personasPorEmpresaId[participacion.empresaId] || [];
+    for (const [i, persona] of personas.entries()) {
+      let perfiles = ["Trabajador"];
+      if (i === 0) {
+        perfiles = primera ? ["Operador", "Trabajador"] : ["Operador"];
+      }
+      await asignarSujeto(
+          participacion, "persona", persona, perfiles,
+          `${persona.nombre} ${persona.apellido} / ${descripcion}`,
+      );
+    }
+    for (const recurso of recursosPorEmpresaId[participacion.empresaId] || []) {
+      await asignarSujeto(
+          participacion, "recurso", recurso, [recurso.tipo],
+          `${recurso.nombre} / ${descripcion}`,
+      );
+    }
+    primera = false;
+  }
+}
+
+/**
+ * Evalúa, con el sujeto que corresponde, un Requerimiento del snapshot: a
+ * nivel Empresa sin sujeto; a nivel Persona/Maquinaria con el primer sujeto
+ * activo de la Participación al que aplica (preferentemente el dueño de la
+ * Evidencia). Devuelve null si no hay sujeto al que aplique.
+ * @param {Object} expediente Expediente.
+ * @param {Object} requerimiento Entrada del snapshot.
+ * @param {Object[]} sujetos Sujetos activos de la Participación.
+ * @param {string[]} evidenciaIds Evidencias vinculadas al Requerimiento.
+ * @return {Promise<?{personaId: ?string, recursoId: ?string,
+ *     evidenciaIds: string[]}>} Datos del sujeto a evaluar.
+ */
+async function sujetoParaEvaluar(expediente, requerimiento, sujetos,
+    evidenciaIds) {
+  if (requerimiento.tipoEntidad === "empresa") {
+    return {personaId: null, recursoId: null, evidenciaIds};
+  }
+  const candidatos = sujetos.filter(
+      (s) => aplicaRequerimientoASujeto(requerimiento, s),
+  );
+  if (candidatos.length === 0) return null;
+  const evidencias = await Promise.all(
+      evidenciaIds.map((id) => evidenciaRepository.getById(id)),
+  );
+  const dueno = candidatos.find((s) => evidencias.some((e) =>
+    e && ((s.personaId && e.personaId === s.personaId) ||
+        (s.recursoId && e.recursoId === s.recursoId))));
+  const elegido = dueno || candidatos[0];
+  return {
+    personaId: elegido.personaId || null,
+    recursoId: elegido.recursoId || null,
+    evidenciaIds: dueno ? evidenciaIds : [],
+  };
+}
+
+/**
+ * Paso 16: un Expediente CERRADO con Evaluaciones (para verificar que los
+ * cambios de vínculos no lo tocan). Logística Puerto Sur SpA en el
+ * Proyecto en Ejecución AND, con una Persona y una Maquinaria: se evalúa
+ * todo "cumple", queda aprobado y se pasa a en_ejecucion → cerrado.
+ * Idempotente: si la Participación ya existe, se omite completo.
+ * @param {Object<string, Object>} empresas Mapa razónSocial → Empresa.
+ * @param {Object<string, Object>} proyectos Mapa nombre → Proyecto.
+ * @param {Object<string, Object>} perfiles Mapa "nombre|mandante" → Perfil.
+ * @param {Object<string, Object[]>} personasPorEmpresaId Personas.
+ * @param {Object<string, Object[]>} recursosPorEmpresaId Recursos.
+ * @param {?Object} evaluador Usuario evaluador.
+ * @return {Promise<void>}
+ */
+async function seedExpedienteCerrado(
+    empresas, proyectos, perfiles, personasPorEmpresaId, recursosPorEmpresaId,
+    evaluador,
+) {
+  log("\n[16/16] Expediente cerrado con evaluaciones");
+  const empresa = empresas["Logística Puerto Sur SpA"];
+  const proyecto = proyectos["Proyecto en Ejecución AND"];
+  const perfil = perfiles["Permanente|Constructora Andina"];
+  if (!empresa || !proyecto || !perfil || !evaluador) {
+    resumen.fallidos.push({
+      tipo: "ExpedienteCerrado", descripcion: "Logística Puerto Sur SpA",
+      motivo: "Dependencia faltante.",
+    });
+    return;
+  }
+  const existente = await participacionRepository.getActivaByProyectoYEmpresa(
+      proyecto.id, empresa.id,
+  );
+  if (existente) {
+    resumen.omitidos.ExpedienteCerrado =
+        (resumen.omitidos.ExpedienteCerrado || 0) + 1;
+    log("  · Expediente cerrado: ya existe la Participación, se omite.");
+    return;
+  }
+  try {
+    const participacion = await participacionService.crearParticipacion({
+      proyectoId: proyecto.id,
+      empresaId: empresa.id,
+      perfilParticipacionId: perfil.id,
+      fechaInicio: "2026-02-01",
+    }, ACTOR_FALSO);
+    const persona = (personasPorEmpresaId[empresa.id] || [])[0];
+    const recurso = (recursosPorEmpresaId[empresa.id] || [])[0];
+    if (persona) {
+      await asignarSujeto(participacion, "persona", persona, ["Trabajador"],
+          `${persona.nombre} / cerrado`);
+    }
+    if (recurso) {
+      await asignarSujeto(participacion, "recurso", recurso, [recurso.tipo],
+          `${recurso.nombre} / cerrado`);
+    }
+    const expediente = await expedienteService.crearExpediente(
+        {participacionId: participacion.id}, ACTOR_FALSO,
+    );
+    const actorEvaluador = {
+      rol: "evaluador", mandanteId: null, uid: evaluador.id,
+      email: evaluador.email,
+    };
+    const sujetos = await sujetosActivosDeParticipacion(participacion.id);
+    for (const r of expediente.requerimientosAplicables || []) {
+      const destinos = r.tipoEntidad === "empresa" ?
+          [{personaId: null, recursoId: null}] :
+          sujetos.filter((s) => aplicaRequerimientoASujeto(r, s));
+      for (const s of destinos) {
+        await evaluacionService.crearEvaluacion({
+          expedienteId: expediente.id,
+          requerimientoId: r.requerimientoId,
+          resultado: "cumple",
+          metodoVerificacion: "presencial",
+          observaciones: "[SEED] Expediente cerrado.",
+          personaId: s.personaId || null,
+          recursoId: s.recursoId || null,
+          fechaVencimiento: r.requiereVencimiento ? "2027-12-31" : null,
+        }, actorEvaluador);
+      }
+    }
+    await expedienteService.transicionarEstado(
+        expediente.id, {estado: "en_ejecucion"}, ACTOR_FALSO,
+    );
+    await expedienteService.transicionarEstado(
+        expediente.id, {estado: "cerrado"}, ACTOR_FALSO,
+    );
+    resumen.creados.ExpedienteCerrado =
+        (resumen.creados.ExpedienteCerrado || 0) + 1;
+    log(`  ✓ Expediente cerrado: ${expediente.id}`);
+  } catch (err) {
+    log(`  ✗ Expediente cerrado: ${err.message}`);
+    resumen.fallidos.push({
+      tipo: "ExpedienteCerrado", descripcion: "Logística Puerto Sur SpA",
+      motivo: err.message,
+    });
+  }
+}
+
+/**
  * Paso 11: Expedientes — uno por Participación (snapshot automático).
  * @param {Object<string, Object>} participaciones Mapa descripción →
  *     Participación.
@@ -895,6 +1128,9 @@ async function seedEvaluaciones(expedientes, evidenciasPorClave, evaluador) {
     const existentes = await evaluacionRepository.getByExpediente(
         expediente.id,
     );
+    const sujetos = await sujetosActivosDeParticipacion(
+        expediente.participacionId,
+    );
 
     // Nunca más de 2, y siempre deja al menos 1 Requerimiento sin evaluar.
     const maxAEvaluar = Math.max(0, requerimientos.length - 1);
@@ -908,7 +1144,10 @@ async function seedEvaluaciones(expedientes, evidenciasPorClave, evaluador) {
       );
       const resultado = resultadosCiclo[idx % resultadosCiclo.length];
       const clave = `${expediente.id}|${requerimiento.requerimientoId}`;
-      const evidenciaIds = evidenciasPorClave[clave] || [];
+      const sujeto = await sujetoParaEvaluar(
+          expediente, requerimiento, sujetos, evidenciasPorClave[clave] || [],
+      );
+      if (!sujeto) continue;
 
       await seedItem(
           "Evaluacion",
@@ -920,7 +1159,13 @@ async function seedEvaluaciones(expedientes, evidenciasPorClave, evaluador) {
             resultado,
             observaciones:
                 `[SEED] Evaluación de prueba — resultado: ${resultado}.`,
-            evidenciaIds,
+            personaId: sujeto.personaId,
+            recursoId: sujeto.recursoId,
+            metodoVerificacion: sujeto.evidenciaIds.length ?
+                "documental" : "presencial",
+            fechaVencimiento: requerimiento.requiereVencimiento ?
+                "2027-12-31" : null,
+            evidenciaIds: sujeto.evidenciaIds,
           }, actorEvaluador),
       );
     }
@@ -992,12 +1237,19 @@ async function main() {
   const participaciones = await seedParticipaciones(
       empresas, proyectos, perfiles,
   );
+  await seedAsignaciones(
+      participaciones, personasPorEmpresaId, recursosPorEmpresaId,
+  );
   const expedientes = await seedExpedientes(participaciones);
   const evidenciasPorClave = await seedEvidencias(
       expedientes, personasPorEmpresaId, recursosPorEmpresaId,
   );
   const evaluador = usuarios["evaluador@seed.smartone.cl"];
   await seedEvaluaciones(expedientes, evidenciasPorClave, evaluador);
+  await seedExpedienteCerrado(
+      empresas, proyectos, perfiles, personasPorEmpresaId,
+      recursosPorEmpresaId, evaluador,
+  );
 
   imprimirResumen(usuarios);
 }

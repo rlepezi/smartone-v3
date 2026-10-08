@@ -22,6 +22,7 @@ import { ListRow } from "../components/ListRow";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { SkeletonCard } from "../components/Skeleton";
+import { nombresPerfiles } from "../utils/sujetosParticipacion";
 
 export default function DetalleEmpresaScreen({ route, navigation }) {
   const { empresaId } = route.params;
@@ -74,31 +75,36 @@ export default function DetalleEmpresaScreen({ route, navigation }) {
     return { cumple, noCumple, pendiente };
   }, [filasRequerimientos]);
 
-  // 4+ contadores por rol REAL (no hardcodeados): se agrupan las
-  // Asignaciones de Personas por su `rol` tal como viene del backend
-  // (catálogo configurable por Mandante), más un total de Máquinas.
+  // Contadores por Perfil de Recurso REAL (no hardcodeados, catálogo
+  // configurable por Mandante): una Persona con varios perfiles cuenta en
+  // cada uno de ellos; más un total de Máquinas.
   const contadoresRol = useMemo(() => {
-    const asignaciones = detalle.data?.asignaciones || [];
-    const porRol = {};
+    const sujetos = detalle.data?.sujetos || [];
+    const perfilesPorId = detalle.data?.perfilesPorId || {};
+    const porPerfil = {};
     let maquinas = 0;
-    asignaciones.forEach((a) => {
+    sujetos.forEach((a) => {
       if (a.personaId) {
-        const rol = a.rol || "Sin rol";
-        porRol[rol] = (porRol[rol] || 0) + 1;
+        const ids = a.perfilRecursoIds.length ? a.perfilRecursoIds : ["sin-perfil"];
+        ids.forEach((id) => {
+          porPerfil[id] = (porPerfil[id] || 0) + 1;
+        });
       } else if (a.recursoId) {
         maquinas++;
       }
     });
-    const tiles = Object.entries(porRol).map(([rol, count]) => ({ key: rol, label: rol, count }));
+    const tiles = Object.entries(porPerfil).map(([id, count]) => ({
+      key: id, label: perfilesPorId[id]?.nombre || "Sin perfil", count,
+    }));
     tiles.push({ key: "maquinas", label: "Máquinas", count: maquinas });
     return tiles;
   }, [detalle.data]);
 
   const asignacionesFiltradas = useMemo(() => {
-    const asignaciones = detalle.data?.asignaciones || [];
-    if (!filtroRol) return asignaciones;
-    if (filtroRol === "maquinas") return asignaciones.filter((a) => a.recursoId);
-    return asignaciones.filter((a) => a.rol === filtroRol);
+    const sujetos = detalle.data?.sujetos || [];
+    if (!filtroRol) return sujetos;
+    if (filtroRol === "maquinas") return sujetos.filter((a) => a.recursoId);
+    return sujetos.filter((a) => a.perfilRecursoIds.includes(filtroRol));
   }, [detalle.data, filtroRol]);
 
   const nombresPersonas = useAsync(async () => {
@@ -215,7 +221,7 @@ export default function DetalleEmpresaScreen({ route, navigation }) {
                         `${nombresPersonas.data[a.personaId].nombre} ${nombresPersonas.data[a.personaId].apellido}` :
                         a.personaId) :
                       a.recursoId}
-                    subtituloMono={a.rol}
+                    subtituloMono={nombresPerfiles(a.perfilRecursoIds, detalle.data?.perfilesPorId)}
                     onPress={() => navigation.navigate(
                         a.personaId ? "DetallePersona" : "DetalleMaquinaria",
                         a.personaId ? { personaId: a.personaId } : { recursoId: a.recursoId },

@@ -13,7 +13,7 @@ const MAPA_ACCIONES = {
   editar_recurso: ["superadmin", "mandante_admin"],
   asignar_recurso: ["superadmin", "mandante_admin"],
   cargar_documento: ["superadmin", "mandante_admin", "evaluador"],
-  finalizar_asignacion: ["superadmin", "mandante_admin"],
+  quitar_de_proyecto: ["superadmin", "mandante_admin"],
   incorporar_empresa: ["superadmin", "mandante_admin"],
   evaluar_requerimiento: ["superadmin", "evaluador"],
   seleccionar_mandante: ["superadmin", "evaluador", "admin_comercial"],

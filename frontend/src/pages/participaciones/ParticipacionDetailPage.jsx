@@ -8,7 +8,8 @@ import { empresaService } from "../../services/empresaService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService } from "../../services/evaluacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { formatFecha } from "../../utils/fechaFormatters";
@@ -34,7 +35,8 @@ export const ParticipacionDetailPage = () => {
   const [perfil, setPerfil] = useState(null);
   const [expediente, setExpediente] = useState(null);
   const [evaluaciones, setEvaluaciones] = useState([]);
-  const [asignaciones, setAsignaciones] = useState([]);
+  const [sujetos, setSujetos] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
   const [personas, setPersonas] = useState([]);
   const [recursos, setRecursos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,12 +50,12 @@ export const ParticipacionDetailPage = () => {
         const data = await participacionService.obtenerPorId(id);
         setParticipacion(data);
 
-        const [proyectoData, empresaData, perfilData, expedientes, asignacionesData, personasData, recursosData] = await Promise.all([
+        const [proyectoData, empresaData, perfilData, expedientes, sujetosData, personasData, recursosData] = await Promise.all([
           proyectoService.obtenerPorId(data.proyectoId).catch(() => null),
           empresaService.obtenerPorId(data.empresaId).catch(() => null),
           perfilParticipacionService.obtenerPorId(data.perfilParticipacionId).catch(() => null),
           expedienteService.listar({}).catch(() => []),
-          asignacionService.listar({ proyectoId: data.proyectoId, estado: "activa" }).catch(() => []),
+          sujetoService.listar({ participacionId: id, estado: "activa" }).catch(() => []),
           personaService.listar("activo").catch(() => []),
           recursoService.listar("activo").catch(() => []),
         ]);
@@ -62,10 +64,8 @@ export const ParticipacionDetailPage = () => {
         setPerfil(perfilData);
         setPersonas(personasData || []);
         setRecursos(recursosData || []);
-        // Asignaciones de ESTA Participación: por participacionId; las antiguas sin él, por Empresa + Proyecto.
-        setAsignaciones((asignacionesData || []).filter((a) => (
-          a.participacionId ? a.participacionId === id : a.empresaId === data.empresaId
-        )));
+        // Personas y Maquinarias de ESTA Participación (agrupadas, con sus perfiles).
+        setSujetos((sujetosData || []).filter((a) => a.participacionId === id));
 
         // Puede haber Expedientes anteriores (cerrados): se muestra el vigente, o el más reciente.
         const delaParticipacion = (expedientes || []).filter((e) => e.participacionId === id);
@@ -107,13 +107,13 @@ export const ParticipacionDetailPage = () => {
   const sinEvaluar = expediente ? calcularSinEvaluar([expediente], evaluaciones) : 0;
   const totalRequisitos = conteos.cumple + conteos.pendiente + conteos.no_cumple + sinEvaluar;
 
-  const personasAsignadas = asignaciones.filter((a) => a.personaId).map((a) => {
+  const personasAsignadas = sujetos.filter((a) => a.personaId).map((a) => {
     const p = personas.find((x) => x.id === a.personaId);
-    return { id: a.id, nombre: p ? `${p.nombre} ${p.apellido || ""}`.trim() : a.personaId, detalle: a.rol ? formatCatalogo(a.rol) : "" };
+    return { id: a.id, nombre: p ? `${p.nombre} ${p.apellido || ""}`.trim() : a.personaId, detalle: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) };
   });
-  const recursosAsignados = asignaciones.filter((a) => a.recursoId).map((a) => {
+  const recursosAsignados = sujetos.filter((a) => a.recursoId).map((a) => {
     const r = recursos.find((x) => x.id === a.recursoId);
-    return { id: a.id, nombre: r?.nombre || a.recursoId, detalle: r?.tipo ? formatCatalogo(r.tipo) : "" };
+    return { id: a.id, nombre: r?.nombre || a.recursoId, detalle: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (r?.tipo ? formatCatalogo(r.tipo) : "") };
   });
 
   return (
@@ -208,11 +208,11 @@ export const ParticipacionDetailPage = () => {
           )}
         </div>
 
-        {/* Card: Asignaciones */}
+        {/* Card: Personas y Maquinarias asignadas */}
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
             <Users className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Asignaciones</h3>
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Personas y Maquinarias</h3>
           </div>
           {[
             { titulo: "Personas", icono: Users, lista: personasAsignadas, vacio: "Sin personas asignadas." },

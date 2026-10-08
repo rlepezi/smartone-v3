@@ -408,15 +408,7 @@
       ]
     },
     {
-      "collectionGroup": "asignaciones",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {"fieldPath": "proyectoId", "order": "ASCENDING"},
-        {"fieldPath": "estado", "order": "ASCENDING"}
-      ]
-    },
-    {
-      "collectionGroup": "asignaciones",
+      "collectionGroup": "participacionPersonas",
       "queryScope": "COLLECTION",
       "fields": [
         {"fieldPath": "personaId", "order": "ASCENDING"},
@@ -425,7 +417,48 @@
       ]
     },
     {
-      "collectionGroup": "asignaciones",
+      "collectionGroup": "participacionPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "participacionId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "participacionId", "order": "ASCENDING"},
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionPersonas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionRecursos",
       "queryScope": "COLLECTION",
       "fields": [
         {"fieldPath": "recursoId", "order": "ASCENDING"},
@@ -434,11 +467,44 @@
       ]
     },
     {
-      "collectionGroup": "asignaciones",
+      "collectionGroup": "participacionRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "proyectoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "participacionId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionRecursos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "participacionId", "order": "ASCENDING"},
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "participacionRecursos",
       "queryScope": "COLLECTION",
       "fields": [
         {"fieldPath": "mandanteId", "order": "ASCENDING"},
-        {"fieldPath": "createdAt", "order": "DESCENDING"}
+        {"fieldPath": "estado", "order": "ASCENDING"}
       ]
     },
     {

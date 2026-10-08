@@ -54,6 +54,26 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Personas y Maquinarias de cada Participación (bloque 2 de la
+    // normalización). Toda escritura pasa por la API (Admin SDK). Lectura:
+    // superadmin y evaluador a todas; mandante_admin y mandante_lector solo
+    // a las de su propio Mandante.
+    function puedeLeerDeMandante(mandanteId) {
+      return tieneRol("superadmin") || tieneRol("evaluador") ||
+          ((tieneRol("mandante_admin") || tieneRol("mandante_lector")) &&
+           esDelPropioMandante(mandanteId));
+    }
+
+    match /participacionPersonas/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    match /participacionRecursos/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
     // Regla base para el resto de colecciones (gestión vía Cloud Functions)
     match /{document=**} {
       allow read, write: if false;
