@@ -10,7 +10,7 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { perfilRequerimientoService } from "../../services/perfilRequerimientoService";
 import { mandanteService } from "../../services/mandanteService";
 import { participacionService } from "../../services/participacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService } from "../../services/participacionSujetoService";
 import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { bitacoraService } from "../../services/bitacoraService";
@@ -119,7 +119,7 @@ export const PerfilParticipacionDetailPage = () => {
   const [cargandoVinculos, setCargandoVinculos] = useState(true);
 
   const [participacionesDelPerfil, setParticipacionesDelPerfil] = useState([]);
-  const [asignacionesDelPerfil, setAsignacionesDelPerfil] = useState([]);
+  const [sujetosDelPerfil, setSujetosDelPerfil] = useState([]);
   const [expedientesDelPerfil, setExpedientesDelPerfil] = useState([]);
   const [cargandoUso, setCargandoUso] = useState(true);
 
@@ -199,9 +199,9 @@ export const PerfilParticipacionDetailPage = () => {
 
   // "Usado en": Participaciones que referencian este Perfil (cualquier
   // estado, uso histórico), Proyectos distintos entre ellas, y
-  // Asignaciones ACTIVAS cuyo (proyectoId, empresaId) coincide con alguna
-  // de esas Participaciones — Asignación no referencia el Perfil
-  // directamente, se cruza en cliente.
+  // Personas/Maquinarias ACTIVAS (agrupadas por sujeto) de esas
+  // Participaciones — no referencian el Perfil directamente, se cruza
+  // en cliente por participacionId.
   useEffect(() => {
     let cancelado = false;
     const cargarUso = async () => {
@@ -216,12 +216,10 @@ export const PerfilParticipacionDetailPage = () => {
         setParticipacionesDelPerfil(propias);
         setExpedientesDelPerfil((expedientes || []).filter((e) => e.perfilParticipacionId === id));
 
-        const pares = new Set(propias.map((p) => `${p.proyectoId}::${p.empresaId}`));
-        const asignaciones = await asignacionService.listar({ estado: "activa" });
+        const ids = new Set(propias.map((p) => p.id));
+        const sujetos = await sujetoService.listar({ estado: "activa" });
         if (cancelado) return;
-        setAsignacionesDelPerfil(
-          (asignaciones || []).filter((a) => pares.has(`${a.proyectoId}::${a.empresaId}`)),
-        );
+        setSujetosDelPerfil((sujetos || []).filter((a) => ids.has(a.participacionId)));
       } catch (err) {
         console.error("Error al cargar el uso del perfil:", err);
       } finally {
@@ -605,8 +603,8 @@ export const PerfilParticipacionDetailPage = () => {
                 </div>
                 <div>
                   <ClipboardList className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-lg font-black text-carbon-dark">{cargandoUso ? "…" : asignacionesDelPerfil.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400">Asignaciones</p>
+                  <p className="text-lg font-black text-carbon-dark">{cargandoUso ? "…" : sujetosDelPerfil.length}</p>
+                  <p className="text-[10px] font-semibold text-slate-400">Personas y Maquinarias</p>
                 </div>
               </div>
             </div>

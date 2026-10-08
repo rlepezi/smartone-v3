@@ -10,7 +10,10 @@ const perfilParticipacionRepository =
 const {validateRut, cleanRut} = require("../utils/rutValidator");
 const reporteService = require("./reporteService");
 const bitacoraService = require("./bitacoraService");
-const asignacionRepository = require("../repositories/asignacionRepository");
+const participacionPersonaRepository =
+    require("../repositories/participacionPersonaRepository");
+const participacionRecursoRepository =
+    require("../repositories/participacionRecursoRepository");
 const AppError = require("../utils/AppError");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
 
@@ -297,7 +300,8 @@ class EmpresaService {
 
   /**
    * Eventos de Bitácora relacionados a una Empresa: los de la propia
-   * Empresa, los de sus Participaciones y los de sus Asignaciones (cualquier
+   * Empresa, los de sus Participaciones y los de sus personas y maquinarias
+   * asignadas (cualquier
    * estado). Solo lectura, solo datos reales de Bitácora.
    * @param {string} id ID de la empresa.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -308,22 +312,28 @@ class EmpresaService {
   async obtenerEventos(id, actor, {limit} = {}) {
     await this.getEmpresaById(id); // Verifica existencia
 
-    const [participaciones, asignaciones] = await Promise.all([
+    const [participaciones, personas, recursos] = await Promise.all([
       participacionRepository.list({empresaId: id}),
-      asignacionRepository.list({empresaId: id}),
+      participacionPersonaRepository.list({empresaId: id}),
+      participacionRecursoRepository.list({empresaId: id}),
     ]);
+    const documentos = [
+      ...personas.map((a) => ({...a, entidad: "participacionPersona"})),
+      ...recursos.map((a) => ({...a, entidad: "participacionRecurso"})),
+    ].sort((a, b) =>
+      (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
 
-    // Una consulta por referencia: se acota a las Asignaciones más
+    // Una consulta por referencia: se acota a los documentos más
     // recientes (el repositorio las devuelve de más nueva a más antigua)
     // para no disparar lecturas en Empresas con mucho personal.
-    const MAX_ASIGNACIONES = 30;
+    const MAX_DOCUMENTOS = 30;
     const referencias = [
       {entidad: "empresa", entidadId: id},
       ...participaciones.map((p) => ({
         entidad: "participacion", entidadId: p.id,
       })),
-      ...asignaciones.slice(0, MAX_ASIGNACIONES).map((a) => ({
-        entidad: "asignacion", entidadId: a.id,
+      ...documentos.slice(0, MAX_DOCUMENTOS).map((a) => ({
+        entidad: a.entidad, entidadId: a.id,
       })),
     ];
 

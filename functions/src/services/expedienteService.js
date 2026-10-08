@@ -8,17 +8,19 @@ const requerimientoCalculoService =
 const reutilizacionDocumentalService =
     require("./reutilizacionDocumentalService");
 const usuarioRepository = require("../repositories/usuarioRepository");
-const asignacionRepository = require("../repositories/asignacionRepository");
+const participacionPersonaRepository =
+    require("../repositories/participacionPersonaRepository");
+const participacionRecursoRepository =
+    require("../repositories/participacionRecursoRepository");
 const evaluacionRepository = require("../repositories/evaluacionRepository");
 const requerimientoRepository =
     require("../repositories/requerimientoRepository");
 const perfilRequerimientoRepository =
     require("../repositories/perfilRequerimientoRepository");
-const {
-  aplicaRequerimientoASujeto, sujetoDeAsignacion,
-} = require("../utils/aplicabilidadRequerimiento");
-// TRANSICIÓN bloque 2: perfilRecursoId de cada Asignación (ver el helper).
-const {resolverPerfilesRecurso} = require("../utils/transicionPerfilRecurso");
+const {aplicaRequerimientoASujeto} =
+    require("../utils/aplicabilidadRequerimiento");
+const {sujetosActivosDeParticipacion} =
+    require("../utils/sujetosParticipacion");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const bitacoraService = require("./bitacoraService");
 const AppError = require("../utils/AppError");
@@ -171,48 +173,39 @@ class ExpedienteService {
   }
 
   /**
-   * Prepara el conteo de recursos por Expediente: Asignaciones ACTIVAS
-   * (estado "activa"; no cuenta finalizadas ni anuladas), separadas en
-   * Personas y Maquinarias. Una sola consulta para todo el listado (sin
-   * N+1), agrupada en memoria:
-   * - Si la Asignación tiene `participacionId`, cuenta para el Expediente
-   *   de esa Participación (distingue dos Participaciones sucesivas de la
-   *   misma Empresa en el mismo Proyecto).
-   * - Si no lo tiene (Asignación anterior al backfill de
-   *   migrarParticipacionIdAsignaciones.js), cuenta por proyectoId +
-   *   empresaId, el mismo criterio de recalcularEstado.
-   * Sin mandanteId (superadmin/evaluador sin filtro) lee las activas
-   * globales; los roles acotados ya llegan con su propio mandanteId.
+   * Prepara el conteo de recursos por Expediente: personaId y recursoId
+   * DISTINTOS con documentos activos en participacionPersonas /
+   * participacionRecursos de su Participación (una Persona con dos perfiles
+   * cuenta una vez). Dos consultas para todo el listado (sin N+1),
+   * agrupadas en memoria. Sin mandanteId (superadmin/evaluador sin filtro)
+   * lee los activos globales; los roles acotados llegan con su mandanteId.
    * @param {?string} mandanteId Mandante al que acotar, o null.
    * @return {Promise<function(Object): {cantidadPersonas: number,
    *     cantidadMaquinarias: number}>} Función expediente -> conteo.
    */
   async _contarRecursos(mandanteId) {
-    const asignaciones =
-        await asignacionRepository.listActivasParaConteo({mandanteId});
-    const nuevo = () => ({cantidadPersonas: 0, cantidadMaquinarias: 0});
-    const porParticipacion = new Map();
-    const porProyectoEmpresa = new Map();
-    asignaciones.forEach((a) => {
-      const mapa = a.participacionId ? porParticipacion : porProyectoEmpresa;
-      const clave = a.participacionId || `${a.proyectoId}|${a.empresaId}`;
-      if (!mapa.has(clave)) mapa.set(clave, nuevo());
-      const conteo = mapa.get(clave);
-      if (a.personaId) conteo.cantidadPersonas++;
-      else if (a.recursoId) conteo.cantidadMaquinarias++;
-    });
-    return (expediente) => {
-      const propias = porParticipacion.get(expediente.participacionId) ||
-          nuevo();
-      const legado = porProyectoEmpresa.get(
-          `${expediente.proyectoId}|${expediente.empresaId}`,
-      ) || nuevo();
-      return {
-        cantidadPersonas: propias.cantidadPersonas + legado.cantidadPersonas,
-        cantidadMaquinarias:
-            propias.cantidadMaquinarias + legado.cantidadMaquinarias,
-      };
+    const [personas, recursos] = await Promise.all([
+      participacionPersonaRepository.listActivosParaConteo({mandanteId}),
+      participacionRecursoRepository.listActivosParaConteo({mandanteId}),
+    ]);
+    const distintos = (docs, campo) => {
+      const mapa = new Map();
+      docs.forEach((d) => {
+        if (!mapa.has(d.participacionId)) {
+          mapa.set(d.participacionId, new Set());
+        }
+        mapa.get(d.participacionId).add(d[campo]);
+      });
+      return mapa;
     };
+    const personasPorParticipacion = distintos(personas, "personaId");
+    const recursosPorParticipacion = distintos(recursos, "recursoId");
+    return (expediente) => ({
+      cantidadPersonas:
+          personasPorParticipacion.get(expediente.participacionId)?.size || 0,
+      cantidadMaquinarias:
+          recursosPorParticipacion.get(expediente.participacionId)?.size || 0,
+    });
   }
 
   /**
@@ -288,22 +281,21 @@ class ExpedienteService {
     // si alguna Persona/Recurso ya asignado a esta Participación, o la
     // propia Empresa, tiene Evaluaciones "cumple" vigentes de un
     // Expediente anterior, este Expediente nace con esos Requerimientos
-    // ya cubiertos — sin evaluación manual. Si todavía no hay Asignaciones
+    // ya cubiertos — sin evaluación manual. Si todavía no hay
+    // Personas/Maquinarias
     // (paso opcional del wizard), simplemente no hay nada que reutilizar a
     // nivel persona/maquinaria, sin error.
     const requerimientosEmpresaNivel = requerimientosAplicables.filter(
         (r) => aplicaRequerimientoASujeto(r, {tipoEntidad: "empresa"}),
     );
 
-    const asignacionesEmpresa = await resolverPerfilesRecurso(
-        (await asignacionRepository.getActivasByProyecto(proyectoId))
-            .filter((a) => a.empresaId === empresaId),
-    );
-    const personasAsignadas = asignacionesEmpresa.filter((a) => a.personaId);
-    const recursosAsignados = asignacionesEmpresa.filter((a) => a.recursoId);
-    // Requerimientos que aplican a cada sujeto según su Perfil de Recurso.
-    const aplicablesA = (a) => requerimientosAplicables.filter(
-        (r) => aplicaRequerimientoASujeto(r, sujetoDeAsignacion(a)),
+    const sujetos = await sujetosActivosDeParticipacion(participacionId);
+    const personasAsignadas = sujetos.filter((s) => s.personaId);
+    const recursosAsignados = sujetos.filter((s) => s.recursoId);
+    // Requerimientos que aplican a cada sujeto según sus Perfiles de Recurso
+    // (unión sin duplicados para una Persona con varios perfiles).
+    const aplicablesA = (s) => requerimientosAplicables.filter(
+        (r) => aplicaRequerimientoASujeto(r, s),
     );
 
     const fechaInicioParticipacion = this._aFecha(participacion.fechaInicio);
@@ -408,24 +400,24 @@ class ExpedienteService {
   /**
    * Deriva el estado de un Expediente a partir de sus Evaluaciones reales
    * (función pura, sin acceso a datos). Cuenta cada par Requerimiento ×
-   * sujeto aplicable (empresa: 1; persona/recurso: uno por cada sujeto con
-   * Asignación activa al que el Requerimiento aplica según
-   * aplicaRequerimientoASujeto) — mismo criterio de expansión que el
-   * frontend, no el largo crudo de `requerimientosAplicables`.
+   * sujeto aplicable (empresa: 1; persona/recurso: uno por cada sujeto
+   * activo en la Participación al que el Requerimiento aplica según
+   * aplicaRequerimientoASujeto; una Persona con varios perfiles cuenta una
+   * vez por Requerimiento) — mismo criterio de expansión que el frontend,
+   * no el largo crudo de `requerimientosAplicables`.
    *   - ninguno evaluado            -> "creado"
    *   - algunos sin evaluar         -> "en_revision"
    *   - todos evaluados, algún "No Cumple" -> "con_observaciones"
    *   - todos evaluados, sin "No Cumple"   -> "aprobado"
    * @param {Object[]} requerimientos Snapshot `requerimientosAplicables`.
-   * @param {Object[]} asignacionesEmpresa Asignaciones activas de la
-   *     Empresa en el Proyecto del Expediente, con `perfilRecursoId`
-   *     resuelto (ver transicionPerfilRecurso.js).
+   * @param {Object[]} sujetos Sujetos activos de la Participación del
+   *     Expediente (ver utils/sujetosParticipacion.js).
    * @param {Object[]} evaluaciones Evaluaciones del Expediente (cualquier
    *     estado; solo se consideran las "vigente").
    * @return {{estado: string, total: number, evaluados: number,
    *     noCumple: number}} Estado derivado y conteos usados.
    */
-  calcularEstadoDerivado(requerimientos, asignacionesEmpresa, evaluaciones) {
+  calcularEstadoDerivado(requerimientos, sujetos, evaluaciones) {
     const vigentesPorClave = new Map();
     evaluaciones
         .filter((e) => e.estado === "vigente")
@@ -441,8 +433,8 @@ class ExpedienteService {
         claves.push(`${r.requerimientoId}|e`);
         return;
       }
-      asignacionesEmpresa
-          .filter((a) => aplicaRequerimientoASujeto(r, sujetoDeAsignacion(a)))
+      sujetos
+          .filter((s) => aplicaRequerimientoASujeto(r, s))
           .forEach((a) => claves.push(a.personaId ?
             `${r.requerimientoId}|p:${a.personaId}` :
             `${r.requerimientoId}|r:${a.recursoId}`));
@@ -473,7 +465,8 @@ class ExpedienteService {
    * calcularEstadoDerivado). No toca los estados manuales
    * ("en_ejecucion"/"cerrado"). Se invoca después de todo cambio que pueda
    * moverlo: crear Evaluación, agregar/quitar Requerimiento, cambiar
-   * Asignaciones. Nunca debe hacer fallar la operación que lo dispara: los
+   * Personas/Maquinarias asignadas. Nunca debe hacer fallar la operación
+   * que lo dispara: los
    * errores se registran y se propaga el Expediente sin cambios.
    * @param {string} id ID del expediente.
    * @param {Object} actor Usuario que originó el cambio (para la bitácora).
@@ -485,16 +478,12 @@ class ExpedienteService {
       if (!expediente || ESTADOS_MANUALES.includes(expediente.estado)) {
         return expediente;
       }
-      const [asignaciones, evaluaciones] = await Promise.all([
-        asignacionRepository.getActivasByProyecto(expediente.proyectoId),
+      const [sujetos, evaluaciones] = await Promise.all([
+        sujetosActivosDeParticipacion(expediente.participacionId),
         evaluacionRepository.getByExpediente(id),
       ]);
       const {estado} = this.calcularEstadoDerivado(
-          expediente.requerimientosAplicables || [],
-          await resolverPerfilesRecurso(
-              asignaciones.filter((a) => a.empresaId === expediente.empresaId),
-          ),
-          evaluaciones,
+          expediente.requerimientosAplicables || [], sujetos, evaluaciones,
       );
       if (estado === expediente.estado) return expediente;
 
@@ -519,7 +508,7 @@ class ExpedienteService {
 
   /**
    * Recalcula el estado de los Expedientes de una Empresa en un Proyecto
-   * (las Asignaciones de Personas/Maquinarias cambian cuántos pares
+   * (las Personas/Maquinarias asignadas cambian cuántos pares
    * Requerimiento × sujeto hay que evaluar).
    * @param {string} proyectoId ID del Proyecto.
    * @param {string} empresaId ID de la Empresa.
@@ -535,7 +524,7 @@ class ExpedienteService {
               .map((e) => this.recalcularEstado(e.id, actor)),
       );
     } catch (err) {
-      console.error("Error al recalcular Expedientes por Asignación:", err);
+      console.error("Error al recalcular Expedientes por asignación:", err);
     }
   }
 
@@ -780,11 +769,8 @@ class ExpedienteService {
    */
   async _buscarReutilizablesDe(expediente, items, fechaInicioParticipacion) {
     if (items.length === 0) return [];
-    const [asignaciones, evaluaciones] = await Promise.all([
-      asignacionRepository.getActivasByProyecto(expediente.proyectoId)
-          .then((lista) => resolverPerfilesRecurso(
-              lista.filter((a) => a.empresaId === expediente.empresaId),
-          )),
+    const [sujetos, evaluaciones] = await Promise.all([
+      sujetosActivosDeParticipacion(expediente.participacionId),
       evaluacionRepository.getByExpediente(expediente.id),
     ]);
     const clave = (reqId, personaId, recursoId) =>
@@ -807,10 +793,8 @@ class ExpedienteService {
         }
         continue;
       }
-      for (const a of asignaciones) {
-        const sujeto = sujetoDeAsignacion(a);
-        if (!aplicaRequerimientoASujeto(entrada, sujeto) ||
-            aplicaAntes(sujeto)) {
+      for (const a of sujetos) {
+        if (!aplicaRequerimientoASujeto(entrada, a) || aplicaAntes(a)) {
           continue;
         }
         if (vigentes.has(clave(entrada.requerimientoId, a.personaId,

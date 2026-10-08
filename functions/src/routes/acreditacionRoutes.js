@@ -6,10 +6,12 @@ const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 // Middleware de autenticación para todas las operaciones.
 router.use(authMiddleware);
 
-// Mismos roles de escritura que Participación/Expediente/Asignación: el
+// Mismos roles de escritura que Participación/Expediente y personas/maquinarias
+// asignadas: el
 // reemplazo toca las tres entidades a la vez.
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
-// Lectura: mismos roles que ya pueden leer Participación/Asignación, para
+// Lectura: mismos roles que ya pueden leer Participación y personas/maquinarias
+// asignadas, para
 // alimentar el wizard.
 const ROLES_LECTURA = [
   "superadmin", "mandante_admin", "mandante_lector", "evaluador",

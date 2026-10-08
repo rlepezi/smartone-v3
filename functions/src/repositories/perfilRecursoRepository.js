@@ -22,6 +22,26 @@ class PerfilRecursoRepository {
   }
 
   /**
+   * Obtiene varios perfiles por ID, en lotes.
+   * @param {string[]} ids IDs de perfiles.
+   * @return {Promise<Object<string, Object>>} Mapa id -> perfil.
+   */
+  async getByIds(ids) {
+    const mapa = {};
+    const unicos = [...new Set(ids.filter(Boolean))];
+    for (let i = 0; i < unicos.length; i += 300) {
+      const refs = unicos.slice(i, i + 300)
+          .map((id) => db.collection(COLLECTION).doc(id));
+      // eslint-disable-next-line no-await-in-loop
+      const docs = await db.getAll(...refs);
+      docs.forEach((d) => {
+        if (d.exists) mapa[d.id] = {id: d.id, ...d.data()};
+      });
+    }
+    return mapa;
+  }
+
+  /**
    * Busca un perfil por su nombre, dentro de un mandante y un
    * tipo (cualquier estado — usado para el chequeo de
    * duplicados al crear/renombrar).
@@ -36,31 +56,6 @@ class PerfilRecursoRepository {
         .where("mandanteId", "==", mandanteId)
         .where("tipo", "==", tipo)
         .where("nombre", "==", nombre)
-        .limit(1)
-        .get();
-
-    if (snapshot.empty) return null;
-    const doc = snapshot.docs[0];
-    return {id: doc.id, ...doc.data()};
-  }
-
-  /**
-   * Busca un perfil ACTIVO por su nombre, dentro de un mandante y un
-   * tipo. Usado para validar el rol de una Persona o la
-   * clasificación de un Recurso al crear una Asignación. Consulta de
-   * pura igualdad (sin orderBy): no requiere índice compuesto.
-   * @param {string} mandanteId ID del Mandante.
-   * @param {string} tipo "persona" | "recurso".
-   * @param {string} nombre Nombre del perfil.
-   * @return {Promise<object|null>} El perfil activo o null si no existe.
-   */
-  async getActivoByNombre(mandanteId, tipo, nombre) {
-    const snapshot = await db
-        .collection(COLLECTION)
-        .where("mandanteId", "==", mandanteId)
-        .where("tipo", "==", tipo)
-        .where("nombre", "==", nombre)
-        .where("estado", "==", "activo")
         .limit(1)
         .get();
 

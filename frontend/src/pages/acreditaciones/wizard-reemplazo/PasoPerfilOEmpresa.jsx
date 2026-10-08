@@ -11,14 +11,15 @@ import { PasoPerfil } from "../wizard/PasoPerfil";
 // Acreditación (PasoPerfil, reutilizado tal cual). Para Persona/
 // Maquinaria, la Empresa NO es seleccionable — se mueven junto con su
 // Empresa actual (decisión de negocio confirmada) — así que este paso
-// muestra esa Empresa de forma informativa, pide el Rol (solo Persona), y
+// muestra esa Empresa de forma informativa, pide los Perfiles de Recurso (por ID; Persona uno
+// o más, Maquinaria uno), y
 // solo si la Empresa aún no participa en el Proyecto destino, pide
 // también un Perfil de Participación para poder crear esa Participación
 // + Expediente como parte del mismo reemplazo.
 export const PasoPerfilOEmpresa = ({
   entidadTipo, entidadSel, proyectoSel, mandanteId,
   perfilSel, onSeleccionarPerfil,
-  rol, onCambiarRol,
+  perfilRecursoIds = [], onCambiarPerfiles,
   onEstadoChange,
 }) => {
   const esEmpresa = entidadTipo === "empresa";
@@ -28,7 +29,7 @@ export const PasoPerfilOEmpresa = ({
   const [cargandoParticipacion, setCargandoParticipacion] = useState(!esEmpresa);
   const [participacionExistente, setParticipacionExistente] = useState(null);
   const [errorParticipacion, setErrorParticipacion] = useState(null);
-  const [rolesDisponibles, setRolesDisponibles] = useState([]);
+  const [perfilesDisponibles, setPerfilesDisponibles] = useState([]);
 
   useEffect(() => {
     if (esEmpresa || !empresaId) return;
@@ -39,11 +40,11 @@ export const PasoPerfilOEmpresa = ({
   }, [esEmpresa, empresaId]);
 
   useEffect(() => {
-    if (esEmpresa || entidadTipo !== "persona" || !mandanteId) return;
+    if (esEmpresa || !mandanteId) return;
     perfilRecursoService
-      .listar({ mandanteId, tipo: "persona", estado: "activo" })
-      .then((data) => setRolesDisponibles(data || []))
-      .catch(() => setRolesDisponibles([]));
+      .listar({ mandanteId, tipo: entidadTipo === "persona" ? "persona" : "recurso", estado: "activo" })
+      .then((data) => setPerfilesDisponibles(data || []))
+      .catch(() => setPerfilesDisponibles([]));
   }, [esEmpresa, entidadTipo, mandanteId]);
 
   useEffect(() => {
@@ -92,7 +93,7 @@ export const PasoPerfilOEmpresa = ({
     <div className="space-y-5">
       <div>
         <h3 className="text-sm font-bold text-gray-900">
-          Empresa{entidadTipo === "persona" ? " y Rol" : ""}
+          Empresa y Perfil de Recurso
         </h3>
         <p className="text-xs text-gray-500 mt-0.5">
           {etiqueta} se mueve junto con su Empresa actual — no es seleccionable en este flujo.
@@ -107,23 +108,43 @@ export const PasoPerfilOEmpresa = ({
         </div>
       </div>
 
-      {entidadTipo === "persona" && (
-        <div>
-          <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-            Rol en el Proyecto destino *
-          </label>
+      <div>
+        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+          {entidadTipo === "persona" ? "Perfiles de Recurso en el Proyecto destino * (uno o más)" : "Perfil de Recurso en el Proyecto destino *"}
+        </label>
+        {entidadTipo === "persona" ? (
+          <div className="flex flex-wrap gap-2">
+            {perfilesDisponibles.map((p) => {
+              const activo = perfilRecursoIds.includes(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  aria-pressed={activo}
+                  onClick={() => onCambiarPerfiles(activo
+                    ? perfilRecursoIds.filter((x) => x !== p.id) : [...perfilRecursoIds, p.id])}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
+                    activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {p.nombre}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
           <select
-            value={rol || ""}
-            onChange={(e) => onCambiarRol(e.target.value)}
+            value={perfilRecursoIds[0] || ""}
+            onChange={(e) => onCambiarPerfiles(e.target.value ? [e.target.value] : [])}
             className="w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
           >
-            <option value="" disabled>Selecciona un rol...</option>
-            {rolesDisponibles.map((r) => (
-              <option key={r.id} value={r.nombre}>{r.nombre}</option>
+            <option value="" disabled>Selecciona un perfil...</option>
+            {perfilesDisponibles.map((p) => (
+              <option key={p.id} value={p.id}>{p.nombre}</option>
             ))}
           </select>
-        </div>
-      )}
+        )}
+      </div>
 
       {cargandoParticipacion ? (
         <p className="text-xs text-slate-400 py-4 text-center">

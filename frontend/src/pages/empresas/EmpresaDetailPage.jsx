@@ -10,7 +10,8 @@ import { evaluacionService, RESULTADOS_EVALUACION } from "../../services/evaluac
 import { expedienteService } from "../../services/expedienteService";
 import { reporteService } from "../../services/reporteService";
 import { participacionService } from "../../services/participacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { mandanteService } from "../../services/mandanteService";
 import { proyectoService } from "../../services/proyectoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
@@ -108,7 +109,8 @@ export const EmpresaDetailPage = () => {
   const [recursosEmpresa, setRecursosEmpresa] = useState([]);
   const [evaluacionesEmpresa, setEvaluacionesEmpresa] = useState([]);
   const [expedientesEmpresa, setExpedientesEmpresa] = useState([]);
-  const [asignacionesEmpresa, setAsignacionesEmpresa] = useState([]);
+  const [sujetosEmpresa, setSujetosEmpresa] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
   const [cargandoActividad, setCargandoActividad] = useState(true);
 
   // Evaluación inline de un Requerimiento de nivel Empresa — mismo
@@ -148,14 +150,14 @@ export const EmpresaDetailPage = () => {
       // expedienteService.listar no filtra por empresaId: se trae lo
       // alcanzable por el actor y se acota acá.
       expedienteService.listar({}),
-      asignacionService.listar({ estado: "activa" }),
-    ]).then(([personasData, recursosData, evaluacionesData, expedientesData, asignacionesData]) => {
+      sujetoService.listar({ empresaId: id, estado: "activa" }),
+    ]).then(([personasData, recursosData, evaluacionesData, expedientesData, sujetosData]) => {
       setPersonasEmpresa(personasData || []);
       setRecursosEmpresa(recursosData || []);
       setEvaluacionesEmpresa(evaluacionesData || []);
       setExpedientesEmpresa((expedientesData || []).filter((e) => e.empresaId === id));
       // El backend no filtra por empresaId para roles de Mandante: se acota acá.
-      setAsignacionesEmpresa((asignacionesData || []).filter((a) => a.empresaId === id));
+      setSujetosEmpresa((sujetosData || []).filter((a) => a.empresaId === id));
     });
   };
 
@@ -248,8 +250,8 @@ export const EmpresaDetailPage = () => {
       .filter((p) => p.estado === "activa")
       .map((p) => {
         const expediente = expedientesEmpresa.find((e) => e.proyectoId === p.proyectoId && e.estado !== "cerrado");
-        const filas = asignacionesEmpresa
-          .filter((a) => a.proyectoId === p.proyectoId && a[campo])
+        const filas = sujetosEmpresa
+          .filter((a) => a.participacionId === p.id && a[campo])
           .map((a) => {
             const sujeto = esPersonas
               ? personasEmpresa.find((x) => x.id === a.personaId)
@@ -260,8 +262,8 @@ export const EmpresaDetailPage = () => {
                 ? (sujeto ? `${sujeto.nombre} ${sujeto.apellido}` : a.personaId)
                 : (sujeto?.nombre || a.recursoId),
               secundario: esPersonas ? (sujeto?.rut ? formatRutDisplay(sujeto.rut) : "") : (sujeto?.patente || ""),
-              clasificacion: esPersonas ? formatCatalogo(a.rol) : (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
-              evaluacion: evaluarSujeto({ expediente, vigentes, campo, sujetoId: a[campo], perfilRecursoId: a.perfilRecursoId }),
+              clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
+              evaluacion: evaluarSujeto({ expediente, vigentes, campo, sujetoId: a[campo], perfilRecursoIds: a.perfilRecursoIds }),
             };
           });
         return {

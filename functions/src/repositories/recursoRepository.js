@@ -21,27 +21,6 @@ class RecursoRepository {
   }
 
   /**
-   * Obtiene solo el tipo (Clasificación) de varios recursos a la vez, en
-   * lotes con proyección. Lo usa el helper de transición de Perfil de
-   * Recurso (utils/transicionPerfilRecurso.js).
-   * @param {string[]} ids IDs de recursos.
-   * @return {Promise<Object<string, string>>} Mapa recursoId -> tipo.
-   */
-  async getTiposByIds(ids) {
-    const mapa = {};
-    for (let i = 0; i < ids.length; i += 300) {
-      const refs = ids.slice(i, i + 300)
-          .map((id) => db.collection(COLLECTION).doc(id));
-      if (!refs.length) continue;
-      const docs = await db.getAll(...refs, {fieldMask: ["tipo"]});
-      docs.forEach((d) => {
-        if (d.exists) mapa[d.id] = d.data().tipo;
-      });
-    }
-    return mapa;
-  }
-
-  /**
    * Lista recursos, opcionalmente filtrados por estado y/o empresa.
    * @param {{estado: (string|undefined), empresaId: (string|undefined)}}
    *     filtros Filtros de búsqueda.

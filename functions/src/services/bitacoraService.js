@@ -53,7 +53,8 @@ class BitacoraService {
 
   /**
    * Eventos de varias entidades relacionadas (p. ej. un Proyecto o una
-   * Empresa junto a sus Participaciones/Asignaciones/Expedientes),
+   * Empresa junto a sus Participaciones/personas y maquinarias
+   * asignadas/Expedientes),
    * combinados y ordenados por fecha descendente, respetando el alcance
    * del actor. Único mecanismo usado por el detalle de Proyecto y el de
    * Empresa.

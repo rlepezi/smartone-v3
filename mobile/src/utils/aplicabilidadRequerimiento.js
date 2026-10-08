@@ -6,12 +6,14 @@
 // `requerimiento`: entrada del snapshot `requerimientosAplicables`
 //   ({ tipoEntidad, perfilRecursoIds: null | [ids] }).
 // `sujeto`: { tipoEntidad: "empresa" | "persona" | "recurso",
-//   perfilRecursoId } — el Perfil de Recurso de su Asignación activa.
+//   perfilRecursoIds } — el conjunto de Perfiles de Recurso de sus
+//   documentos activos en la Participación.
 export const aplicaRequerimientoASujeto = (requerimiento, sujeto) => {
   if (!requerimiento || !sujeto) return false;
   if (requerimiento.tipoEntidad !== sujeto.tipoEntidad) return false;
   if (sujeto.tipoEntidad === "empresa") return true;
   const ids = requerimiento.perfilRecursoIds;
   if (!ids) return true;
-  return Boolean(sujeto.perfilRecursoId) && ids.includes(sujeto.perfilRecursoId);
+  const propios = sujeto.perfilRecursoIds || [];
+  return ids.some((id) => propios.includes(id));
 };

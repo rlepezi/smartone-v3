@@ -3,11 +3,11 @@ import { aplicaRequerimientoASujeto } from "./aplicabilidadRequerimiento";
 // Evaluación de UN sujeto (Persona o Maquinaria) dentro del Expediente de su
 // Empresa en un Proyecto. Mismo criterio que la columna "Evaluación" de
 // PersonasListPage: total = Requerimientos aplicables a ese sujeto (regla única
-// aplicaRequerimientoASujeto, con el Perfil de Recurso de su Asignación);
+// aplicaRequerimientoASujeto, con el conjunto de sus Perfiles de Recurso);
 // % = cumple / (cumple + no_cumple + pendiente) sobre los que ya tienen
 // Evaluación vigente. `categoria` es el peor caso primero.
-export const evaluarSujeto = ({ expediente, vigentes, campo, sujetoId, perfilRecursoId }) => {
-  const sujeto = { tipoEntidad: campo === "personaId" ? "persona" : "recurso", perfilRecursoId };
+export const evaluarSujeto = ({ expediente, vigentes, campo, sujetoId, perfilRecursoIds }) => {
+  const sujeto = { tipoEntidad: campo === "personaId" ? "persona" : "recurso", perfilRecursoIds };
   const items = (expediente?.requerimientosAplicables || []).filter(
     (r) => aplicaRequerimientoASujeto(r, sujeto),
   );

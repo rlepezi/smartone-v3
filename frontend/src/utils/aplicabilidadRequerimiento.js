@@ -9,9 +9,11 @@
  * o requisitos de un Perfil) aplica a un sujeto:
  * - empresa: basta con que el tipo coincida.
  * - persona / recurso: el tipo coincide y `perfilRecursoIds` es null
- *   ("Todos") o incluye el Perfil de Recurso del sujeto.
+ *   ("Todos") o comparte al menos un ID con los perfiles del sujeto.
  * @param {{tipoEntidad: string, perfilRecursoIds: (string[]|null)}} requerimiento
- * @param {{tipoEntidad: string, perfilRecursoId: (string|null)}} sujeto
+ * @param {{tipoEntidad: string, perfilRecursoIds: (string[]|undefined)}} sujeto
+ *     Sujeto agrupado (ver services/participacionSujetoService.js): el
+ *     conjunto de perfilRecursoId de sus documentos activos.
  * @returns {boolean}
  */
 export const aplicaRequerimientoASujeto = (requerimiento, sujeto) => {
@@ -20,12 +22,6 @@ export const aplicaRequerimientoASujeto = (requerimiento, sujeto) => {
   if (sujeto.tipoEntidad === "empresa") return true;
   const ids = requerimiento.perfilRecursoIds;
   if (ids === null || ids === undefined) return true;
-  return Boolean(sujeto.perfilRecursoId) && ids.includes(sujeto.perfilRecursoId);
+  const propios = sujeto.perfilRecursoIds || [];
+  return ids.some((id) => propios.includes(id));
 };
-
-// Sujeto de una Asignación (Persona o Maquinaria). Las Asignaciones que
-// devuelve la API ya traen `perfilRecursoId` resuelto.
-export const sujetoDeAsignacion = (asignacion) => ({
-  tipoEntidad: asignacion?.personaId ? "persona" : "recurso",
-  perfilRecursoId: asignacion?.perfilRecursoId || null,
-});

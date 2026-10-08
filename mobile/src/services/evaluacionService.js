@@ -26,7 +26,8 @@ export const evaluacionService = {
   // `nombre`) con la Evaluación vigente de ese sujeto, para no mostrar un
   // id crudo en la UI. Qué Requerimientos son "propios" lo decide la regla
   // única utils/aplicabilidadRequerimiento.js. `sujeto`: { tipoEntidad,
-  // perfilRecursoId } (el Perfil de Recurso de su Asignación activa).
+  // perfilRecursoIds } (los Perfiles de Recurso de sus documentos activos en
+  // la Participación; una Persona con varios recibe la unión).
   combinarConRequerimientos(expediente, evaluacionesDelSujeto, sujeto) {
     const aplicables = (expediente?.requerimientosAplicables || [])
         .filter((r) => aplicaRequerimientoASujeto(r, sujeto));

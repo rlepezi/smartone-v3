@@ -5,7 +5,8 @@ const perfilRecursoRepository =
 const relacionRecursoService = require("./relacionRecursoService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const bitacoraService = require("./bitacoraService");
-const asignacionRepository = require("../repositories/asignacionRepository");
+const participacionRecursoRepository =
+    require("../repositories/participacionRecursoRepository");
 const AppError = require("../utils/AppError");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
@@ -21,11 +22,10 @@ const TIPO_MAX_LENGTH = 60;
  * mandanteId propio (RN-021, catálogo global compartido entre
  * Mandantes) y una misma Empresa puede aportar Recursos a Proyectos de
  * Mandantes distintos, así que no hay un único Mandante contra el cual
- * scopear la validación en este punto. Se mantiene como texto libre acá;
- * la validación estricta contra Perfil de Recurso (tipo:
- * "recurso") se aplica recién al ASIGNAR el Recurso a un Proyecto (ver
- * asignacionService.crearAsignacion), donde el mandanteId sí se deriva
- * limpio del Proyecto. Documentado en decisions.md, Entidad 18.
+ * scopear la validación en este punto. Se mantiene como texto libre y
+ * descriptivo: lo que define los Requerimientos de una Maquinaria es el
+ * Perfil de Recurso (por ID) que se elige al asignarla a una Participación
+ * (participacionRecursos), validado contra el Mandante del Proyecto.
  *
  * El vínculo con una Empresa (dueño/operador) vive en RelaciónRecurso
  * (entidad 19, ver decisions.md) — acá solo se denormalizan `empresaId`/
@@ -328,8 +328,9 @@ class RecursoService {
 
   /**
    * Eventos de Bitácora relacionados a un Recurso: los propios, los de sus
-   * Asignaciones (cualquier estado) y los de las Participaciones a las que
-   * esas Asignaciones pertenecen. Solo lectura, solo datos reales de
+   * documentos de participación (cualquier estado) y los de las Participaciones
+   * a las que
+   * esos documentos pertenecen. Solo lectura, solo datos reales de
    * Bitácora.
    * @param {string} id ID de un Recurso.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -340,18 +341,19 @@ class RecursoService {
   async obtenerEventos(id, actor, {limit} = {}) {
     await this.getRecursoById(id); // Verifica existencia
 
-    const asignaciones = await asignacionRepository.list({recursoId: id});
+    const documentos =
+        await participacionRecursoRepository.list({recursoId: id});
     const participacionIds = [
-      ...new Set(asignaciones.map((a) => a.participacionId).filter(Boolean)),
+      ...new Set(documentos.map((a) => a.participacionId).filter(Boolean)),
     ];
 
-    // Una consulta por referencia: se acota a las Asignaciones más
+    // Una consulta por referencia: se acota a los documentos más
     // recientes (el repositorio las devuelve de más nueva a más antigua).
-    const MAX_ASIGNACIONES = 30;
+    const MAX_DOCUMENTOS = 30;
     const referencias = [
       {entidad: "recurso", entidadId: id},
-      ...asignaciones.slice(0, MAX_ASIGNACIONES).map((a) => ({
-        entidad: "asignacion", entidadId: a.id,
+      ...documentos.slice(0, MAX_DOCUMENTOS).map((a) => ({
+        entidad: "participacionRecurso", entidadId: a.id,
       })),
       ...participacionIds.map((pid) => ({
         entidad: "participacion", entidadId: pid,

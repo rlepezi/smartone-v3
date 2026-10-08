@@ -57,7 +57,7 @@ export const calcularResumenCumplimiento = (totalItems, vigentes) => {
 // vigente asociada. A nivel Persona/Maquinaria es una aproximación
 // agregada — cuenta como "evaluado" si al menos una Persona/Recurso ya
 // fue evaluado para ese Requerimiento, no exige cobertura de TODOS los
-// asignados (eso requeriría cargar Asignaciones también).
+// asignados (eso requeriría cargar también las personas y maquinarias asignadas).
 export const calcularSinEvaluar = (expedientes, evaluacionesVigentes) => {
   const evaluadosSet = new Set(
     (evaluacionesVigentes || []).map((ev) => `${ev.expedienteId}::${ev.requerimientoId}`),

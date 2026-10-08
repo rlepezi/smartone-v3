@@ -3,7 +3,7 @@ import { FileText, Upload } from "lucide-react";
 import { expedienteService } from "../../services/expedienteService";
 import { evidenciaService } from "../../services/evidenciaService";
 import { formatFecha } from "../../utils/fechaFormatters";
-import { aplicaRequerimientoASujeto, sujetoDeAsignacion } from "../../utils/aplicabilidadRequerimiento";
+import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 import { ActionButton } from "../shared/ActionButton";
 import { ErrorBanner } from "../shared/ErrorBanner";
 
@@ -17,7 +17,7 @@ const FORM_VACIO = { expedienteId: "", sujeto: "empresa", requerimientoId: "", f
 // del Expediente (evidenciaService.subirYVincular: Storage + Evidencia + vínculo con el
 // Requerimiento). `sujeto` es "empresa", "persona:<id>" o "recurso:<id>".
 export const DocumentosProyecto = ({
-  proyectoId, participantes, modoEdicion = false, asignaciones = [], personas = [], recursos = [], onCambio,
+  proyectoId, participantes, modoEdicion = false, sujetos = [], personas = [], recursos = [], onCambio,
 }) => {
   // undefined = cargando, null = falló, objeto = cargado.
   const [datos, setDatos] = useState(undefined);
@@ -57,16 +57,16 @@ export const DocumentosProyecto = ({
   };
 
   const expedienteElegido = datos?.expedientes?.find((e) => e.id === form.expedienteId) || null;
-  const asignacionesEmpresa = expedienteElegido
-    ? asignaciones.filter((a) => a.empresaId === expedienteElegido.empresaId) : [];
+  const sujetosEmpresa = expedienteElegido
+    ? sujetos.filter((a) => a.participacionId === expedienteElegido.participacionId) : [];
   const [tipoSujeto, idSujeto] = form.sujeto.split(":");
 
   // Requerimientos a los que se puede adjuntar, según el sujeto elegido (misma
   // regla de aplicabilidad que la planilla de evaluación).
-  const asignacionSujeto = tipoSujeto === "persona" || tipoSujeto === "recurso"
-    ? asignacionesEmpresa.find((a) => a[`${tipoSujeto}Id`] === idSujeto) : null;
-  const sujeto = asignacionSujeto ? sujetoDeAsignacion(asignacionSujeto)
-    : { tipoEntidad: tipoSujeto === "persona" || tipoSujeto === "recurso" ? tipoSujeto : "empresa", perfilRecursoId: null };
+  const sujetoElegido = tipoSujeto === "persona" || tipoSujeto === "recurso"
+    ? sujetosEmpresa.find((a) => a[`${tipoSujeto}Id`] === idSujeto) : null;
+  const sujeto = sujetoElegido
+    || { tipoEntidad: tipoSujeto === "persona" || tipoSujeto === "recurso" ? tipoSujeto : "empresa", perfilRecursoIds: [] };
   const requerimientosElegibles = (expedienteElegido?.requerimientosAplicables || [])
     .filter((r) => aplicaRequerimientoASujeto(r, sujeto));
   const requerimientoElegido = requerimientosElegibles.find((r) => r.requerimientoId === form.requerimientoId);
@@ -137,11 +137,11 @@ export const DocumentosProyecto = ({
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white disabled:bg-slate-100"
               >
                 <option value="empresa">La Empresa</option>
-                {[...new Set(asignacionesEmpresa.filter((a) => a.personaId).map((a) => a.personaId))].map((pid) => {
+                {[...new Set(sujetosEmpresa.filter((a) => a.personaId).map((a) => a.personaId))].map((pid) => {
                   const p = personas.find((x) => x.id === pid);
                   return <option key={pid} value={`persona:${pid}`}>Persona: {p ? `${p.nombre} ${p.apellido}` : pid}</option>;
                 })}
-                {[...new Set(asignacionesEmpresa.filter((a) => a.recursoId).map((a) => a.recursoId))].map((rid) => {
+                {[...new Set(sujetosEmpresa.filter((a) => a.recursoId).map((a) => a.recursoId))].map((rid) => {
                   const r = recursos.find((x) => x.id === rid);
                   return <option key={rid} value={`recurso:${rid}`}>Maquinaria: {r?.nombre || rid}</option>;
                 })}

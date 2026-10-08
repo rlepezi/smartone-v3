@@ -54,7 +54,7 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
         empresaId,
         perfilParticipacionId,
         fechaInicio,
-        seleccion: seleccion.map((s) => ({ tipo: s.tipo, id: s.id })),
+        seleccion: seleccion.map((s) => ({ tipo: s.tipo, id: s.id, perfilRecursoIds: s.perfilRecursoIds || [] })),
       })
       .then((data) => {
         setPreview(data);

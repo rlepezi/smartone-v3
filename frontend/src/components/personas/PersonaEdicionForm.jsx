@@ -107,7 +107,7 @@ export const PersonaEdicionForm = ({
 
     personaService.obtenerResumen(id)
       .then((data) => {
-        const activas = data?.asignacionesActivas || [];
+        const activas = data?.participacionesActivas || [];
         setTieneParticipacionActiva(activas.length > 0);
         const primera = activas[0];
         setMandanteActual(
@@ -215,7 +215,7 @@ export const PersonaEdicionForm = ({
     setCambiarProyectoAbierto(false);
     personaService.obtenerResumen(id)
       .then((data) => {
-        const activas = data?.asignacionesActivas || [];
+        const activas = data?.participacionesActivas || [];
         setTieneParticipacionActiva(activas.length > 0);
         const primera = activas[0];
         setMandanteActual(

@@ -21,7 +21,8 @@ import { evidenciaService } from "../../services/evidenciaService";
 import { evidenciaRequerimientoService } from "../../services/evidenciaRequerimientoService";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { formatFecha } from "../../utils/fechaFormatters";
@@ -77,7 +78,8 @@ const CHIPS_FILTRO = [
 // del Resumen: si se pasan, esas dos tarjetas dejan de depender del sujeto seleccionado (el
 // Detalle de Expediente los usa para mostrar el total del Expediente y el avance por nivel, sin
 // que cambien al cambiar de pestaña) — sin ellos, ambas tarjetas siguen mostrando lo del sujeto.
-// `personaConocida`/`recursoConocido`/`rolConocido`: cuando quien la usa YA tiene esos datos
+// `personaConocida`/`recursoConocido`/`sujetoConocido` (el sujeto agrupado, con sus
+// perfilRecursoIds): cuando quien la usa YA tiene esos datos
 // cargados (el Detalle de Expediente los trae para armar el selector), se los pasa acá para que
 // cambiar de sujeto sea puro cambio de estado en cliente — sin ellos, se resuelven con un fetch
 // propio (comportamiento de siempre, el que usan EvaluarExpedientePage/RequerimientosProyecto).
@@ -99,8 +101,7 @@ export const PlanillaEvaluacion = ({
   expedienteId, personaId, recursoId, onVolver, onGuardado, embebido = false,
   mostrarDatosEvaluacion = !embebido, mostrarResumen = false, panelExtra = null,
   nivel = null, tabsNivel = null, conteosGenerales = null, sinEvaluarGeneral = 0,
-  resumenNiveles = null, personaConocida = null, recursoConocido = null, rolConocido = null,
-  perfilRecursoIdConocido = null,
+  resumenNiveles = null, personaConocida = null, recursoConocido = null, sujetoConocido = null,
   tituloCumplimiento = "Cumplimiento Documental", navegacionSujeto = null,
   accionRequisitos = null, recargarSenal = 0,
 }) => {
@@ -120,10 +121,10 @@ export const PlanillaEvaluacion = ({
   const [perfil, setPerfil] = useState(null);
   const [participacion, setParticipacion] = useState(null);
   const [persona, setPersona] = useState(null);
-  const [rolPersonaEnProyecto, setRolPersonaEnProyecto] = useState(null);
-  // Perfil de Recurso del sujeto (de su Asignación activa en el Proyecto): define qué
-  // Requerimientos acotados a perfiles le aplican.
-  const [perfilRecursoSujeto, setPerfilRecursoSujeto] = useState(null);
+  // Perfiles de Recurso del sujeto en la Participación del Expediente (sus documentos activos):
+  // definen qué Requerimientos acotados a perfiles le aplican (unión, sin duplicados).
+  const [perfilesSujeto, setPerfilesSujeto] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
   const [recurso, setRecurso] = useState(null);
   const [vigentes, setVigentes] = useState([]);
   const [vinculos, setVinculos] = useState([]);
@@ -200,56 +201,39 @@ export const PlanillaEvaluacion = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expedienteId, recargarSenal]);
 
-  // Datos del sujeto (persona/recurso + su rol): si el padre ya los tiene (personaConocida/
-  // recursoConocido/rolConocido — caso del Detalle de Expediente), se usan tal cual, sin red — el
+  // Datos del sujeto (persona/recurso + sus perfiles): si el padre ya los tiene (personaConocida/
+  // recursoConocido/sujetoConocido — caso del Detalle de Expediente), se usan tal cual, sin red — el
   // cambio de sujeto queda resuelto en el mismo tick, sin ningún loading. Sin ellos (caso de
   // EvaluarExpedientePage/RequerimientosProyecto) se resuelven con un fetch propio, como siempre.
   useEffect(() => {
     let vigente = true;
-    if (modo === "persona" && personaId) {
-      if (personaConocida) {
-        setPersona(personaConocida);
-        setRolPersonaEnProyecto(rolConocido ?? null);
-        setPerfilRecursoSujeto(perfilRecursoIdConocido ?? null);
-        return undefined;
-      }
-      if (!expediente) return undefined;
-      Promise.all([
-        personaService.obtenerPorId(personaId).catch(() => null),
-        personaService.obtenerResumen(personaId).catch(() => null),
-      ]).then(([personaData, resumenPersonaData]) => {
-        if (!vigente) return;
-        setPersona(personaData);
-        const asignacionEnEsteProyecto = (resumenPersonaData?.asignacionesActivas || [])
-          .find((a) => a.proyectoId === expediente.proyectoId);
-        setRolPersonaEnProyecto(asignacionEnEsteProyecto?.rol || null);
-        setPerfilRecursoSujeto(asignacionEnEsteProyecto?.perfilRecursoId || null);
-      });
-    } else if (modo === "recurso" && recursoId) {
-      if (recursoConocido) {
-        setRecurso(recursoConocido);
-        setPerfilRecursoSujeto(perfilRecursoIdConocido ?? null);
-        return undefined;
-      }
-      if (!expediente) return undefined;
-      Promise.all([
-        recursoService.obtenerPorId(recursoId).catch(() => null),
-        asignacionService.listar({ recursoId, estado: "activa" }).catch(() => []),
-      ]).then(([recursoData, asignacionesData]) => {
-        if (!vigente) return;
-        setRecurso(recursoData);
-        const asignacionEnEsteProyecto = (asignacionesData || [])
-          .find((a) => a.proyectoId === expediente.proyectoId);
-        setPerfilRecursoSujeto(asignacionEnEsteProyecto?.perfilRecursoId || null);
-      });
-    } else {
+    const sujetoId = modo === "persona" ? personaId : modo === "recurso" ? recursoId : null;
+    if (!sujetoId) {
       setPersona(null);
       setRecurso(null);
-      setRolPersonaEnProyecto(null);
-      setPerfilRecursoSujeto(null);
+      setPerfilesSujeto([]);
+      return undefined;
     }
+    const conocido = modo === "persona" ? personaConocida : recursoConocido;
+    if (conocido) {
+      if (modo === "persona") setPersona(conocido); else setRecurso(conocido);
+      setPerfilesSujeto(sujetoConocido?.perfilRecursoIds || []);
+      return undefined;
+    }
+    if (!expediente) return undefined;
+    const campo = modo === "persona" ? "personaId" : "recursoId";
+    Promise.all([
+      (modo === "persona" ? personaService : recursoService).obtenerPorId(sujetoId).catch(() => null),
+      sujetoService.listar({
+        [campo]: sujetoId, participacionId: expediente.participacionId, estado: "activa",
+      }).catch(() => []),
+    ]).then(([dato, sujetos]) => {
+      if (!vigente) return;
+      if (modo === "persona") setPersona(dato); else setRecurso(dato);
+      setPerfilesSujeto(sujetos[0]?.perfilRecursoIds || []);
+    });
     return () => { vigente = false; };
-  }, [modo, personaId, recursoId, personaConocida, recursoConocido, rolConocido, perfilRecursoIdConocido, expediente]);
+  }, [modo, personaId, recursoId, personaConocida, recursoConocido, sujetoConocido, expediente]);
 
   const soloLectura = !puedeEvaluar || expediente?.estado === "cerrado";
   const puedeAdjuntar = puedeAdjuntarEvidencia && expediente?.estado !== "cerrado";
@@ -257,11 +241,11 @@ export const PlanillaEvaluacion = ({
   const items = useMemo(() => {
     if (!expediente) return [];
     // Regla única de aplicabilidad (utils/aplicabilidadRequerimiento.js).
-    const sujeto = { tipoEntidad: modo, perfilRecursoId: perfilRecursoSujeto };
+    const sujeto = { tipoEntidad: modo, perfilRecursoIds: perfilesSujeto };
     return (expediente.requerimientosAplicables || []).filter(
       (r) => aplicaRequerimientoASujeto(r, sujeto),
     );
-  }, [expediente, modo, perfilRecursoSujeto]);
+  }, [expediente, modo, perfilesSujeto]);
 
   // Precarga de "respuestas" (el formulario en memoria) a partir de las evaluaciones vigentes ya
   // cargadas — puro cálculo en cliente, sin red, así que corre instantáneo cada vez que cambia el
@@ -662,8 +646,8 @@ export const PlanillaEvaluacion = ({
                 <p className="text-slate-700 font-medium">{persona?.rut ? formatRutDisplay(persona.rut) : "-"}</p>
               </div>
               <div>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Rol</p>
-                <p className="text-slate-700 font-medium">{rolPersonaEnProyecto || "-"}</p>
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Perfil</p>
+                <p className="text-slate-700 font-medium">{perfilesSujeto.length ? nombresPerfiles(perfilesSujeto, perfilesPorId) : "-"}</p>
               </div>
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Empresa</p>
@@ -679,7 +663,9 @@ export const PlanillaEvaluacion = ({
               </div>
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Clasificación</p>
-                <p className="text-slate-700 font-medium">{recurso?.tipo ? formatCatalogo(recurso.tipo) : "-"}</p>
+                <p className="text-slate-700 font-medium">
+                  {perfilesSujeto.length ? nombresPerfiles(perfilesSujeto, perfilesPorId) : recurso?.tipo ? formatCatalogo(recurso.tipo) : "-"}
+                </p>
               </div>
               <div>
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Empresa</p>

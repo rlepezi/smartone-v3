@@ -53,7 +53,7 @@ export default function DetallePersonaScreen({ route, navigation }) {
 
   const base = useAsync(() => personaService.obtenerDetalle(personaId), [personaId]);
   const [asignacionIdx, setAsignacionIdx] = useState(0);
-  const asignaciones = base.data?.resumen?.asignacionesActivas || [];
+  const asignaciones = base.data?.resumen?.participacionesActivas || [];
   const asignacionActiva = asignaciones[asignacionIdx] || null;
 
   const empresaActual = useAsync(async () => {
@@ -68,9 +68,9 @@ export default function DetallePersonaScreen({ route, navigation }) {
 
   const detalle = useAsync(async () => {
     if (!asignacionActiva || !base.data?.persona?.empresaId) return null;
-    return personaService.obtenerDetalleAsignacion(
+    return personaService.obtenerDetalleParticipacion(
         mandanteId, personaId, base.data.persona.empresaId,
-        asignacionActiva.proyectoId, asignacionActiva.perfilRecursoId,
+        asignacionActiva.proyectoId, asignacionActiva.perfilRecursoIds,
     );
   }, [asignacionActiva?.proyectoId, mandanteId]);
 
@@ -112,10 +112,12 @@ export default function DetallePersonaScreen({ route, navigation }) {
             </Text>
           </View>
         </View>
-        {asignacionActiva?.rol && (
+        {asignacionActiva?.perfilesRecurso?.length > 0 && (
           <View style={styles.rolPill}>
             <Briefcase color={colors.onDark} size={14} />
-            <Text style={[typography.caption, { color: colors.onDark }]}>{asignacionActiva.rol}</Text>
+            <Text style={[typography.caption, { color: colors.onDark }]}>
+              {asignacionActiva.perfilesRecurso.map((p) => p.nombre).join(", ")}
+            </Text>
           </View>
         )}
       </GradientHeader>

@@ -12,7 +12,8 @@ import { empresaService } from "../../services/empresaService";
 import { proyectoService } from "../../services/proyectoService";
 import { participacionService } from "../../services/participacionService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
+import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService, RESULTADOS_EVALUACION } from "../../services/evaluacionService";
@@ -32,7 +33,7 @@ import { BotonesEdicion } from "../../components/shared/BotonesEdicion";
 import { PersonaEdicionForm } from "../../components/personas/PersonaEdicionForm";
 import { useEdicionInPlace } from "../../hooks/useEdicionInPlace";
 import { GrupoRequerimientos } from "../../components/shared/RequerimientosLista";
-import { aplicaRequerimientoASujeto, sujetoDeAsignacion } from "../../utils/aplicabilidadRequerimiento";
+import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 
 const ROLES_EVALUACION = ["superadmin", "evaluador"];
 
@@ -83,7 +84,9 @@ export const PersonaDetailPage = () => {
   const [proyectosMap, setProyectosMap] = useState({});
   const [participaciones, setParticipaciones] = useState([]);
   const [perfilesMap, setPerfilesMap] = useState({});
-  const [asignaciones, setAsignaciones] = useState([]);
+  // Participaciones de la Persona en Proyectos (agrupadas por Participación y estado, con sus perfiles).
+  const [sujetos, setSujetos] = useState([]);
+  const perfilesPorId = usePerfilesRecurso();
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
   const [historialEmpresas, setHistorialEmpresas] = useState([]);
@@ -134,14 +137,14 @@ export const PersonaDetailPage = () => {
   const cargarContexto = async () => {
     const [
       empresasData, proyectosData, participacionesData, perfilesData,
-      asignacionesData, expedientesData, evaluacionesData, historialData,
+      sujetosData, expedientesData, evaluacionesData, historialData,
       resumenData,
     ] = await Promise.all([
       empresaService.listar(),
       proyectoService.listar({}),
       participacionService.listar({}),
       perfilParticipacionService.listar({}),
-      asignacionService.listar({ personaId: id }),
+      sujetoService.listar({ personaId: id }),
       expedienteService.listar({}),
       evaluacionService.listarVigentes(),
       relacionLaboralService.listarPorPersona(id),
@@ -166,15 +169,13 @@ export const PersonaDetailPage = () => {
     (perfilesData || []).forEach((p) => { perfMap[p.id] = p.nombre; });
     setPerfilesMap(perfMap);
 
-    // Para mandante_admin/lector el backend ignora el filtro personaId (fuerza
-    // su Mandante): se acota acá a esta Persona.
-    setAsignaciones((asignacionesData || []).filter((a) => a.personaId === id));
+    setSujetos((sujetosData || []).filter((a) => a.personaId === id));
     setExpedientesTodos(expedientesData || []);
     setEvaluacionesTodas((evaluacionesData || []).filter((ev) => ev.personaId === id));
     setHistorialEmpresas(historialData || []);
 
     const mandanteMap = {};
-    (resumenData?.asignacionesActivas || []).forEach((a) => {
+    (resumenData?.participacionesActivas || []).forEach((a) => {
       mandanteMap[a.proyectoId] = { mandanteId: a.mandanteId, nombre: a.mandanteNombre, logoUrl: a.mandanteLogoUrl };
     });
     setMandantesPorProyecto(mandanteMap);
@@ -235,39 +236,37 @@ export const PersonaDetailPage = () => {
   const relacionActiva = historialEmpresas.find((r) => r.estado === "activa") || null;
   const historialOrdenado = [...historialEmpresas].sort((a, b) => segundosDe(b.fechaInicio) - segundosDe(a.fechaInicio));
 
-  // "Proyectos Actuales": Asignaciones ACTIVAS de esta Persona. El Perfil de
-  // Participación se hereda de la Participación (Empresa + Proyecto)
-  // correspondiente — NO es un dato propio de la Asignación ni de la Persona.
-  const asignacionesActivas = asignaciones.filter((a) => a.estado === "activa");
-  const filaDeAsignacion = (a) => {
-    const participacion = participaciones.find(
-      (p) => p.proyectoId === a.proyectoId && p.empresaId === a.empresaId,
-    );
+  // "Proyectos Actuales": participaciones ACTIVAS de esta Persona. El Perfil de
+  // Participación se hereda de la Participación (Empresa + Proyecto); sus Perfiles de
+  // Recurso son los de sus documentos activos (rol = nombres, nunca guardados).
+  const sujetosActivos = sujetos.filter((a) => a.estado === "activa");
+  const filaDeSujeto = (a) => {
+    const participacion = participaciones.find((p) => p.id === a.participacionId);
     const perfilNombre = participacion ? perfilesMap[participacion.perfilParticipacionId] : null;
     const expediente = expedientesTodos.find(
-      (e) => e.proyectoId === a.proyectoId && e.empresaId === a.empresaId,
-    );
+      (e) => e.participacionId === a.participacionId && e.estado !== "cerrado",
+    ) || expedientesTodos.find((e) => e.participacionId === a.participacionId);
     const mandante = mandantesPorProyecto[a.proyectoId] || null;
     return {
-      ...a, perfilNombre, expediente,
+      ...a, perfilNombre, expediente, rol: nombresPerfiles(a.perfilRecursoIds, perfilesPorId),
       mandanteId: mandante?.mandanteId, mandanteNombre: mandante?.nombre, mandanteLogoUrl: mandante?.logoUrl,
     };
   };
-  const filasProyectos = asignacionesActivas.map(filaDeAsignacion);
+  const filasProyectos = sujetosActivos.map(filaDeSujeto);
 
-  // "Historial de Participaciones": TODAS las Asignaciones (cualquier estado).
-  const historialParticipacionesOrdenado = [...asignaciones]
-    .map(filaDeAsignacion)
+  // "Historial de Participaciones": todas (cualquier estado).
+  const historialParticipacionesOrdenado = [...sujetos]
+    .map(filaDeSujeto)
     .sort((a, b) => segundosDe(b.fechaInicio) - segundosDe(a.fechaInicio));
 
-  // Requerimientos que aplican a esta Persona (regla única, con el Perfil de
-  // Recurso de su Asignación), agrupados por Proyecto (uno por cada Asignación
+  // Requerimientos que aplican a esta Persona (regla única, con el conjunto de sus
+  // Perfiles de Recurso), agrupados por Proyecto (uno por cada participación
   // activa con Expediente abierto).
   const requerimientosPorProyecto = filasProyectos
     .filter((f) => f.expediente && f.expediente.estado !== "cerrado")
     .map((f) => {
       const items = (f.expediente.requerimientosAplicables || [])
-        .filter((r) => aplicaRequerimientoASujeto(r, sujetoDeAsignacion(f)))
+        .filter((r) => aplicaRequerimientoASujeto(r, f))
         .map((r) => {
           const vigente = evaluacionesTodas.find(
             (ev) => ev.expedienteId === f.expediente.id && ev.requerimientoId === r.requerimientoId,
@@ -329,12 +328,12 @@ export const PersonaDetailPage = () => {
     }
   };
 
-  // "Resumen Actual" (sidebar): último Proyecto = la Asignación activa más
+  // "Resumen Actual" (sidebar): último Proyecto = la participación activa más
   // reciente por fechaInicio; Perfil/Rol heredados de esa misma fila.
   const filaMasReciente = [...filasProyectos].sort((a, b) => segundosDe(b.fechaInicio) - segundosDe(a.fechaInicio))[0] || null;
 
   // --- KPIs ---
-  // Acreditación: sobre el Expediente abierto de la Asignación más reciente.
+  // Acreditación: sobre el Expediente abierto de la participación más reciente.
   const expedienteRelevante = filaMasReciente?.expediente && filaMasReciente.expediente.estado !== "cerrado"
     ? filaMasReciente.expediente : null;
   const evaluacionesRelevantes = expedienteRelevante
@@ -349,7 +348,7 @@ export const PersonaDetailPage = () => {
   const porcentajes = filasProyectos
     .map((f) => evaluarSujeto({
       expediente: f.expediente && f.expediente.estado !== "cerrado" ? f.expediente : null,
-      vigentes: evaluacionesTodas, campo: "personaId", sujetoId: id, perfilRecursoId: f.perfilRecursoId,
+      vigentes: evaluacionesTodas, campo: "personaId", sujetoId: id, perfilRecursoIds: f.perfilRecursoIds,
     }).pctCumple)
     .filter((p) => p !== null);
   const cumplimientoPromedio = porcentajes.length > 0
@@ -370,7 +369,7 @@ export const PersonaDetailPage = () => {
         <KpiValor valor={mandantesDistintos} listo={!cargandoContexto} />
       </KpiCard>
       <KpiCard titulo="Proyectos" subtexto="activos">
-        <KpiValor valor={asignacionesActivas.length} listo={!cargandoContexto} />
+        <KpiValor valor={sujetosActivos.length} listo={!cargandoContexto} />
       </KpiCard>
       <KpiCard titulo="Empresa">
         {cargandoContexto ? <KpiValor listo={false} /> : (
@@ -524,7 +523,7 @@ export const PersonaDetailPage = () => {
 
             <TarjetaPanel titulo="Proyectos Actuales">
               {cargandoContexto ? cargandoTexto : filasProyectos.length === 0 ? (
-                <div className="py-6 text-center text-slate-400 text-xs">Sin Asignaciones activas a Proyectos.</div>
+                <div className="py-6 text-center text-slate-400 text-xs">Sin participaciones activas en Proyectos.</div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
                   <table className="w-full text-left border-collapse text-xs">
@@ -605,7 +604,7 @@ export const PersonaDetailPage = () => {
               accion={puedeEscribir && modoEdicion ? (
                 <div className="flex items-center gap-2">
                   <ActionButton onClick={() => setCambiarProyectoAbierto(true)} icon={FolderKanban}>
-                    {asignacionesActivas.length > 0 ? "Cambiar Proyecto" : "Asignar a Proyecto"}
+                    {sujetosActivos.length > 0 ? "Cambiar Proyecto" : "Asignar a Proyecto"}
                   </ActionButton>
                   <ActionButton as={Link} to={`/acreditaciones/reemplazar?entidadTipo=persona&entidadId=${id}`} icon={Repeat}>
                     Reemplazar Acreditación
@@ -614,7 +613,7 @@ export const PersonaDetailPage = () => {
               ) : null}
             >
               {cargandoContexto ? cargandoTexto : filasProyectos.length === 0 ? (
-                <div className="py-6 text-center text-slate-400 text-xs">Sin Asignaciones activas a Proyectos.</div>
+                <div className="py-6 text-center text-slate-400 text-xs">Sin participaciones activas en Proyectos.</div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
                   <table className="w-full text-left border-collapse text-xs">
@@ -657,7 +656,7 @@ export const PersonaDetailPage = () => {
 
             <TarjetaPanel titulo="Historial de Participaciones">
               {cargandoContexto ? cargandoTexto : historialParticipacionesOrdenado.length === 0 ? (
-                <div className="py-6 text-center text-slate-400 text-xs">Sin Asignaciones a Proyectos registradas.</div>
+                <div className="py-6 text-center text-slate-400 text-xs">Sin participaciones en Proyectos registradas.</div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
                   <table className="w-full text-left border-collapse text-xs">
@@ -798,7 +797,7 @@ export const PersonaDetailPage = () => {
         <CambiarProyectoModal
           entidadTipo="persona"
           entidadId={id}
-          tieneParticipacionActiva={asignacionesActivas.length > 0}
+          tieneParticipacionActiva={sujetosActivos.length > 0}
           onCambiado={handleProyectoCambiado}
           onCerrar={() => setCambiarProyectoAbierto(false)}
         />

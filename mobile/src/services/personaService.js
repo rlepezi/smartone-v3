@@ -1,5 +1,4 @@
 import { personasApi } from "../api/personas";
-import { asignacionesApi } from "../api/asignaciones";
 import { expedienteService } from "./expedienteService";
 import { evaluacionService } from "./evaluacionService";
 
@@ -14,10 +13,10 @@ export const personaService = {
     return { persona, resumen };
   },
 
-  // Requerimientos con vigencia de UNA Asignación elegida en el selector
-  // (proyectoId + empresaId de esa asignación activa).
-  async obtenerDetalleAsignacion(
-      mandanteId, personaId, empresaId, proyectoId, perfilRecursoId,
+  // Requerimientos con vigencia de UNA participación elegida en el selector
+  // (proyectoId + empresaId de esa participación activa, con sus perfiles).
+  async obtenerDetalleParticipacion(
+      mandanteId, personaId, empresaId, proyectoId, perfilRecursoIds,
   ) {
     const expediente = await expedienteService.obtenerPorEmpresaYProyecto(
         mandanteId, empresaId, proyectoId,
@@ -30,12 +29,9 @@ export const personaService = {
       expediente,
       filas: evaluacionService.combinarConRequerimientos(
           expediente, propias,
-          { tipoEntidad: "persona", perfilRecursoId: perfilRecursoId || null },
+          { tipoEntidad: "persona", perfilRecursoIds: perfilRecursoIds || [] },
       ),
     };
   },
 
-  async obtenerAsignacionesActivas(personaId) {
-    return asignacionesApi.listar({ personaId, estado: "activa" });
-  },
 };

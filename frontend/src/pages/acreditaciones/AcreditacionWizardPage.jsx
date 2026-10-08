@@ -150,12 +150,12 @@ export const AcreditacionWizardPage = () => {
   const [previewEmpresa, setPreviewEmpresa] = useState(null);
   // Documentación reutilizable con la selección de Personas/Maquinarias.
   const [previewSeleccion, setPreviewSeleccion] = useState(null);
-  const [seleccion, setSeleccion] = useState(() => leerBorradorValido(mandanteFijo)?.seleccion || []); // [{tipo, id, nombre, rol}]
+  const [seleccion, setSeleccion] = useState(() => leerBorradorValido(mandanteFijo)?.seleccion || []); // [{tipo, id, nombre, perfilRecursoIds}]
   const [fechaInicio, setFechaInicio] = useState(() => leerBorradorValido(mandanteFijo)?.fechaInicio || hoyISO());
   const [previewRequerimientos, setPreviewRequerimientos] = useState(() => leerBorradorValido(mandanteFijo)?.previewRequerimientos || null);
 
   const [ejecutando, setEjecutando] = useState(false);
-  const [progreso, setProgreso] = useState(() => leerBorradorValido(mandanteFijo)?.progreso || null); // {participacionId, asignacionesListo, expedienteId}
+  const [progreso, setProgreso] = useState(() => leerBorradorValido(mandanteFijo)?.progreso || null); // {participacionId, sujetosListo, expedienteId}
   const [errorEjecucion, setErrorEjecucion] = useState(null); // {paso, mensaje}
 
   // Persiste el avance en cada cambio — así una navegación a otra
@@ -235,7 +235,7 @@ export const AcreditacionWizardPage = () => {
         empresaId: empresaSel.id,
         perfilParticipacionId: perfilSel.id,
         fechaInicio,
-        seleccion: seleccion.map((s) => ({ tipo: s.tipo, id: s.id })),
+        seleccion: seleccion.map((s) => ({ tipo: s.tipo, id: s.id, perfilRecursoIds: s.perfilRecursoIds || [] })),
       })
       .then((data) => { if (vigente) setPreviewSeleccion(data?.total || null); })
       .catch(() => { if (vigente) setPreviewSeleccion({ total: 0, reutilizables: 0 }); });
@@ -256,7 +256,8 @@ export const AcreditacionWizardPage = () => {
   const proyectoNoAplica = Boolean(proyectoSel) && estadoTarjetaProyecto(proyectoSel) === "no_aplica";
 
   // Error real que impide crear (no cuenta un simple pendiente de documentación).
-  const personaSinRol = seleccion.find((s) => s.tipo === "persona" && !s.rol);
+  // Cada Persona/Maquinaria seleccionada necesita su Perfil de Recurso (por ID).
+  const sinPerfil = seleccion.find((s) => !(s.perfilRecursoIds || []).length);
   const motivoBloqueo =
     !mandanteEfectivo ? `falta seleccionar el Mandante (Paso ${numeroPaso(1)}).` :
     !empresaSel ? `falta seleccionar la Empresa (Paso ${numeroPaso(2)}).` :
@@ -264,7 +265,7 @@ export const AcreditacionWizardPage = () => {
     proyectoNoAplica ? MENSAJE_NO_APLICA :
     !perfilSel ? `falta elegir el Perfil de Participación (Paso ${numeroPaso(4)}).` :
     !fechaInicio ? "falta la fecha de inicio." :
-    personaSinRol ? `falta el rol de ${personaSinRol.nombre} (Paso ${numeroPaso(5)}).` :
+    sinPerfil ? `falta el Perfil de Recurso de ${sinPerfil.nombre} (Paso ${numeroPaso(5)}).` :
     null;
 
   // Paso Requerimientos: requisitos pendientes (sin documentación reutilizable) del preview ya calculado.
@@ -424,7 +425,7 @@ export const AcreditacionWizardPage = () => {
       }
     }
 
-    if (seleccion.length > 0 && !progreso?.asignacionesListo) {
+    if (seleccion.length > 0 && !progreso?.sujetosListo) {
       // acreditacionService.asignarEntidad decide solo: si la Persona/
       // Maquinaria ya está activa en otro Proyecto, la mueve (cierra la
       // anterior, crea la nueva, reutiliza su documentación vigente) en
@@ -437,7 +438,7 @@ export const AcreditacionWizardPage = () => {
             entidadId: item.id,
             proyectoDestinoId: proyectoSel.id,
             empresaId: empresaSel.id,
-            rol: item.tipo === "persona" ? item.rol : undefined,
+            perfilRecursoIds: item.perfilRecursoIds,
             fechaInicio,
           }),
         ),
@@ -456,22 +457,12 @@ export const AcreditacionWizardPage = () => {
         // no vuelva a crear las que ya se crearon (evita duplicados).
         setSeleccion(fallidas.map(({ item }) => item));
         setProgreso({ participacionId });
-        // Fallas por Rol/Clasificación que no es un Perfil de Recurso activo del Mandante: se
-        // guarda quién falló para ofrecer los enlaces de solución (ver PasoResumen).
-        const solucionables = fallidas
-          .filter(({ r }) => /no está configurad/i.test(r.reason?.message || ""))
-          // `valor`: el rol/clasificación exacto que el backend rechazó (va entre comillas simples).
-          .map(({ item, r }) => ({
-            tipo: item.tipo, id: item.id, nombre: item.nombre,
-            valor: (r.reason?.message || "").match(/'([^']+)'/)?.[1] || null,
-          }));
         setErrorEjecucion({
-          paso: "asignaciones",
-          solucionables,
+          paso: "sujetos",
           mandanteId: mandanteEfectivo || null,
           mensaje:
             `La Participación se creó correctamente (no se duplicará si reintentas). ` +
-            `${exitosas.length} de ${seleccion.length} asignaciones se crearon con éxito` +
+            `${exitosas.length} de ${seleccion.length} personas/maquinarias se asignaron con éxito` +
             (exitosas.length > 0 ? ` (${exitosas.map(({ item }) => item.nombre).join(", ")}).` : ".") +
             ` Las siguientes fallaron: ${fallidas.map(({ item, r }) => `${item.nombre} — ${r.reason?.message || "error desconocido"}`).join("; ")}. ` +
             `No se creó el Expediente todavía — corrige y reintenta.`,
@@ -480,9 +471,9 @@ export const AcreditacionWizardPage = () => {
         return;
       }
 
-      setProgreso({ participacionId, asignacionesListo: true });
-    } else if (!progreso?.asignacionesListo) {
-      setProgreso({ participacionId, asignacionesListo: true });
+      setProgreso({ participacionId, sujetosListo: true });
+    } else if (!progreso?.sujetosListo) {
+      setProgreso({ participacionId, sujetosListo: true });
     }
 
     try {
@@ -491,11 +482,11 @@ export const AcreditacionWizardPage = () => {
       limpiarEstadoGuardado();
       navigate(`/expedientes/${expedienteId}`);
     } catch (err) {
-      setProgreso({ participacionId, asignacionesListo: true });
+      setProgreso({ participacionId, sujetosListo: true });
       setErrorEjecucion({
         paso: "expediente",
         mensaje:
-          `La Participación y las Asignaciones ya se crearon correctamente (no se duplicarán si reintentas). ` +
+          `La Participación y las personas/maquinarias asignadas ya se crearon correctamente (no se duplicarán si reintentas). ` +
           `El Expediente falló: ${err.message || "error desconocido"}.`,
       });
       setEjecutando(false);

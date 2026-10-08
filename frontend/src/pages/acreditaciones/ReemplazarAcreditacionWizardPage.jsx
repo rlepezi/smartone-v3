@@ -6,7 +6,7 @@ import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { empresaService } from "../../services/empresaService";
 import { participacionService } from "../../services/participacionService";
-import { asignacionService } from "../../services/asignacionService";
+import { sujetoService } from "../../services/participacionSujetoService";
 import { proyectoService } from "../../services/proyectoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { acreditacionService } from "../../services/acreditacionService";
@@ -84,7 +84,8 @@ export const ReemplazarAcreditacionWizardPage = () => {
   const [mandanteIdWizard, setMandanteIdWizard] = useState("");
   const [proyectoSel, setProyectoSel] = useState(null);
   const [perfilSel, setPerfilSel] = useState(null);
-  const [rol, setRol] = useState("");
+  // Perfiles de Recurso (por ID) del sujeto en el Proyecto destino: Persona uno o más, Maquinaria uno.
+  const [perfilRecursoIds, setPerfilRecursoIds] = useState([]);
   const [fechaInicio, setFechaInicio] = useState(hoyISO());
   const [fechaFin, setFechaFin] = useState("");
 
@@ -175,9 +176,10 @@ export const ReemplazarAcreditacionWizardPage = () => {
 
   // Origen (acreditación actual a cerrar): misma regla de desempate que
   // usa el backend — la más reciente por fechaInicio entre las
-  // Participaciones/Asignaciones activas de la entidad, en cualquier
-  // Proyecto. También detecta si ya hay una activa específicamente en el
-  // Proyecto destino (el backend la rechaza con 409).
+  // Participaciones activas de la entidad, en cualquier Proyecto. También
+  // detecta si ya está activa en el Proyecto destino CON SU MISMA Empresa
+  // (el backend lo rechaza con 409; con otra Empresa es un cambio de
+  // empresa dentro del Proyecto y se permite).
   useEffect(() => {
     if (!entidadSel) {
       setOrigen(null);
@@ -191,15 +193,18 @@ export const ReemplazarAcreditacionWizardPage = () => {
         const activas = entidadTipo === "empresa" ?
             (await participacionService.listar({ empresaId: entidadSel.id }))
                 .filter((p) => p.estado === "activa") :
-            (await asignacionService.listar(
+            (await sujetoService.listar(
                 entidadTipo === "persona" ?
-                    { personaId: entidadSel.id } :
-                    { recursoId: entidadSel.id },
-            )).filter((a) => a.estado === "activa");
+                    { personaId: entidadSel.id, estado: "activa" } :
+                    { recursoId: entidadSel.id, estado: "activa" },
+            ));
 
         if (!vigente) return;
 
-        const conflicto = proyectoSel ? activas.some((a) => a.proyectoId === proyectoSel.id) : false;
+        const empresaDelSujeto = entidadTipo === "empresa" ? entidadSel.id : entidadSel.empresaId;
+        const conflicto = proyectoSel
+          ? activas.some((a) => a.proyectoId === proyectoSel.id && a.empresaId === empresaDelSujeto)
+          : false;
         setConflictoDestino(conflicto);
 
         const origenActivo = masReciente(activas);
@@ -233,7 +238,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
     setEntidadTipo(tipo);
     setEntidadSel(null);
     setPerfilSel(null);
-    setRol("");
+    setPerfilRecursoIds([]);
   };
 
   const pasosActivos = useMemo(() => {
@@ -255,7 +260,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
     pasoActualKey === "proyecto" ? Boolean(proyectoSel) :
     pasoActualKey === "entidad" ? Boolean(entidadSel) :
     pasoActualKey === "perfil" ?
-        (entidadTipo === "persona" ? Boolean(rol) : true) &&
+        (entidadTipo === "empresa" ? true : perfilRecursoIds.length > 0) &&
         (!perfilEstado.necesitaPerfil || Boolean(perfilSel)) &&
         !perfilEstado.cargando :
     pasoActualKey === "participacion" ? Boolean(fechaInicio) && !conflictoDestino :
@@ -290,7 +295,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
       if (entidadTipo === "empresa") {
         payload.perfilParticipacionId = perfilSel?.id;
       } else {
-        if (entidadTipo === "persona") payload.rol = rol;
+        payload.perfilRecursoIds = perfilRecursoIds;
         if (perfilEstado.necesitaPerfil) payload.perfilParticipacionId = perfilSel?.id;
       }
       const data = await acreditacionService.reemplazar(payload);
@@ -360,8 +365,8 @@ export const ReemplazarAcreditacionWizardPage = () => {
                   mandanteId={mandanteId}
                   perfilSel={perfilSel}
                   onSeleccionarPerfil={setPerfilSel}
-                  rol={rol}
-                  onCambiarRol={setRol}
+                  perfilRecursoIds={perfilRecursoIds}
+                  onCambiarPerfiles={setPerfilRecursoIds}
                   onEstadoChange={setPerfilEstado}
                 />
               )
@@ -384,6 +389,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
                 entidadId={entidadSel?.id}
                 perfilParticipacionId={perfilEfectivoId}
                 fechaInicio={fechaInicio}
+                perfilRecursoIds={perfilRecursoIds}
               />
             )}
             {pasoActualKey === "confirmacion" && (
@@ -392,7 +398,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
                 entidadSel={entidadSel}
                 proyectoSel={proyectoSel}
                 perfilSel={perfilSel}
-                rol={rol}
+                perfilRecursoIds={perfilRecursoIds}
                 fechaInicio={fechaInicio}
                 fechaFin={fechaFin}
                 ejecutando={ejecutando}
@@ -442,7 +448,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
           proyectoSel={proyectoSel}
           perfilSel={perfilSel}
           perfilExistenteNombre={perfilExistenteNombre}
-          rol={rol}
+          perfilRecursoIds={perfilRecursoIds}
           fechaInicio={fechaInicio}
           fechaFin={fechaFin}
         />

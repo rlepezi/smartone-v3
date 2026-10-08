@@ -18,7 +18,8 @@ const ACTOR_SISTEMA = {uid: "sistema", email: "sistema", rol: "sistema"};
  * Derechos ARCO (Ley 21.719): derecho de cancelación de una Persona.
  * Resuelve el choque con "nunca eliminar físicamente" anonimizando la
  * identidad de la Persona y conservando toda la estructura (Relaciones
- * laborales, Asignaciones, Evaluaciones, Expedientes y Bitácora), que
+ * laborales, participaciones en proyectos, Evaluaciones, Expedientes y
+ * Bitácora), que
  * siguen referenciando el mismo `personaId`. Sus documentos de identidad
  * (Evidencias de Requerimientos marcados `esDocumentoIdentidad`) no se
  * borran al instante: pasan por un periodo de gracia con acceso

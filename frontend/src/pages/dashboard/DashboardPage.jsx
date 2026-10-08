@@ -125,7 +125,7 @@ const iconoEvento = (evento) => {
   if (entidad === "evidencia") {
     return { Icon: ClipboardCheck, className: "bg-primary-lighter text-primary-dark" };
   }
-  if (entidad === "participacion" || entidad === "asignacion") {
+  if (entidad === "participacion" || entidad === "participacionPersona" || entidad === "participacionRecurso") {
     return { Icon: ClipboardCheck, className: "bg-primary-lighter text-primary-dark" };
   }
   return { Icon: Activity, className: "bg-slate-100 text-slate-500" };

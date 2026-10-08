@@ -49,9 +49,9 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
   }, [base.data?.empresaId]);
 
   // recursoController no expone /:id/resumen (ver auditoría Fase A): las
-  // asignaciones activas se resuelven acá directo contra /asignaciones?recursoId=.
+  // participaciones activas se resuelven acá contra /participacion-recursos.
   const asignaciones = useAsync(async () => {
-    const activas = await recursoService.obtenerAsignacionesActivas(recursoId);
+    const activas = await recursoService.obtenerParticipacionesActivas(recursoId);
     const proyectos = await Promise.all(
         activas.map((a) => proyectosApi.obtener(a.proyectoId).catch(() => null)),
     );
@@ -63,9 +63,9 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
 
   const detalle = useAsync(async () => {
     if (!asignacionActiva) return null;
-    return recursoService.obtenerDetalleAsignacion(
+    return recursoService.obtenerDetalleParticipacion(
         mandanteId, recursoId, asignacionActiva.empresaId, asignacionActiva.proyectoId,
-        asignacionActiva.perfilRecursoId,
+        asignacionActiva.perfilRecursoIds,
     );
   }, [asignacionActiva?.proyectoId, mandanteId]);
 

@@ -11,14 +11,11 @@ const evidenciaRepository = require("../repositories/evidenciaRepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
 const personaRepository = require("../repositories/personaRepository");
 const recursoRepository = require("../repositories/recursoRepository");
-const asignacionRepository = require("../repositories/asignacionRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
-const {
-  aplicaRequerimientoASujeto, sujetoDeAsignacion,
-} = require("../utils/aplicabilidadRequerimiento");
-// TRANSICIÓN bloque 2: perfilRecursoId de la Asignación del sujeto.
-const {resolverPerfilesRecurso} = require("../utils/transicionPerfilRecurso");
+const {aplicaRequerimientoASujeto} =
+    require("../utils/aplicabilidadRequerimiento");
+const {sujetoActivoEnProyecto} = require("../utils/sujetosParticipacion");
 
 const db = admin.firestore();
 
@@ -321,14 +318,12 @@ class EvaluacionService {
     const tipoEntidad = requerimientoAplicable.tipoEntidad;
 
     // Si el Requerimiento está acotado a Perfiles de Recurso específicos,
-    // el sujeto debe tener una Asignación activa en el Proyecto cuyo Perfil
-    // esté entre ellos (regla única: aplicaRequerimientoASujeto).
-    const validarPerfilDelSujeto = async (asignacionActiva, mensaje) => {
+    // el sujeto debe estar activo en el Proyecto con al menos uno de esos
+    // Perfiles (regla única: aplicaRequerimientoASujeto).
+    const validarPerfilDelSujeto = async (sujeto, mensaje) => {
       if (!requerimientoAplicable.perfilRecursoIds) return;
-      const [conPerfil] = asignacionActiva ?
-        await resolverPerfilesRecurso([asignacionActiva]) : [null];
-      if (!conPerfil || !aplicaRequerimientoASujeto(
-          requerimientoAplicable, sujetoDeAsignacion(conPerfil))) {
+      if (!sujeto ||
+          !aplicaRequerimientoASujeto(requerimientoAplicable, sujeto)) {
         throw new AppError(400, mensaje);
       }
     };
@@ -375,8 +370,8 @@ class EvaluacionService {
       }
       if (requerimientoAplicable.perfilRecursoIds) {
         await validarPerfilDelSujeto(
-            await asignacionRepository.getActivaByPersonaYProyecto(
-                personaId, expediente.proyectoId,
+            await sujetoActivoEnProyecto(
+                "persona", personaId, expediente.proyectoId,
             ),
             "Esta persona no tiene el rol requerido para este Requerimiento.",
         );
@@ -398,8 +393,8 @@ class EvaluacionService {
       }
       if (requerimientoAplicable.perfilRecursoIds) {
         await validarPerfilDelSujeto(
-            await asignacionRepository.getActivaByRecursoYProyecto(
-                recursoId, expediente.proyectoId,
+            await sujetoActivoEnProyecto(
+                "recurso", recursoId, expediente.proyectoId,
             ),
             "Esta maquinaria no tiene la clasificación requerida para este " +
             "Requerimiento.",

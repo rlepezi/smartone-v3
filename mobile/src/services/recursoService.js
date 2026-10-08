@@ -1,5 +1,6 @@
 import { recursosApi } from "../api/recursos";
-import { asignacionesApi } from "../api/asignaciones";
+import { participacionRecursosApi } from "../api/participacionSujetos";
+import { agruparSujetos } from "../utils/sujetosParticipacion";
 import { expedienteService } from "./expedienteService";
 import { evaluacionService } from "./evaluacionService";
 
@@ -8,8 +9,8 @@ export const recursoService = {
   obtener: (id) => recursosApi.obtener(id),
   tipos: () => recursosApi.tipos(),
 
-  async obtenerDetalleAsignacion(
-      mandanteId, recursoId, empresaId, proyectoId, perfilRecursoId,
+  async obtenerDetalleParticipacion(
+      mandanteId, recursoId, empresaId, proyectoId, perfilRecursoIds,
   ) {
     const expediente = await expedienteService.obtenerPorEmpresaYProyecto(
         mandanteId, empresaId, proyectoId,
@@ -22,12 +23,14 @@ export const recursoService = {
       expediente,
       filas: evaluacionService.combinarConRequerimientos(
           expediente, propias,
-          { tipoEntidad: "recurso", perfilRecursoId: perfilRecursoId || null },
+          { tipoEntidad: "recurso", perfilRecursoIds: perfilRecursoIds || [] },
       ),
     };
   },
 
-  async obtenerAsignacionesActivas(recursoId) {
-    return asignacionesApi.listar({ recursoId, estado: "activa" });
+  // Participaciones activas de la Maquinaria (agrupadas, con su perfil).
+  async obtenerParticipacionesActivas(recursoId) {
+    const docs = await participacionRecursosApi.listar({ recursoId, estado: "activa" });
+    return agruparSujetos([], docs || []);
   },
 };

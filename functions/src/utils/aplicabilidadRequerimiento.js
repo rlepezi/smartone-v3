@@ -15,13 +15,12 @@ const TIPOS_ENTIDAD = ["empresa", "persona", "recurso"];
  * aplicables) aplica a un sujeto.
  * - empresa: basta con que el tipo coincida.
  * - persona / recurso: el tipo coincide y `perfilRecursoIds` es null
- *   ("Todos") o incluye el Perfil de Recurso del sujeto.
+ *   ("Todos") o comparte al menos un ID con los perfiles del sujeto.
  * @param {{tipoEntidad: string, perfilRecursoIds: (Array<string>|null)}}
- *     requerimiento
- *     Entrada del Requerimiento.
- * @param {{tipoEntidad: string, perfilRecursoId: ?string}} sujeto Sujeto
- *     (empresa: sin perfil; persona/recurso: su Perfil de Recurso resuelto,
- *     o null si no tiene).
+ *     requerimiento Entrada del Requerimiento.
+ * @param {{tipoEntidad: string, perfilRecursoIds: (Array<string>|undefined)}}
+ *     sujeto Sujeto (empresa: sin perfiles; persona/recurso: el conjunto
+ *     de perfilRecursoId de sus documentos activos en la Participación).
  * @return {boolean} true si aplica.
  */
 function aplicaRequerimientoASujeto(requerimiento, sujeto) {
@@ -30,24 +29,8 @@ function aplicaRequerimientoASujeto(requerimiento, sujeto) {
   if (sujeto.tipoEntidad === "empresa") return true;
   const ids = requerimiento.perfilRecursoIds;
   if (ids === null || ids === undefined) return true;
-  return Boolean(sujeto.perfilRecursoId) &&
-      ids.includes(sujeto.perfilRecursoId);
+  const propios = sujeto.perfilRecursoIds || [];
+  return ids.some((id) => propios.includes(id));
 }
 
-/**
- * Sujeto de una Asignación (Persona o Recurso) en la forma que espera
- * aplicaRequerimientoASujeto. La Asignación debe venir ya con
- * `perfilRecursoId` resuelto (ver transicionPerfilRecurso.js).
- * @param {Object} asignacion Asignación con perfilRecursoId.
- * @return {{tipoEntidad: string, perfilRecursoId: ?string}} El sujeto.
- */
-function sujetoDeAsignacion(asignacion) {
-  return {
-    tipoEntidad: asignacion.personaId ? "persona" : "recurso",
-    perfilRecursoId: asignacion.perfilRecursoId || null,
-  };
-}
-
-module.exports = {
-  TIPOS_ENTIDAD, aplicaRequerimientoASujeto, sujetoDeAsignacion,
-};
+module.exports = {TIPOS_ENTIDAD, aplicaRequerimientoASujeto};
