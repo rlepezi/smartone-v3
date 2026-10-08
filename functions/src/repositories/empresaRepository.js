@@ -104,3 +104,4 @@ class EmpresaRepository {
 }
 
 module.exports = new EmpresaRepository();
+module.exports.COLLECTION = COLLECTION;

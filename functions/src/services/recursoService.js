@@ -1,8 +1,14 @@
+const admin = require("firebase-admin");
 const recursoRepository = require("../repositories/recursoRepository");
 const empresaRepository = require("../repositories/empresaRepository");
+const empresaRecursoRepository =
+    require("../repositories/empresaRecursoRepository");
+const empresaRecursoService = require("./empresaRecursoService");
+const {
+  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto,
+} = require("../utils/alcanceMandante");
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
-const relacionRecursoService = require("./relacionRecursoService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const bitacoraService = require("./bitacoraService");
 const participacionRecursoRepository =
@@ -11,12 +17,12 @@ const AppError = require("../utils/AppError");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
 const TIPO_MAX_LENGTH = 60;
+const db = admin.firestore();
 
 /**
  * Reglas de negocio para el recurso Recurso (maquinarias, vehículos,
- * equipos). Catálogo global, sin mandanteId ni lógica de alcance por
- * actor — el control de acceso es enteramente por rol a nivel de ruta
- * (ver recursoRoutes.js).
+ * equipos). Catálogo global, sin mandanteId; su visibilidad por Mandante
+ * se decide en utils/alcanceMandante.js.
  *
  * `tipo` YA NO se valida contra un catálogo fijo: Recurso no tiene
  * mandanteId propio (RN-021, catálogo global compartido entre
@@ -27,28 +33,11 @@ const TIPO_MAX_LENGTH = 60;
  * Perfil de Recurso (por ID) que se elige al asignarla a una Participación
  * (participacionRecursos), validado contra el Mandante del Proyecto.
  *
- * El vínculo con una Empresa (dueño/operador) vive en RelaciónRecurso
- * (entidad 19, ver decisions.md) — acá solo se denormalizan `empresaId`/
- * `empresaActivaId` de la relación activa, mantenidos exclusivamente por
- * relacionRecursoService (nunca editables directo vía
- * actualizarRecurso). Mismo patrón ya usado en Persona/RelaciónLaboral.
+ * El vínculo con una Empresa (dueño/operador) vive SOLO en
+ * empresaRecursos (bloque 3): la "empresa actual" se deriva de la relación
+ * activa y nunca se guarda en el Recurso.
  */
 class RecursoService {
-  /**
-   * Valida que el empresaId apunte a una Empresa existente y activa.
-   * @param {string} empresaId ID de la Empresa a validar.
-   * @return {Promise<void>}
-   */
-  async _validarEmpresaActiva(empresaId) {
-    const empresa = await empresaRepository.getById(empresaId);
-    if (!empresa) {
-      throw new AppError(400, "La Empresa indicada no existe.");
-    }
-    if (empresa.estado !== "activo") {
-      throw new AppError(400, "La Empresa indicada no está activa.");
-    }
-  }
-
   /**
    * Valida el campo "tipo": catálogo abierto por diseño (ver nota de
    * clase) — solo se exige un string no vacío dentro de un largo
@@ -71,26 +60,140 @@ class RecursoService {
   /**
    * Obtiene un recurso por su ID.
    * @param {string} id ID del recurso.
+   * @param {?Object} [actor] Usuario autenticado: fuera de su alcance
+   *     responde 404.
    * @return {Promise<Object>} El recurso encontrado.
    */
-  async getRecursoById(id) {
+  async getRecursoById(id, actor = null) {
     if (!id || typeof id !== "string") {
       throw new AppError(400, "ID de recurso inválido.");
     }
     const recurso = await recursoRepository.getById(id);
-    if (!recurso) {
+    if (!recurso || (actor && !(await puedeVerSujeto(actor, "recurso", id)))) {
       throw new AppError(404, "Recurso no encontrado.");
     }
     return recurso;
   }
 
   /**
-   * Lista recursos, opcionalmente filtrados por estado y/o empresa.
-   * @param {Object} filtros Filtros de búsqueda.
+   * "Empresa actual" de una relación activa (null si no hay o si la
+   * Empresa está fuera del alcance del actor).
+   * @param {?Object} relacion Relación activa.
+   * @param {?Set<string>} visibles Empresas visibles (null = todas).
+   * @param {Object<string, Object>} empresas Cache id -> Empresa.
+   * @return {?Object} Empresa actual.
+   */
+  _empresaActual(relacion, visibles, empresas) {
+    if (!relacion || (visibles && !visibles.has(relacion.empresaId))) {
+      return null;
+    }
+    return {
+      relacionId: relacion.id,
+      empresaId: relacion.empresaId,
+      empresaNombre: empresas[relacion.empresaId]?.razonSocial || null,
+      tipoRelacion: relacion.tipoRelacion || null,
+      fechaInicio: relacion.fechaInicio || null,
+    };
+  }
+
+  /**
+   * Carga Empresas por ID.
+   * @param {string[]} ids IDs.
+   * @return {Promise<Object<string, Object>>} Mapa id -> Empresa.
+   */
+  async _empresasPorId(ids) {
+    const unicos = [...new Set(ids.filter(Boolean))];
+    const lista = await Promise.all(unicos.map((id) =>
+      empresaRepository.getById(id)));
+    return Object.fromEntries(unicos.map((id, i) => [id, lista[i]]));
+  }
+
+  /**
+   * Recurso con su empresa actual derivada (visible para el actor).
+   * @param {string} id ID del recurso.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Recurso con `empresaActual`.
+   */
+  async obtenerRecurso(id, actor) {
+    const recurso = await this.getRecursoById(id, actor);
+    const [relacion, visibles] = await Promise.all([
+      empresaRecursoRepository.getActivaBySujeto(id),
+      empresaIdsVisibles(actor),
+    ]);
+    const empresas = await this._empresasPorId([relacion?.empresaId]);
+    return {
+      ...recurso,
+      empresaActual: this._empresaActual(relacion, visibles, empresas),
+    };
+  }
+
+  /**
+   * Lista recursos visibles para el actor con su empresa actual. Con
+   * `empresaId`, solo los con relación ACTIVA con esa Empresa.
+   * @param {{estado: (string|undefined), empresaId: (string|undefined)}}
+   *     filtros Filtros de búsqueda.
+   * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object[]>} Lista de recursos.
    */
-  async listarRecursos(filtros) {
-    return await recursoRepository.list(filtros);
+  async listarRecursos(filtros, actor) {
+    const {estado, empresaId} = filtros || {};
+    const [recursos, sujetosVisibles, empresasVisibles, activas] =
+        await Promise.all([
+          recursoRepository.list({estado}),
+          sujetoIdsVisibles(actor, "recurso"),
+          empresaIdsVisibles(actor),
+          empresaRecursoRepository.listActivas(),
+        ]);
+    const activaPorRecurso = new Map(activas.map((r) => [r.recursoId, r]));
+    const empresas = await this._empresasPorId(activas.map((r) => r.empresaId));
+    return recursos
+        .filter((r) => !sujetosVisibles || sujetosVisibles.has(r.id))
+        .filter((r) => !empresaId ||
+          activaPorRecurso.get(r.id)?.empresaId === empresaId)
+        .map((r) => ({
+          ...r,
+          empresaActual: this._empresaActual(
+              activaPorRecurso.get(r.id), empresasVisibles, empresas,
+          ),
+        }));
+  }
+
+  /**
+   * Patente obligatoria (no única). Si otro recurso ACTIVO visible para el
+   * actor ya la usa y el cliente no confirmó, responde 409
+   * PATENTE_DUPLICADA con ese recurso (aviso, no bloqueo: reenviar con
+   * `confirmarPatenteDuplicada: true` continúa).
+   * @param {*} patente Patente recibida.
+   * @param {Object} opciones excluirId, confirmado, actor.
+   * @return {Promise<string>} Patente normalizada.
+   */
+  async _validarPatente(patente, {excluirId = null, confirmado, actor}) {
+    if (typeof patente !== "string" || !patente.trim()) {
+      throw new AppError(
+          400, "El campo 'patente' (identificación) es obligatorio.",
+      );
+    }
+    const normalizada = patente.trim().toUpperCase();
+    if (confirmado === true) return normalizada;
+    const [mismos, visibles] = await Promise.all([
+      recursoRepository.listByPatente(normalizada),
+      sujetoIdsVisibles(actor, "recurso"),
+    ]);
+    const otro = mismos.find((r) => r.id !== excluirId &&
+        r.estado === "activo" && (!visibles || visibles.has(r.id)));
+    if (otro) {
+      throw new AppError(
+          409,
+          `Ya existe otra maquinaria activa con la patente ${normalizada}.`,
+          {
+            codigo: "PATENTE_DUPLICADA",
+            detalle: {
+              recursoId: otro.id, nombre: otro.nombre, patente: normalizada,
+            },
+          },
+      );
+    }
+    return normalizada;
   }
 
   /**
@@ -131,42 +234,36 @@ class RecursoService {
   }
 
   /**
-   * Crea un nuevo recurso junto con su RelaciónRecurso inicial (RN-122:
-   * todo Recurso necesita una relación activa desde su creación, no
-   * puede quedar "huérfano" de Empresa). Mismo patrón que
-   * personaService.crearPersona: no es una transacción multi-colección
-   * porque el documento de Recurso todavía no existe al momento de
-   * validar/crear — se crea primero el Recurso, y recién con su ID real
-   * se crea la RelaciónRecurso.
-   * @param {Object} payload Datos del nuevo recurso y de su relación
-   *     inicial (empresaId, tipoRelacion, fechaInicio opcional).
+   * Crea un recurso junto con su relación inicial con la Empresa
+   * (empresaRecursos), en una sola transacción (RN-122: ningún Recurso
+   * queda sin Empresa). Patente obligatoria (ver _validarPatente).
+   * @param {Object} payload Datos del recurso, empresaId (obligatorio),
+   *     tipoRelacion y fechaInicio opcionales, y
+   *     confirmarPatenteDuplicada.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
    * @return {Promise<Object>} El recurso creado.
    */
   async crearRecurso(payload, actor) {
     const {
       nombre, tipo, empresaId, estado, patente, marca, modelo, anio,
-      tipoRelacion, fechaInicio,
+      fechaInicio,
     } = payload;
 
-    if (!nombre || !tipo || !empresaId) {
+    if (!empresaId || !nombre || !tipo) {
       throw new AppError(
           400,
-          "Faltan campos obligatorios: 'nombre', 'tipo' y 'empresaId' " +
+          "Faltan campos obligatorios: 'empresaId', 'nombre' y 'tipo' " +
           "son requeridos.",
       );
     }
-    // tipoRelacion ya NO es obligatorio acá (decisión "completar
-    // después", mismo criterio aplicado a Persona/cargo): el alta rápida
-    // (ModalCrearRecurso, wizard de Nueva Acreditación) no lo pide. Queda
-    // null hasta completarse editando la Maquinaria/RelaciónRecurso
-    // después. RecursoFormPage.jsx (alta completa) sigue exigiéndolo del
-    // lado del cliente. La validación estricta de "Cambiar Empresa"
-    // (relacionRecursoService.cambiarEmpresa) no se toca.
+    // tipoRelacion no es obligatorio en el alta (el alta rápida no lo
+    // pide); sí lo es al cambiar de Empresa (empresaRecursoService).
 
     this._validarTipo(tipo);
-
-    await this._validarEmpresaActiva(empresaId);
+    await empresaRecursoService.validarEmpresa(empresaId, actor);
+    const patenteFinal = await this._validarPatente(patente, {
+      confirmado: payload.confirmarPatenteDuplicada, actor,
+    });
 
     const estadoFinal = estado || "activo";
     if (!ESTADOS_VALIDOS.includes(estadoFinal)) {
@@ -180,24 +277,29 @@ class RecursoService {
     const nuevoRecurso = {
       nombre: nombre.trim(),
       tipo: tipo.trim(),
-      empresaId,
-      empresaActivaId: empresaId,
       estado: estadoFinal,
-      patente: patente ? patente.trim() : null,
+      patente: patenteFinal,
       marca: marca ? marca.trim() : null,
       modelo: modelo ? modelo.trim() : null,
       anio: anio ? Number(anio) : null,
     };
 
-    const creado = await recursoRepository.create(nuevoRecurso);
-
-    // Si la validación de campos de la relación falla acá, el Recurso ya
-    // quedó creado (mismo trade-off aceptado en personaService para
-    // operaciones no-transaccionales de dos pasos) — se propaga el error
-    // igual para que el cliente sepa que algo quedó incompleto.
-    await relacionRecursoService.crearRelacionInicial(creado.id, {
-      empresaId, tipoRelacion, fechaInicio,
+    // Recurso + relación inicial con la Empresa (empresaRecursos) en UNA
+    // transacción.
+    const fechaInicioDate = fechaInicio ? new Date(fechaInicio) : new Date();
+    if (isNaN(fechaInicioDate.getTime())) {
+      throw new AppError(400, "fechaInicio no es una fecha válida.");
+    }
+    const refRecurso = db.collection(recursoRepository.COLLECTION).doc();
+    const relacion = empresaRecursoService.prepararAlta(
+        refRecurso.id, empresaId,
+        empresaRecursoService.camposRelacion(payload, false), fechaInicioDate,
+    );
+    await db.runTransaction(async (tx) => {
+      tx.set(refRecurso, recursoRepository.datosAlta(nuevoRecurso));
+      tx.set(relacion.ref, relacion.data);
     });
+    const creado = {id: refRecurso.id, ...nuevoRecurso};
 
     // Recurso es catálogo global (sin mandanteId) — mismo criterio que
     // Persona/Requerimiento: el evento queda registrado igual, aunque los
@@ -217,24 +319,19 @@ class RecursoService {
 
   /**
    * Actualiza los campos editables de identidad de un recurso existente.
-   * `empresaId`/`empresaActivaId` quedan deliberadamente fuera de
-   * `allowedFields`: el vínculo con una Empresa ya NO se edita acá —
-   * solo a través de relacionRecursoService.cambiarEmpresa (RN-122).
+   * La Empresa no se edita acá: vive en empresaRecursos (cambiar empresa /
+   * terminar relación en empresaRecursoService).
    * @param {string} id ID del recurso.
    * @param {Object} payload Campos a actualizar.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
    * @return {Promise<Object|null>} El recurso actualizado.
    */
   async actualizarRecurso(id, payload, actor) {
-    const existente = await this.getRecursoById(id);
+    const existente = await this.getRecursoById(id, actor);
 
-    // La Empresa no puede cambiarse directamente por este método — se
-    // rechaza explícito (en vez de ignorarlo silenciosamente) para no
-    // confundir a quien todavía no sepa del nuevo flujo.
-    if (
-      payload.empresaId !== undefined &&
-      payload.empresaId !== existente.empresaId
-    ) {
+    // La Empresa no se cambia por este método: vive en empresaRecursos
+    // (Cambiar Empresa / Terminar relación).
+    if (payload.empresaId !== undefined) {
       throw new AppError(
           400,
           "Para cambiar la Empresa de un Recurso, use 'Cambiar Empresa'.",
@@ -262,8 +359,13 @@ class RecursoService {
 
     if (updateData.nombre) updateData.nombre = updateData.nombre.trim();
     if (updateData.patente !== undefined) {
-      updateData.patente = updateData.patente ?
-          updateData.patente.trim() : null;
+      const cambia = (updateData.patente || "").trim().toUpperCase() !==
+          (existente.patente || "");
+      updateData.patente = cambia ?
+        await this._validarPatente(updateData.patente, {
+          excluirId: id, confirmado: payload.confirmarPatenteDuplicada, actor,
+        }) :
+        existente.patente;
     }
     if (updateData.marca !== undefined) {
       updateData.marca = updateData.marca ? updateData.marca.trim() : null;
@@ -339,7 +441,7 @@ class RecursoService {
    * @return {Promise<Object[]>} Eventos, más reciente primero.
    */
   async obtenerEventos(id, actor, {limit} = {}) {
-    await this.getRecursoById(id); // Verifica existencia
+    await this.getRecursoById(id, actor); // Existencia y alcance
 
     const documentos =
         await participacionRecursoRepository.list({recursoId: id});

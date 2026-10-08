@@ -16,6 +16,7 @@ import { PasoAsignaciones } from "./wizard/PasoAsignaciones";
 import { PasoRequerimientos } from "./wizard/PasoRequerimientos";
 import { PasoResumen } from "./wizard/PasoResumen";
 import { ResumenAcreditacionPanel } from "../../components/shared/ResumenAcreditacionPanel";
+import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
 
 // `id` es el identificador interno y fijo de cada paso (lo usan `step`, los "Editar" del resumen y
 // el estado guardado). El número que ve el usuario es la posición dentro de los pasos VISIBLES: para
@@ -44,16 +45,23 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 // bajo una sola clave global: solo tiene sentido un flujo de "Nueva
 // Acreditación" a la vez por pestaña.
 //
-// v2: con el paso Mandante los ids de paso cambiaron (Empresa pasó de 1 a 2, etc.) y el Mandante
-// es obligatorio, así que un borrador de la versión anterior (clave sin sufijo) se descarta en vez
-// de reinterpretarse: no tiene Mandante y su `step` apuntaría a otro paso.
-const STORAGE_KEY = "smartone.nuevaAcreditacionWizard.v2";
-const STORAGE_KEY_ANTERIOR = "smartone.nuevaAcreditacionWizard";
+// Versionado del borrador: cada cambio de forma del estado guardado sube BORRADOR_VERSION (y la
+// clave). Un borrador de otra versión se descarta en vez de reinterpretarse.
+//  - v2: paso Mandante (los ids de paso cambiaron y el Mandante es obligatorio).
+//  - v3: relaciones de Empresa (bloque 3): la Empresa del paso 2 sale de las asociadas al
+//    Mandante y Personas/Maquinarias ya no traen empresaId propio.
+const BORRADOR_VERSION = 3;
+const STORAGE_KEY = `smartone.nuevaAcreditacionWizard.v${BORRADOR_VERSION}`;
+const STORAGE_KEYS_ANTERIORES = [
+  "smartone.nuevaAcreditacionWizard",
+  "smartone.nuevaAcreditacionWizard.v2",
+];
 
 const leerEstadoGuardado = () => {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const guardado = raw ? JSON.parse(raw) : null;
+    return guardado?.version === BORRADOR_VERSION ? guardado : null;
   } catch {
     return null;
   }
@@ -157,6 +165,8 @@ export const AcreditacionWizardPage = () => {
   const [ejecutando, setEjecutando] = useState(false);
   const [progreso, setProgreso] = useState(() => leerBorradorValido(mandanteFijo)?.progreso || null); // {participacionId, sujetosListo, expedienteId}
   const [errorEjecucion, setErrorEjecucion] = useState(null); // {paso, mensaje}
+  // Asignaciones vigentes que se finalizarán al mover Personas/Maquinarias (pendiente de confirmar).
+  const [confirmacionMovimiento, setConfirmacionMovimiento] = useState(null); // {afectados}
 
   // Persiste el avance en cada cambio — así una navegación a otra
   // pantalla (p.ej. crear una Persona desde su propio formulario
@@ -168,6 +178,7 @@ export const AcreditacionWizardPage = () => {
   useEffect(() => {
     try {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: BORRADOR_VERSION,
         step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido,
         seleccion, fechaInicio, previewRequerimientos, progreso,
       }));
@@ -177,10 +188,10 @@ export const AcreditacionWizardPage = () => {
     }
   }, [step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido, seleccion, fechaInicio, previewRequerimientos, progreso]);
 
-  // Borrador de la versión anterior del wizard (sin paso Mandante): se descarta, ver STORAGE_KEY.
+  // Borradores de versiones anteriores del wizard: se descartan, ver BORRADOR_VERSION.
   useEffect(() => {
     try {
-      sessionStorage.removeItem(STORAGE_KEY_ANTERIOR);
+      STORAGE_KEYS_ANTERIORES.forEach((clave) => sessionStorage.removeItem(clave));
     } catch {
       // sessionStorage no disponible — nada que limpiar.
     }
@@ -321,19 +332,20 @@ export const AcreditacionWizardPage = () => {
     setErrorEjecucion(null);
   };
 
-  // Paso 1. Cambiar de Mandante con avance posterior pide confirmación y limpia Proyecto, Perfil,
-  // Personas y Maquinarias y Requerimientos (todos dependen del Mandante). La Empresa se conserva:
-  // es un catálogo global (RN-021), sigue siendo válida para cualquier Mandante.
+  // Paso 1. Cambiar de Mandante con avance posterior pide confirmación y limpia Empresa, Proyecto,
+  // Perfil, Personas y Maquinarias y Requerimientos (todos dependen del Mandante: la Empresa debe
+  // estar asociada a él, empresaMandantes).
   const handleSeleccionarMandante = (mandante) => {
     if (!mandante || mandante.id === mandanteIdWizard) return;
-    const hayAvance = Boolean(proyectoSel || perfilSel || seleccion.length > 0 || previewRequerimientos);
+    const hayAvance = Boolean(empresaSel || proyectoSel || perfilSel || seleccion.length > 0 || previewRequerimientos);
     if (mandanteIdWizard && hayAvance && !window.confirm(
-      "¿Cambiar de Mandante? Se limpiarán el Proyecto, el Perfil, las Personas y Maquinarias y los " +
-      "Requerimientos ya elegidos. La Empresa se conserva.",
+      "¿Cambiar de Mandante? Se limpiarán la Empresa, el Proyecto, el Perfil, las Personas y " +
+      "Maquinarias y los Requerimientos ya elegidos.",
     )) {
       return;
     }
     setMandanteIdWizard(mandante.id);
+    setEmpresaSel(null);
     setProyectoSel(null);
     setPerfilSel(null);
     setPerfilFijo(false);
@@ -387,9 +399,12 @@ export const AcreditacionWizardPage = () => {
     // El Mandante NO se toca: se eligió en el Paso 1 y es independiente de la Empresa.
   };
 
-  const ejecutarAcreditacion = async () => {
+  // `confirmado`: el usuario ya aceptó la lista de asignaciones que se finalizarán al mover
+  // Personas/Maquinarias desde otros Proyectos (409 CONFIRMACION_REQUERIDA, ver más abajo).
+  const ejecutarAcreditacion = async (confirmado = false) => {
     setEjecutando(true);
     setErrorEjecucion(null);
+    setConfirmacionMovimiento(null);
 
     let participacionId = progreso?.participacionId || null;
 
@@ -440,6 +455,7 @@ export const AcreditacionWizardPage = () => {
             empresaId: empresaSel.id,
             perfilRecursoIds: item.perfilRecursoIds,
             fechaInicio,
+            confirmado,
           }),
         ),
       );
@@ -447,6 +463,18 @@ export const AcreditacionWizardPage = () => {
       const fallidas = resultados
         .map((r, i) => ({ r, item: seleccion[i] }))
         .filter(({ r }) => r.status === "rejected");
+
+      // Solo faltan confirmaciones de movimiento: se muestran los afectados (nombre, Empresa
+      // actual, Proyecto) y se reintenta con confirmado: true. Las exitosas no se repiten.
+      if (fallidas.length > 0 && fallidas.every(({ r }) => r.reason?.codigo === "CONFIRMACION_REQUERIDA")) {
+        setSeleccion(fallidas.map(({ item }) => item));
+        setProgreso({ participacionId });
+        setConfirmacionMovimiento({
+          afectados: fallidas.flatMap(({ r }) => r.reason?.detalle?.afectados || []),
+        });
+        setEjecutando(false);
+        return;
+      }
 
       if (fallidas.length > 0) {
         const exitosas = resultados
@@ -538,6 +566,7 @@ export const AcreditacionWizardPage = () => {
         )}
         {step === 2 && (
           <PasoEmpresa
+            mandanteId={mandanteEfectivo}
             empresaId={empresaSel?.id}
             onSeleccionar={handleSeleccionarEmpresa}
           />
@@ -594,7 +623,7 @@ export const AcreditacionWizardPage = () => {
             ejecutando={ejecutando}
             progreso={progreso}
             errorEjecucion={errorEjecucion}
-            onConfirmar={ejecutarAcreditacion}
+            onConfirmar={() => ejecutarAcreditacion(false)}
             requisitosPerfil={requisitosPerfil}
             onIrAPaso={setStep}
             motivoBloqueo={motivoBloqueo}
@@ -672,6 +701,22 @@ export const AcreditacionWizardPage = () => {
         proyectoActualId={proyectoSel?.id}
       />
       </div>
+      {confirmacionMovimiento && (
+        <ConfirmacionModal
+          peligro
+          titulo="Se finalizarán asignaciones vigentes"
+          mensaje={`Para asignarlas a ${proyectoSel?.nombre || "este Proyecto"}, las siguientes personas/maquinarias dejarán sus asignaciones actuales. La Participación ya quedó creada; confirme para continuar.`}
+          items={confirmacionMovimiento.afectados.map((a) => ({
+            key: `${a.tipo}-${a.id}-${a.proyectoId}`,
+            principal: a.nombre,
+            secundario: `Empresa actual: ${a.empresaNombre || "—"} · Proyecto: ${a.proyectoNombre || "—"}`,
+          }))}
+          textoConfirmar="Confirmar y continuar"
+          ocupado={ejecutando}
+          onCancelar={() => setConfirmacionMovimiento(null)}
+          onConfirmar={() => ejecutarAcreditacion(true)}
+        />
+      )}
     </div>
   );
 };

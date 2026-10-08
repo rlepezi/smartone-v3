@@ -48,4 +48,22 @@ export const recursoService = {
     const res = await apiClient(`/recursos/${id}/eventos-recientes${query}`);
     return res.data;
   },
+
+  // Relación con Empresas (empresaPersonas / empresaRecursos): historial visible, cambiar de
+  // empresa y terminar la relación. Si hay asignaciones activas afectadas, el backend responde
+  // 409 CONFIRMACION_REQUERIDA (error.detalle.asignaciones) hasta reenviar con confirmado: true.
+  async listarRelaciones(id) {
+    const res = await apiClient(`/recursos/${id}/relaciones`);
+    return res.data;
+  },
+
+  async cambiarEmpresa(id, payload) {
+    const res = await apiClient(`/recursos/${id}/cambiar-empresa`, { method: "POST", body: payload });
+    return res.data;
+  },
+
+  async terminarRelacion(id, payload = {}) {
+    const res = await apiClient(`/recursos/${id}/terminar-relacion`, { method: "POST", body: payload });
+    return res.data;
+  },
 };

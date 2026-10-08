@@ -267,7 +267,7 @@ export const PersonasListPage = () => {
       (resumenesMap[persona.id]?.participacionesActivas || []).map((a) => a.proyectoId),
     );
     return expedientesTodos.filter(
-      (e) => e.empresaId === persona.empresaId && proyectosAsignados.has(e.proyectoId),
+      (e) => e.empresaId === persona.empresaActual?.empresaId && proyectosAsignados.has(e.proyectoId),
     );
   };
 
@@ -319,8 +319,8 @@ export const PersonasListPage = () => {
       p.nombre?.toLowerCase().includes(term) ||
       p.apellido?.toLowerCase().includes(term) ||
       p.rut?.toLowerCase().includes(term) ||
-      (empresasMap[p.empresaId] || "").toLowerCase().includes(term);
-    const matchEmpresa = !filtroEmpresa || p.empresaId === filtroEmpresa;
+      (p.empresaActual?.empresaNombre || "").toLowerCase().includes(term);
+    const matchEmpresa = !filtroEmpresa || p.empresaActual?.empresaId === filtroEmpresa;
     return matchTerm && matchEmpresa && calzaParticipaciones(p);
   });
 
@@ -518,10 +518,10 @@ export const PersonasListPage = () => {
                 ))}
               </td>
               <td className="py-4 px-6 text-slate-600 font-medium">
-                {empresasMap[item.empresaId] || item.empresaId}
+                {item.empresaActual?.empresaNombre || <span className="text-slate-400 italic">-</span>}
               </td>
               <td className="py-4 px-6 text-slate-600 font-medium">
-                {item.cargoActivo || <span className="text-slate-400 italic">-</span>}
+                {item.empresaActual?.cargo || <span className="text-slate-400 italic">-</span>}
               </td>
               <td className="py-2 px-6">
                 {lineas((pt) => <p className="text-xs font-bold text-carbon-dark">{pt.proyectoNombre}</p>, "Sin asignación activa")}
@@ -575,7 +575,7 @@ export const PersonasListPage = () => {
         } : null}
         infoGeneral={personaSeleccionada ? [
           { label: "RUT", value: formatRutDisplay(personaSeleccionada.rut) },
-          { label: "Empresa", value: empresasMap[personaSeleccionada.empresaId] || personaSeleccionada.empresaId },
+          { label: "Empresa", value: personaSeleccionada.empresaActual?.empresaNombre || "-" },
           { label: "Estado", value: personaSeleccionada.estado === "activo" ? "Activo" : "Inactivo" },
         ] : []}
         metricas={personaSeleccionada ? [
@@ -647,7 +647,7 @@ export const PersonasListPage = () => {
       {personaCambiandoEmpresa && (
         <CambiarEmpresaModal
           personaId={personaCambiandoEmpresa.id}
-          empresaActualNombre={empresasMap[personaCambiandoEmpresa.empresaId] || ""}
+          empresaActualNombre={personaCambiandoEmpresa.empresaActual?.empresaNombre || ""}
           onCambiado={() => { setPersonaCambiandoEmpresa(null); recargarTrasCambio(); }}
           onCerrar={() => setPersonaCambiandoEmpresa(null)}
         />

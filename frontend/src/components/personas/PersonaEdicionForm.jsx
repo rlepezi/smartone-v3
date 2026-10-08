@@ -6,8 +6,7 @@ import { empresaService } from "../../services/empresaService";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
-import { useSugerenciasPerfilRecurso } from "../../hooks/useSugerenciasPerfilRecurso";
-import { useMandantesDeEmpresa } from "../../hooks/useMandantesDeEmpresa";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import {
   SUGERENCIAS_TIPO_RELACION_PERSONA, SUGERENCIAS_TIPO_CONTRATO, SUGERENCIAS_JORNADA,
 } from "../../utils/sugerenciasRelacionLaboral";
@@ -33,6 +32,8 @@ export const PersonaEdicionForm = ({
   const { profile } = useAuth();
   const esEdicion = Boolean(id);
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
+  // La identificación no se edita después de creada, salvo superadmin.
+  const rutEditable = !esEdicion || profile?.rol === "superadmin";
 
   const [formData, setFormData] = useState({
     rut: "",
@@ -69,8 +70,11 @@ export const PersonaEdicionForm = ({
   const [cambiarEmpresaAbierto, setCambiarEmpresaAbierto] = useState(false);
   const [cambiarProyectoAbierto, setCambiarProyectoAbierto] = useState(false);
 
-  // Cargo = catálogo Perfil de Recurso (persona) del Mandante de la Empresa elegida: sin Empresa, sin sugerencias.
-  const sugerenciasCargo = useSugerenciasPerfilRecurso(useMandantesDeEmpresa(formData.empresaId), "persona");
+  // Identificación ya registrada (409 IDENTIFICACION_EXISTENTE): se muestra esa Persona y se ofrece
+  // crearle la relación con la Empresa elegida en vez de duplicarla. Si su relación actual tiene
+  // asignaciones activas, el backend pide además confirmar cuáles se finalizarán.
+  const [personaExistente, setPersonaExistente] = useState(null); // {personaId, nombre, apellido, identificacion, asignaciones?, mensaje?}
+  const [relacionando, setRelacionando] = useState(false);
 
   const elegirCampo = (name, value) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -96,11 +100,8 @@ export const PersonaEdicionForm = ({
           apellido: data.apellido || "",
           estado: data.estado || "activo",
         }));
-        if (data.empresaActivaId) {
-          empresaService.obtenerPorId(data.empresaActivaId)
-            .then((empresa) => setEmpresaActualNombre(empresa?.razonSocial || null))
-            .catch(() => setEmpresaActualNombre(null));
-        }
+        // Empresa actual: la de su relación activa (null si es de una empresa fuera del alcance).
+        setEmpresaActualNombre(data.empresaActual?.empresaNombre || null);
       })
       .catch((err) => setServerError(err.message || "No se pudo cargar la persona."))
       .finally(() => setCargandoRegistro(false));
@@ -135,12 +136,14 @@ export const PersonaEdicionForm = ({
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
     if (!formData.apellido.trim()) newErrors.apellido = "El apellido es obligatorio.";
-    if (!esEdicion) {
+    if (rutEditable) {
       if (!formData.rut.trim()) {
         newErrors.rut = "El RUT es obligatorio.";
       } else if (!validateRut(formData.rut)) {
         newErrors.rut = "El RUT ingresado no es válido.";
       }
+    }
+    if (!esEdicion) {
       if (!formData.empresaId) {
         newErrors.empresaId = "Debe seleccionar una Empresa.";
       }
@@ -148,7 +151,7 @@ export const PersonaEdicionForm = ({
         newErrors.tipoRelacion = "El tipo de relación es obligatorio.";
       }
       if (!formData.cargo.trim()) {
-        newErrors.cargo = "La función es obligatoria.";
+        newErrors.cargo = "El cargo es obligatorio.";
       }
       if (!formData.tipoContrato.trim()) {
         newErrors.tipoContrato = "El tipo de contrato es obligatorio.";
@@ -174,6 +177,7 @@ export const PersonaEdicionForm = ({
           nombre: formData.nombre.trim(),
           apellido: formData.apellido.trim(),
           estado: formData.estado,
+          ...(rutEditable ? { rut: cleanRut(formData.rut) } : {}),
         };
         await personaService.actualizar(id, payload);
         onGuardado?.();
@@ -194,20 +198,53 @@ export const PersonaEdicionForm = ({
         onGuardado?.();
       }
     } catch (err) {
-      setServerError(err.message);
+      if (err.codigo === "IDENTIFICACION_EXISTENTE") {
+        setPersonaExistente(err.detalle || {});
+      } else {
+        setServerError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  // Crea la relación de la Persona existente con la Empresa elegida (empresaPersonas). Si tenía
+  // otra relación activa, esta se termina (cambio de empresa, con historial).
+  const relacionarExistente = async (confirmado) => {
+    setRelacionando(true);
+    try {
+      await personaService.cambiarEmpresa(personaExistente.personaId, {
+        empresaId: formData.empresaId,
+        tipoRelacion: formData.tipoRelacion.trim(),
+        cargo: formData.cargo.trim(),
+        tipoContrato: formData.tipoContrato.trim(),
+        jornada: formData.jornada.trim() || null,
+        fechaInicio: formData.fechaInicio,
+        confirmado,
+      });
+      setPersonaExistente(null);
+      onGuardado?.();
+    } catch (err) {
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setPersonaExistente((prev) => ({ ...prev, asignaciones: err.detalle?.asignaciones || [], mensaje: err.message }));
+      } else {
+        setPersonaExistente(null);
+        setServerError(err.message || "No se pudo crear la relación con la Empresa.");
+      }
+    } finally {
+      setRelacionando(false);
+    }
+  };
+
+  const nombreEmpresaElegida = empresasOpciones.find((e) => e.id === formData.empresaId)?.razonSocial || "la Empresa elegida";
+  const nombrePersonaExistente = personaExistente
+    ? `${personaExistente.nombre || ""} ${personaExistente.apellido || ""}`.trim() || "Una Persona"
+    : "";
+
   const handleEmpresaCambiada = () => {
     setCambiarEmpresaAbierto(false);
     personaService.obtenerPorId(id)
-      .then((data) => {
-        if (!data.empresaActivaId) return;
-        return empresaService.obtenerPorId(data.empresaActivaId)
-          .then((empresa) => setEmpresaActualNombre(empresa?.razonSocial || null));
-      })
+      .then((data) => setEmpresaActualNombre(data.empresaActual?.empresaNombre || null))
       .catch((err) => console.error("Error al recargar la empresa actual:", err));
   };
 
@@ -263,6 +300,38 @@ export const PersonaEdicionForm = ({
       )}
 
       <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+        {/* Empresa: primer campo al crear (la Persona se crea junto con su relación laboral). */}
+        {!esEdicion && (
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+              <Building2 className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Empresa</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
+                <SelectConBusqueda
+                  bloque
+                  conAvatar
+                  invalido={Boolean(errors.empresaId)}
+                  disabled={!puedeEscribir}
+                  value={formData.empresaId}
+                  onChange={(v) => elegirCampo("empresaId", v)}
+                  textoVacio="Seleccione una Empresa..."
+                  placeholder="Buscar por nombre o RUT..."
+                  options={[
+                    { value: "", label: "Seleccione una Empresa..." },
+                    ...empresasOpciones.map((e) => ({
+                      value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
+                    })),
+                  ]}
+                />
+                {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
             <Users className="w-4 h-4 text-primary" />
@@ -304,7 +373,7 @@ export const PersonaEdicionForm = ({
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">RUT *</label>
-              {esEdicion ? (
+              {!rutEditable ? (
                 <>
                   <input
                     type="text"
@@ -391,27 +460,6 @@ export const PersonaEdicionForm = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
-                <SelectConBusqueda
-                  bloque
-                  conAvatar
-                  invalido={Boolean(errors.empresaId)}
-                  disabled={!puedeEscribir}
-                  value={formData.empresaId}
-                  onChange={(v) => elegirCampo("empresaId", v)}
-                  textoVacio="Seleccione una Empresa..."
-                  placeholder="Buscar por nombre o RUT..."
-                  options={[
-                    { value: "", label: "Seleccione una Empresa..." },
-                    ...empresasOpciones.map((e) => ({
-                      value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
-                    })),
-                  ]}
-                />
-                {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Relación *</label>
                 <input
@@ -430,7 +478,7 @@ export const PersonaEdicionForm = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Función *</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Cargo *</label>
                 <input
                   type="text"
                   name="cargo"
@@ -443,7 +491,6 @@ export const PersonaEdicionForm = ({
                   }`}
                 />
                 {errors.cargo && <p className="text-xs text-red-500 mt-1">{errors.cargo}</p>}
-                {puedeEscribir && <SugerenciasChips opciones={sugerenciasCargo} valor={formData.cargo} onElegir={(v) => elegirCampo("cargo", v)} />}
               </div>
 
               <div>
@@ -516,6 +563,30 @@ export const PersonaEdicionForm = ({
         </div>
         )}
       </form>
+
+      {personaExistente && !personaExistente.asignaciones && (
+        <ConfirmacionModal
+          titulo="Esta Persona ya está registrada"
+          mensaje={`${nombrePersonaExistente} (${personaExistente.identificacion?.tipo || "RUT"} ${personaExistente.identificacion?.tipo === "RUT" ? formatRutDisplay(personaExistente.identificacion.numero || "") : personaExistente.identificacion?.numero || ""}) ya existe. Puede crearle la relación con ${nombreEmpresaElegida} usando los datos de relación laboral de este formulario, en vez de duplicarla. Si tiene otra relación vigente, esta se terminará y quedará en su historial.`}
+          textoConfirmar="Crear relación con la Empresa"
+          ocupado={relacionando}
+          onCancelar={() => setPersonaExistente(null)}
+          onConfirmar={() => relacionarExistente(false)}
+        />
+      )}
+
+      {personaExistente?.asignaciones && (
+        <ConfirmacionModal
+          peligro
+          titulo={(personaExistente?.asignaciones?.length || 0) > 0 ? "Se finalizarán asignaciones activas" : "Se terminará la relación vigente"}
+          mensaje={personaExistente.mensaje}
+          items={personaExistente.asignaciones.map((a) => ({ key: a.participacionId, principal: a.proyectoNombre }))}
+          textoConfirmar={(personaExistente?.asignaciones?.length || 0) > 0 ? "Cambiar de empresa y finalizarlas" : "Cambiar de empresa"}
+          ocupado={relacionando}
+          onCancelar={() => setPersonaExistente(null)}
+          onConfirmar={() => relacionarExistente(true)}
+        />
+      )}
 
       {cambiarEmpresaAbierto && (
         <CambiarEmpresaModal

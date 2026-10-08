@@ -3,7 +3,6 @@ import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl } 
 import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { recursoService } from "../services/recursoService";
-import { empresasApi } from "../api/empresas";
 import { proyectosApi } from "../api/proyectos";
 import { colors } from "../theme/colors";
 import { spacing, radius } from "../theme/spacing";
@@ -43,11 +42,6 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
 
   const base = useAsync(() => recursoService.obtener(recursoId), [recursoId]);
 
-  const empresaActual = useAsync(async () => {
-    if (!base.data?.empresaId) return null;
-    return empresasApi.obtener(base.data.empresaId);
-  }, [base.data?.empresaId]);
-
   // recursoController no expone /:id/resumen (ver auditoría Fase A): las
   // participaciones activas se resuelven acá contra /participacion-recursos.
   const asignaciones = useAsync(async () => {
@@ -67,7 +61,7 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
         mandanteId, recursoId, asignacionActiva.empresaId, asignacionActiva.proyectoId,
         asignacionActiva.perfilRecursoIds,
     );
-  }, [asignacionActiva?.proyectoId, mandanteId]);
+  }, [asignacionActiva?.participacionId, mandanteId]);
 
   const avance = useMemo(
       () => calcularAvance(detalle.data?.filas || []),
@@ -87,6 +81,8 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
   if (!base.data) return null;
 
   const recurso = base.data;
+  // Relación activa con su Empresa (null si no tiene, o si es con una Empresa fuera del alcance).
+  const empresaActual = recurso.empresaActual;
 
   return (
     <View style={styles.screen}>
@@ -107,7 +103,7 @@ export default function DetalleMaquinariaScreen({ route, navigation }) {
       >
         <SectionCard title="Empresa actual">
           <Text style={[typography.body, { color: colors.ink }]}>
-            {empresaActual.data?.razonSocial || "—"}
+            {empresaActual?.empresaNombre || "—"}
           </Text>
         </SectionCard>
 

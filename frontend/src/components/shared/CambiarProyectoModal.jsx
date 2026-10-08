@@ -4,6 +4,7 @@ import { acreditacionService } from "../../services/acreditacionService";
 import { proyectoService } from "../../services/proyectoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
+import { ConfirmacionModal } from "./ConfirmacionModal";
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
 
@@ -33,6 +34,8 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
   const [guardando, setGuardando] = useState(false);
   const [serverError, setServerError] = useState(null);
   const [resultado, setResultado] = useState(null);
+  // 409 CONFIRMACION_REQUERIDA: asignaciones que se finalizarán, pendientes de confirmar.
+  const [afectados, setAfectados] = useState(null);
 
   useEffect(() => {
     proyectoService.listar({})
@@ -79,10 +82,7 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setServerError(null);
-    if (!validar()) return;
+  const enviar = async (confirmado) => {
     setGuardando(true);
     try {
       const payload = {
@@ -90,17 +90,31 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
         perfilParticipacionId: formData.perfilParticipacionId || undefined,
         perfilRecursoIds: formData.perfilRecursoIds,
         fechaInicio: formData.fechaInicio,
+        confirmado,
       };
       const data = esPersona ?
         await acreditacionService.cambiarProyectoPersona(entidadId, payload) :
         await acreditacionService.cambiarProyectoRecurso(entidadId, payload);
+      setAfectados(null);
       setResultado(data);
     } catch (err) {
-      console.error("Error al cambiar el Proyecto:", err);
-      setServerError(err.message || "No se pudo cambiar el Proyecto.");
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setAfectados(err.detalle?.afectados || []);
+      } else {
+        console.error("Error al cambiar el Proyecto:", err);
+        setAfectados(null);
+        setServerError(err.message || "No se pudo cambiar el Proyecto.");
+      }
     } finally {
       setGuardando(false);
     }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError(null);
+    if (!validar()) return;
+    await enviar(false);
   };
 
   const etiquetaEntidad = esPersona ? "esta Persona" : "esta Maquinaria";
@@ -279,6 +293,22 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
           </div>
         </form>
       </div>
+      {afectados && (
+        <ConfirmacionModal
+          peligro
+          titulo="Se finalizarán asignaciones vigentes"
+          mensaje={`Para continuar con ${proyectoSeleccionado?.nombre || "el Proyecto destino"} se finalizarán las siguientes asignaciones. Revise la lista y confirme.`}
+          items={afectados.map((a) => ({
+            key: `${a.tipo}-${a.id}-${a.proyectoId}`,
+            principal: a.nombre,
+            secundario: `Empresa actual: ${a.empresaNombre || "—"} · Proyecto: ${a.proyectoNombre || "—"}`,
+          }))}
+          textoConfirmar="Confirmar cambio"
+          ocupado={guardando}
+          onCancelar={() => setAfectados(null)}
+          onConfirmar={() => enviar(true)}
+        />
+      )}
     </div>
   );
 };

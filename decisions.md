@@ -43,6 +43,8 @@ Colección raíz: `asignaciones`
 
 ## Entidad 17 — RelaciónLaboral (Persona ↔ Empresa)
 
+> **Reemplazada por el Bloque 3** (ver "Relaciones de Empresa" al final): la colección `relacionesLaborales` y los campos denormalizados en el documento ya no existen.
+
 **Agregada:** ver spec "Corrección Pantalla Detalle/Editar Persona".
 
 **Motivo:** separar la relación LABORAL de una Persona con una Empresa
@@ -222,6 +224,8 @@ pedidas, para mantener el alcance acotado).
 ---
 
 ## Entidad 19 — RelaciónRecurso (Empresa ↔ Recurso)
+
+> **Reemplazada por el Bloque 3** (ver "Relaciones de Empresa" al final): la colección `relacionesRecurso` y los campos denormalizados en el documento ya no existen.
 
 **Agregada:** cierre del mismo gap que ya se había resuelto para Persona
 (entidad 17) pero que quedó pendiente para Recurso — `recursoService.
@@ -541,3 +545,26 @@ Cumple" el Expediente está en `con_observaciones` y sale solo al corregir el
 > evaluación verificada presencialmente/verbalmente, con `metodoVerificacion`
 > y justificación obligatoria en su lugar. Estado de Expediente pasa de manual
 > a derivado/calculado en base al estado real de las evaluaciones.
+
+## Bloque 3 — Relaciones de Empresa (empresaPersonas, empresaRecursos, empresaMandantes)
+
+- **empresaPersonas** {empresaId, personaId, tipoRelacion, cargo, tipoContrato, jornada,
+  fechaInicio, fechaTermino, estado} y **empresaRecursos** {empresaId, recursoId, tipoRelacion,
+  fechaInicio, fechaTermino, estado} son la única fuente de la Empresa actual (y del cargo actual
+  de la Persona). Persona y Recurso ya no guardan empresa ni cargo. Una sola relación activa por
+  sujeto; terminar fija `fechaTermino` y `estado: "finalizada"`, sin borrado (historial).
+- **empresaMandantes** {empresaId, mandanteId, estado}: un único documento por par (id
+  determinístico); desasociar lo deja `inactivo`. Crear una Participación exige el vínculo activo;
+  no se desasocia con Participaciones activas en Proyectos de ese Mandante.
+- **empresasRut** (RUT → empresaId) se escribe en la misma transacción que la Empresa: dos altas
+  simultáneas con el mismo RUT no pueden tener éxito ambas. RUT existente → 409 `RUT_EXISTENTE` y
+  se ofrece asociar la Empresa existente.
+- Alcance: superadmin y evaluador ven todo; los roles de Mandante ven las Empresas asociadas a su
+  Mandante y las Personas/Recursos con cualquier relación (vigente o histórica) con ellas, y en el
+  detalle solo las relaciones con Empresas de su alcance. admin_comercial: Empresas y
+  empresaMandantes; sin acceso a Personas ni Recursos.
+- Asignar a una Participación exige relación activa con su Empresa. Terminar/cambiar una relación
+  con asignaciones activas pide confirmación (409 `CONFIRMACION_REQUERIDA`) y luego las finaliza;
+  un rol de Mandante no puede hacerlo si alguna es de otro Mandante (403 `FUERA_DE_ALCANCE`, sin
+  revelar datos).
+- Patente de Maquinaria obligatoria y no única (aviso `PATENTE_DUPLICADA` con confirmación).

@@ -56,8 +56,8 @@ const CONFIG = {
     colClasificacion: "Función",
     nombre: (i) => `${i.nombre} ${i.apellido || ""}`.trim(),
     secundario: (i) => (i.rut ? formatRutDisplay(i.rut) : ""),
-    clasificacion: (i) => i.cargoActivo || "",
-    textoBusqueda: (i) => `${i.nombre} ${i.apellido || ""} ${i.rut || ""} ${i.cargoActivo || ""}`,
+    clasificacion: (i) => i.empresaActual?.cargo || "",
+    textoBusqueda: (i) => `${i.nombre} ${i.apellido || ""} ${i.rut || ""} ${i.empresaActual?.cargo || ""}`,
     etiquetaFiltroClasificacion: "Función",
   },
   recurso: {

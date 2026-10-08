@@ -17,6 +17,7 @@ import { PasoParticipacionFechas } from "./wizard-reemplazo/PasoParticipacionFec
 import { PasoRequerimientosPreview } from "./wizard-reemplazo/PasoRequerimientosPreview";
 import { PasoConfirmacionReemplazo } from "./wizard-reemplazo/PasoConfirmacionReemplazo";
 import { ResumenReemplazoPanel } from "../../components/acreditaciones/ResumenReemplazoPanel";
+import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
 
@@ -103,6 +104,9 @@ export const ReemplazarAcreditacionWizardPage = () => {
   const [ejecutando, setEjecutando] = useState(false);
   const [error, setError] = useState(null);
   const [resultado, setResultado] = useState(null);
+  // Asignaciones vigentes que se finalizarán (409 CONFIRMACION_REQUERIDA): se listan con la
+  // Empresa actual y se pide confirmación explícita antes de reenviar con confirmado: true.
+  const [afectados, setAfectados] = useState(null);
 
   const mandanteEfectivo = esSuperAdmin ? mandanteIdWizard : profile?.mandanteId;
   const mandanteId = proyectoSel?.mandanteId || mandanteEfectivo;
@@ -120,13 +124,13 @@ export const ReemplazarAcreditacionWizardPage = () => {
           const p = await personaService.obtenerPorId(entidadIdPrefiltrado);
           setEntidadSel({
             id: p.id, nombre: `${p.nombre} ${p.apellido}`.trim(), rut: p.rut,
-            cargo: p.cargoActivo, empresaId: p.empresaId, estado: p.estado,
+            cargo: p.empresaActual?.cargo || null, empresaId: p.empresaActual?.empresaId || null, estado: p.estado,
           });
         } else if (entidadTipoInicial === "maquinaria") {
           const r = await recursoService.obtenerPorId(entidadIdPrefiltrado);
           setEntidadSel({
             id: r.id, nombre: r.nombre, rut: r.patente,
-            cargo: r.tipo, empresaId: r.empresaId, estado: r.estado,
+            cargo: r.tipo, empresaId: r.empresaActual?.empresaId || null, estado: r.estado,
           });
         } else {
           const e = await empresaService.obtenerPorId(entidadIdPrefiltrado);
@@ -281,7 +285,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
     setStep((s) => s + 1);
   };
 
-  const handleConfirmar = async () => {
+  const handleConfirmar = async (confirmado = false) => {
     setEjecutando(true);
     setError(null);
     try {
@@ -291,6 +295,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
         proyectoDestinoId: proyectoSel.id,
         fechaInicio,
         fechaFin: fechaFin || undefined,
+        confirmado,
       };
       if (entidadTipo === "empresa") {
         payload.perfilParticipacionId = perfilSel?.id;
@@ -299,9 +304,15 @@ export const ReemplazarAcreditacionWizardPage = () => {
         if (perfilEstado.necesitaPerfil) payload.perfilParticipacionId = perfilSel?.id;
       }
       const data = await acreditacionService.reemplazar(payload);
+      setAfectados(null);
       setResultado(data);
     } catch (err) {
-      setError(err.message || "No se pudo reemplazar la acreditación.");
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setAfectados(err.detalle?.afectados || []);
+      } else {
+        setAfectados(null);
+        setError(err.message || "No se pudo reemplazar la acreditación.");
+      }
     } finally {
       setEjecutando(false);
     }
@@ -404,7 +415,7 @@ export const ReemplazarAcreditacionWizardPage = () => {
                 ejecutando={ejecutando}
                 error={error}
                 resultado={resultado}
-                onConfirmar={handleConfirmar}
+                onConfirmar={() => handleConfirmar(false)}
               />
             )}
           </div>
@@ -453,6 +464,22 @@ export const ReemplazarAcreditacionWizardPage = () => {
           fechaFin={fechaFin}
         />
       </div>
+      {afectados && (
+        <ConfirmacionModal
+          peligro
+          titulo="Se finalizarán asignaciones vigentes"
+          mensaje={`Para continuar con ${proyectoSel?.nombre || "el Proyecto destino"} se finalizarán las siguientes asignaciones. Revise la lista y confirme.`}
+          items={afectados.map((a) => ({
+            key: `${a.tipo}-${a.id}-${a.proyectoId}`,
+            principal: a.nombre,
+            secundario: `Empresa actual: ${a.empresaNombre || "—"} · Proyecto: ${a.proyectoNombre || "—"}`,
+          }))}
+          textoConfirmar="Confirmar reemplazo"
+          ocupado={ejecutando}
+          onCancelar={() => setAfectados(null)}
+          onConfirmar={() => handleConfirmar(true)}
+        />
+      )}
     </div>
   );
 };

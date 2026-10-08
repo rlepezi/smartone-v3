@@ -54,6 +54,9 @@ const evidenciaRequerimientoService =
     require("../services/evidenciaRequerimientoService");
 const evaluacionService = require("../services/evaluacionService");
 const perfilRecursoService = require("../services/perfilRecursoService");
+const empresaPersonaService = require("../services/empresaPersonaService");
+const empresaPersonaRepository =
+    require("../repositories/empresaPersonaRepository");
 const participacionPersonaService =
     require("../services/participacionPersonaService");
 const participacionRecursoService =
@@ -401,36 +404,46 @@ async function seedProyectos(mandantes) {
 }
 
 /**
- * Paso 4: Empresas (catálogo global).
+ * Paso 4: Empresas (catálogo global) y su asociación con Mandantes
+ * (empresaMandantes). Servicios Industriales Maule queda asociada a DOS
+ * Mandantes (Minera del Sur y Constructora Andina); ninguna se asocia a
+ * Transemel.
+ * @param {Object<string, Object>} mandantes Mapa nombreFantasia →
+ *     Mandante.
  * @return {Promise<Object<string, Object>>} Mapa razónSocial → Empresa.
  */
-async function seedEmpresas() {
+async function seedEmpresas(mandantes) {
   log("\n[4/15] Empresas");
   const datos = [
     {
       razonSocial: "Transportes del Valle Ltda.",
       rut: rutDesdeBase(90001001),
       giro: "Transporte de carga terrestre",
+      mandantes: ["Constructora Andina"],
     },
     {
       razonSocial: "Ingeniería Cordillera SpA",
       rut: rutDesdeBase(90001002),
       giro: "Servicios de ingeniería y consultoría",
+      mandantes: ["Constructora Andina"],
     },
     {
       razonSocial: "Servicios Industriales Maule Ltda.",
       rut: rutDesdeBase(90001003),
       giro: "Mantención industrial",
+      mandantes: ["Minera del Sur", "Constructora Andina"],
     },
     {
       razonSocial: "Logística Puerto Sur SpA",
       rut: rutDesdeBase(90001004),
       giro: "Logística y almacenaje",
+      mandantes: ["Constructora Andina"],
     },
   ];
 
   const empresas = {};
   for (const d of datos) {
+    const [primero, ...otros] = d.mandantes.map((n) => mandantes[n]);
     const creado = await seedItem(
         "Empresa", d.razonSocial,
         () => empresaRepository.getByRut(cleanRut(d.rut)),
@@ -439,9 +452,15 @@ async function seedEmpresas() {
           razonSocial: d.razonSocial,
           giro: d.giro,
           estado: "activo",
-        }),
+          mandanteId: primero.id,
+        }, ACTOR_FALSO),
     );
-    if (creado) empresas[d.razonSocial] = creado;
+    if (!creado) continue;
+    empresas[d.razonSocial] = creado;
+    // Asociaciones adicionales (idempotente: reactiva o deja igual).
+    for (const m of [primero, ...otros]) {
+      await empresaService.asociarMandante(creado.id, m.id, ACTOR_FALSO);
+    }
   }
   return empresas;
 }
@@ -483,7 +502,7 @@ async function seedPersonas(empresas) {
             cargo: "Operario",
             tipoContrato: "Indefinido",
             fechaInicio: new Date().toISOString(),
-          }),
+          }, ACTOR_FALSO),
       );
       if (creado) personasPorEmpresaId[empresa.id].push(creado);
     }
@@ -507,6 +526,7 @@ async function seedRecursos(empresas) {
 
   const recursosPorEmpresaId = {};
   let indice = 0;
+  const todos = await recursoRepository.list({});
 
   for (const [razonSocial, empresa] of Object.entries(empresas)) {
     recursosPorEmpresaId[empresa.id] = [];
@@ -518,21 +538,62 @@ async function seedRecursos(empresas) {
 
       const creado = await seedItem(
           "Recurso", nombre,
-          async () => {
-            const existentes = await recursoRepository.list({
-              empresaId: empresa.id,
-            });
-            return existentes.find((r) => r.nombre === nombre) || null;
-          },
+          async () => todos.find((r) => r.nombre === nombre) || null,
           () => recursoService.crearRecurso({
             nombre, tipo, empresaId: empresa.id, estado: "activo",
-          }),
+            // Patente obligatoria (bloque 3), determinística por recurso.
+            patente: `SEED${String(indice).padStart(2, "0")}${j + 1}`,
+          }, ACTOR_FALSO),
       );
       if (creado) recursosPorEmpresaId[empresa.id].push(creado);
     }
     indice++;
   }
   return recursosPorEmpresaId;
+}
+
+/**
+ * Paso 5b: una Persona con historial en DOS Empresas: se crea en
+ * Transportes del Valle y se cambia a Ingeniería Cordillera (la relación
+ * anterior queda finalizada). Idempotente.
+ * @param {Object<string, Object>} empresas Mapa razónSocial → Empresa.
+ * @return {Promise<void>}
+ */
+async function seedPersonaConHistorial(empresas) {
+  log("\n[5b/15] Persona con historial en dos empresas");
+  const origen = empresas["Transportes del Valle Ltda."];
+  const destino = empresas["Ingeniería Cordillera SpA"];
+  if (!origen || !destino) return;
+  const rut = rutDesdeBase(90002999);
+  const persona = await seedItem(
+      "Persona", "Hugo Historial",
+      () => personaRepository.getByRut(cleanRut(rut)),
+      () => personaService.crearPersona({
+        rut, nombre: "Hugo", apellido: "Historial", empresaId: origen.id,
+        estado: "activo", tipoRelacion: "Trabajador", cargo: "Bodeguero",
+        tipoContrato: "Plazo fijo", fechaInicio: "2025-03-01",
+      }, ACTOR_FALSO),
+  );
+  if (!persona) return;
+  const relaciones = await empresaPersonaRepository.listBySujeto(persona.id);
+  if (relaciones.length >= 2) {
+    resumen.omitidos.CambioEmpresa = (resumen.omitidos.CambioEmpresa || 0) + 1;
+    return;
+  }
+  try {
+    await empresaPersonaService.cambiarEmpresa(persona.id, {
+      empresaId: destino.id, tipoRelacion: "Trabajador", cargo: "Supervisor",
+      tipoContrato: "Indefinido", fechaInicio: "2026-01-05",
+      // Termina la relación vigente con Transportes del Valle (confirmado).
+      confirmado: true,
+    }, ACTOR_FALSO);
+    resumen.creados.CambioEmpresa = (resumen.creados.CambioEmpresa || 0) + 1;
+    log("  ✓ Hugo Historial: Transportes del Valle → Ingeniería Cordillera");
+  } catch (err) {
+    resumen.fallidos.push({
+      tipo: "CambioEmpresa", descripcion: "Hugo Historial", motivo: err.message,
+    });
+  }
 }
 
 /**
@@ -1227,9 +1288,10 @@ async function main() {
   const mandantes = await seedMandantes();
   const usuarios = await seedUsuarios(mandantes);
   const proyectos = await seedProyectos(mandantes);
-  const empresas = await seedEmpresas();
+  const empresas = await seedEmpresas(mandantes);
   const personasPorEmpresaId = await seedPersonas(empresas);
   const recursosPorEmpresaId = await seedRecursos(empresas);
+  await seedPersonaConHistorial(empresas);
   const perfiles = await seedPerfiles(mandantes);
   await seedPerfilesRecurso(mandantes);
   const requerimientos = await seedRequerimientos();

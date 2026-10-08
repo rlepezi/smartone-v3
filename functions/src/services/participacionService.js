@@ -2,6 +2,8 @@ const participacionRepository =
     require("../repositories/participacionRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
 const empresaRepository = require("../repositories/empresaRepository");
+const empresaMandanteRepository =
+    require("../repositories/empresaMandanteRepository");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
@@ -182,6 +184,14 @@ class ParticipacionService {
     }
     if (empresa.estado !== "activo") {
       throw new AppError(400, "La Empresa indicada no está activa.");
+    }
+    // La Empresa debe estar asociada al Mandante del Proyecto
+    // (empresaMandantes activo).
+    if (!(await empresaMandanteRepository.estaActiva(empresaId, mandanteId))) {
+      throw new AppError(
+          400,
+          "La Empresa no está asociada al Mandante de este Proyecto.",
+      );
     }
 
     // 3. El Perfil de Participación debe existir, pertenecer al MISMO

@@ -74,6 +74,37 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Bloque 3: relaciones de Empresa. Toda escritura pasa por la API.
+    // empresaMandantes: superadmin, evaluador y admin_comercial leen todo;
+    // los roles de Mandante, solo los vínculos de su propio Mandante.
+    match /empresaMandantes/{docId} {
+      allow read: if tieneRol("superadmin") || tieneRol("evaluador") ||
+          tieneRol("admin_comercial") ||
+          ((tieneRol("mandante_admin") || tieneRol("mandante_lector")) &&
+           esDelPropioMandante(resource.data.mandanteId));
+      allow write: if false;
+    }
+
+    // empresaPersonas / empresaRecursos no llevan mandanteId (la relación
+    // laboral no es de un Mandante): lectura directa solo para los roles con
+    // visibilidad global; los roles de Mandante las leen por la API, que
+    // aplica su alcance. admin_comercial no tiene acceso a personas ni
+    // recursos.
+    match /empresaPersonas/{docId} {
+      allow read: if tieneRol("superadmin") || tieneRol("evaluador");
+      allow write: if false;
+    }
+
+    match /empresaRecursos/{docId} {
+      allow read: if tieneRol("superadmin") || tieneRol("evaluador");
+      allow write: if false;
+    }
+
+    // empresasRut: índice de unicidad del RUT, solo para el backend.
+    match /empresasRut/{rut} {
+      allow read, write: if false;
+    }
+
     // Regla base para el resto de colecciones (gestión vía Cloud Functions)
     match /{document=**} {
       allow read, write: if false;

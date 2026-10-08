@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { recursoService } from "../../services/recursoService";
-import { relacionRecursoService } from "../../services/relacionRecursoService";
+import { TerminarRelacionAccion } from "../../components/shared/TerminarRelacionAccion";
 import { empresaService } from "../../services/empresaService";
 import { mandanteService } from "../../services/mandanteService";
 import { proyectoService } from "../../services/proyectoService";
@@ -179,7 +179,7 @@ export const RecursoDetailPage = () => {
           expedienteService.listar({}),
           requerimientoService.listar({ estado: "activo" }),
           evaluacionService.listarVigentes(),
-          relacionRecursoService.listarPorRecurso(id),
+          recursoService.listarRelaciones(id).catch(() => []),
         ]);
         if (cancelado) return;
 
@@ -273,7 +273,7 @@ export const RecursoDetailPage = () => {
   const handleEmpresaCambiada = async () => {
     setCambiarEmpresaAbierto(false);
     await cargarRecurso();
-    const historialData = await relacionRecursoService.listarPorRecurso(id);
+    const historialData = await recursoService.listarRelaciones(id).catch(() => []);
     setHistorialEmpresas(historialData || []);
   };
 
@@ -367,7 +367,8 @@ export const RecursoDetailPage = () => {
   const cumplimientoPromedio = porcentajes.length > 0
     ? Math.round(porcentajes.reduce((a, b) => a + b, 0) / porcentajes.length) : null;
 
-  const nombreEmpresa = empresasMap[recurso.empresaId] || recurso.empresaId;
+  // Empresa actual: la de su relación activa (null si está fuera del alcance del usuario).
+  const nombreEmpresa = recurso.empresaActual?.empresaNombre || null;
 
   const kpis = (
     <>
@@ -448,16 +449,29 @@ export const RecursoDetailPage = () => {
       titulo="Empresa Activa"
       Icono={Truck}
       accion={completa && puedeEscribir && modoEdicion ? (
-        <ActionButton onClick={() => setCambiarEmpresaAbierto(true)} icon={Building2}>
-          Cambiar Empresa
-        </ActionButton>
+        <div className="flex items-center gap-2">
+          {relacionActiva && (
+            <TerminarRelacionAccion
+              tipo="recurso"
+              id={id}
+              empresaNombre={relacionActiva.empresaNombre}
+              onTerminada={handleEmpresaCambiada}
+              onError={setError}
+            />
+          )}
+          <ActionButton onClick={() => setCambiarEmpresaAbierto(true)} icon={Building2}>
+            Cambiar Empresa
+          </ActionButton>
+        </div>
       ) : null}
     >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <CampoInfo etiqueta="Empresa Propietaria">
-          <Link to={`/empresas/${recurso.empresaId}`} className="text-primary hover:text-primary-dark font-bold">
-            {nombreEmpresa}
-          </Link>
+          {recurso.empresaActual ? (
+            <Link to={`/empresas/${recurso.empresaActual.empresaId}`} className="text-primary hover:text-primary-dark font-bold">
+              {nombreEmpresa}
+            </Link>
+          ) : null}
         </CampoInfo>
         <CampoInfo etiqueta="Tipo de Relación">{relacionActiva?.tipoRelacion}</CampoInfo>
         <CampoInfo etiqueta="Fecha Inicio">{relacionActiva ? formatFecha(relacionActiva.fechaInicio) : null}</CampoInfo>
@@ -475,7 +489,7 @@ export const RecursoDetailPage = () => {
       <DetalleEntidadLayout
         onVolver={() => { if (confirmarSalida()) navigate("/recursos"); }}
         titulo={recurso.nombre}
-        subtitulo={`${formatCatalogo(recurso.tipo)}${recurso.patente ? ` · ${recurso.patente}` : ""} · ${nombreEmpresa}`}
+        subtitulo={`${formatCatalogo(recurso.tipo)}${recurso.patente ? ` · ${recurso.patente}` : ""}${nombreEmpresa ? ` · ${nombreEmpresa}` : ""}`}
         badge={<StatusBadge value={recurso.estado} map={MAPA_ACTIVO_INACTIVO} />}
         acciones={puedeEscribir && (
           <>
@@ -577,7 +591,7 @@ export const RecursoDetailPage = () => {
                     <tbody className="divide-y divide-slate-100">
                       {historialOrdenado.map((r) => (
                         <tr key={r.id} className="hover:bg-slate-50/60 transition-colors">
-                          <td className="py-2.5 px-2 font-bold text-carbon-dark">{empresasMap[r.empresaId] || r.empresaId}</td>
+                          <td className="py-2.5 px-2 font-bold text-carbon-dark">{r.empresaNombre || empresasMap[r.empresaId] || "-"}</td>
                           <td className="py-2.5 px-2 text-slate-600 font-medium">{r.tipoRelacion}</td>
                           <td className="py-2.5 px-2 text-slate-500 font-medium">{formatFecha(r.fechaInicio)}</td>
                           <td className="py-2.5 px-2 text-slate-500 font-medium">
@@ -694,7 +708,7 @@ export const RecursoDetailPage = () => {
       {cambiarEmpresaAbierto && (
         <CambiarEmpresaRecursoModal
           recursoId={id}
-          empresaActualNombre={empresasMap[recurso.empresaId]}
+          empresaActualNombre={recurso.empresaActual?.empresaNombre || null}
           onCambiado={handleEmpresaCambiada}
           onCerrar={() => setCambiarEmpresaAbierto(false)}
         />

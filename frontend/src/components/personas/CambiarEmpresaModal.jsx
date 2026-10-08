@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { relacionLaboralService } from "../../services/relacionLaboralService";
+import { personaService } from "../../services/personaService";
 import { empresaService } from "../../services/empresaService";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
-import { useSugerenciasPerfilRecurso } from "../../hooks/useSugerenciasPerfilRecurso";
-import { useMandantesDeEmpresa } from "../../hooks/useMandantesDeEmpresa";
 import {
   SUGERENCIAS_TIPO_RELACION_PERSONA, SUGERENCIAS_TIPO_CONTRATO, SUGERENCIAS_JORNADA,
 } from "../../utils/sugerenciasRelacionLaboral";
@@ -17,8 +16,9 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 // PersonaFormPage.jsx (modo edición), antes vivía embebido solo en el
 // primero. Se autoabastece de su propia lista de Empresas (no depende de
 // que el llamador ya la tenga cargada) para poder montarse igual en
-// ambas pantallas. Reutiliza relacionLaboralService.cambiarEmpresa
-// (RN-063) tal cual, sin reimplementar la transacción de cierre/apertura.
+// ambas pantallas. Usa personaService.cambiarEmpresa (empresaPersonas, RN-063): si la relación
+// anterior tiene asignaciones activas en proyectos, el backend pide confirmación con la lista y
+// este modal la muestra (ConfirmacionModal) antes de reenviar con confirmado: true.
 export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado, onCerrar }) => {
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
   const [formData, setFormData] = useState({
@@ -27,15 +27,14 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
   const [errors, setErrors] = useState({});
   const [guardando, setGuardando] = useState(false);
   const [serverError, setServerError] = useState(null);
+  // Asignaciones que se finalizarán (409 CONFIRMACION_REQUERIDA), pendientes de confirmar.
+  const [confirmacion, setConfirmacion] = useState(null);
 
   useEffect(() => {
     empresaService.listar("activo")
       .then((data) => setEmpresasOpciones(data || []))
       .catch((err) => console.error("Error al cargar empresas:", err));
   }, []);
-
-  // Cargo = catálogo Perfil de Recurso (persona) del Mandante de la Empresa elegida: sin Empresa, sin sugerencias.
-  const sugerenciasCargo = useSugerenciasPerfilRecurso(useMandantesDeEmpresa(formData.empresaId), "persona");
 
   const elegir = (name, value) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -59,27 +58,38 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setServerError(null);
-    if (!validar()) return;
+  const enviar = async (confirmado) => {
     setGuardando(true);
     try {
-      const nuevaRelacion = await relacionLaboralService.cambiarEmpresa(personaId, {
+      const nuevaRelacion = await personaService.cambiarEmpresa(personaId, {
         empresaId: formData.empresaId,
         tipoRelacion: formData.tipoRelacion.trim(),
         cargo: formData.cargo.trim(),
         tipoContrato: formData.tipoContrato.trim(),
         jornada: formData.jornada.trim() || null,
         fechaInicio: formData.fechaInicio,
+        confirmado,
       });
+      setConfirmacion(null);
       onCambiado(nuevaRelacion);
     } catch (err) {
-      console.error("Error al cambiar la empresa:", err);
-      setServerError(err.message || "No se pudo cambiar la Empresa.");
+      if (err.codigo === "CONFIRMACION_REQUERIDA") {
+        setConfirmacion({ mensaje: err.message, asignaciones: err.detalle?.asignaciones || [] });
+      } else {
+        console.error("Error al cambiar la empresa:", err);
+        setConfirmacion(null);
+        setServerError(err.message || "No se pudo cambiar la Empresa.");
+      }
     } finally {
       setGuardando(false);
     }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError(null);
+    if (!validar()) return;
+    await enviar(false);
   };
 
   return (
@@ -100,7 +110,7 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
           )}
           <p className="text-xs text-slate-500">
             {empresaActualNombre && <>Empresa actual: <strong className="text-slate-700">{empresaActualNombre}</strong>. </>}
-            Esto cierra la relación laboral activa actual y crea una nueva — el historial de Asignaciones a Proyectos ya existentes no se ve afectado.
+            Esto termina la relación laboral activa actual y crea una nueva; el historial se conserva. Si tiene asignaciones activas en proyectos con la empresa actual, se finalizarán (se pedirá confirmación).
           </p>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Nueva Empresa *</label>
@@ -144,7 +154,6 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
                 }`}
               />
               {errors.cargo && <p className="text-xs text-red-500 mt-1">{errors.cargo}</p>}
-              <SugerenciasChips opciones={sugerenciasCargo} valor={formData.cargo} onElegir={(v) => elegir("cargo", v)} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Contrato *</label>
@@ -192,6 +201,18 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
           </div>
         </form>
       </div>
+      {confirmacion && (
+        <ConfirmacionModal
+          peligro
+          titulo={(confirmacion?.asignaciones?.length || 0) > 0 ? "Se finalizarán asignaciones activas" : "Se terminará la relación vigente"}
+          mensaje={confirmacion.mensaje}
+          items={confirmacion.asignaciones.map((a) => ({ key: a.participacionId, principal: a.proyectoNombre }))}
+          textoConfirmar={(confirmacion?.asignaciones?.length || 0) > 0 ? "Cambiar de empresa y finalizarlas" : "Cambiar de empresa"}
+          ocupado={guardando}
+          onCancelar={() => setConfirmacion(null)}
+          onConfirmar={() => enviar(true)}
+        />
+      )}
     </div>
   );
 };

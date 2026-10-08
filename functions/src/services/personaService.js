@@ -9,7 +9,13 @@ const participacionPersonaService =
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
 const {agruparSujetos} = require("../utils/sujetosParticipacion");
-const relacionLaboralService = require("./relacionLaboralService");
+const empresaPersonaService = require("./empresaPersonaService");
+const empresaPersonaRepository =
+    require("../repositories/empresaPersonaRepository");
+const bitacoraLogger = require("../utils/bitacoraLogger");
+const {
+  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto,
+} = require("../utils/alcanceMandante");
 const {
   validarIdentificacion, claveIdentificacion,
 } = require("../utils/identificacionValidator");
@@ -23,112 +29,197 @@ const db = admin.firestore();
 const IDENTIFICACION_COLLECTION = "personasIdentificacion";
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
+// Código gRPC de Firestore cuando `create` encuentra el documento ya creado.
+const ALREADY_EXISTS = 6;
 
 /**
- * Reglas de negocio para el recurso Persona.
- * Catálogo global, sin mandanteId ni lógica de alcance por actor — el
- * control de acceso es enteramente por rol a nivel de ruta (ver
- * personaRoutes.js). No incluye rol (sus Perfiles de Recurso pertenecen a la
- * participación en un
- * proyecto, RN-044) ni contacto. El vínculo laboral con una Empresa
- * (cargo, tipo de contrato, etc.) vive en RelaciónLaboral (entidad 17,
- * ver decisions.md) — acá solo se denormalizan `empresaId`/
- * `empresaActivaId`/`cargoActivo` de la relación activa, mantenidos
- * exclusivamente por relacionLaboralService (nunca editables directo vía
- * actualizarPersona).
+ * Reglas de negocio para el recurso Persona (catálogo global, sin
+ * mandanteId). Su vínculo con una Empresa vive SOLO en empresaPersonas
+ * (bloque 3): "empresa actual" y "cargo actual" se derivan siempre de la
+ * relación activa y nunca se guardan en la Persona. Visibilidad por
+ * Mandante en utils/alcanceMandante.js. Sus Perfiles de Recurso en un
+ * proyecto viven en participacionPersonas (RN-044).
  */
 class PersonaService {
   /**
-   * Valida que el empresaId apunte a una Empresa existente y activa.
-   * @param {string} empresaId ID de la Empresa a validar.
-   * @return {Promise<void>}
-   */
-  async _validarEmpresaActiva(empresaId) {
-    const empresa = await empresaRepository.getById(empresaId);
-    if (!empresa) {
-      throw new AppError(400, "La Empresa indicada no existe.");
-    }
-    if (empresa.estado !== "activo") {
-      throw new AppError(400, "La Empresa indicada no está activa.");
-    }
-  }
-
-  /**
-   * Obtiene una persona por su ID.
+   * Obtiene una persona por su ID (documento tal cual). Con `actor`,
+   * respeta su alcance: fuera de él responde 404.
    * @param {string} id ID de la persona.
+   * @param {?Object} [actor] Usuario autenticado.
    * @return {Promise<Object>} La persona encontrada.
    */
-  async getPersonaById(id) {
+  async getPersonaById(id, actor = null) {
     if (!id || typeof id !== "string") {
       throw new AppError(400, "ID de persona inválido.");
     }
     const persona = await personaRepository.getById(id);
-    if (!persona) {
+    if (!persona || (actor && !(await puedeVerSujeto(actor, "persona", id)))) {
       throw new AppError(404, "Persona no encontrada.");
     }
     return persona;
   }
 
   /**
-   * Lista personas, opcionalmente filtradas por estado y/o empresa.
-   * @param {Object} filtros Filtros de búsqueda.
-   * @return {Promise<Object[]>} Lista de personas.
+   * "Empresa actual" de una relación activa, en la forma que consume la
+   * API (con el nombre de la Empresa). null si no hay relación o si la
+   * Empresa está fuera del alcance del actor.
+   * @param {?Object} relacion Relación activa.
+   * @param {?Set<string>} visibles Empresas visibles (null = todas).
+   * @param {Object<string, Object>} empresas Cache id -> Empresa.
+   * @return {?Object} Empresa y cargo actuales.
    */
-  async listarPersonas(filtros) {
-    return await personaRepository.list(filtros);
+  _empresaActual(relacion, visibles, empresas) {
+    if (!relacion || (visibles && !visibles.has(relacion.empresaId))) {
+      return null;
+    }
+    return {
+      relacionId: relacion.id,
+      empresaId: relacion.empresaId,
+      empresaNombre: empresas[relacion.empresaId]?.razonSocial || null,
+      cargo: relacion.cargo || null,
+      tipoRelacion: relacion.tipoRelacion || null,
+      tipoContrato: relacion.tipoContrato || null,
+      jornada: relacion.jornada || null,
+      fechaInicio: relacion.fechaInicio || null,
+    };
   }
 
   /**
-   * Crea una nueva persona junto con su RelaciónLaboral inicial (RN-041b:
-   * toda Persona necesita una relación laboral activa desde su creación,
-   * no puede quedar "huérfana" de Empresa) y su índice de unicidad de
-   * identificación (personasIdentificacion — RN-040, único por
-   * tipo+país+número). La creación de la Persona + su índice SÍ es una
-   * transacción atómica (a diferencia de antes, que solo verificaba
-   * duplicado con una lectura previa no atómica): el ID de Persona se
-   * pre-genera para poder escribir ambos documentos dentro de la misma
-   * transacción. La RelaciónLaboral se sigue creando después, aparte —
-   * mismo trade-off ya aceptado en el resto del sistema para esa segunda
-   * escritura no-transaccional.
-   * @param {Object} payload Datos de la nueva persona: `identificacion`
-   *     ({tipo, numero, pais}) — o, por compatibilidad con llamadores que
-   *     todavía no migraron, `rut` plano (se interpreta como
-   *     {tipo:"RUT", pais:"Chile"}) — más nombre, apellido, empresaId, y
-   *     los de su relación laboral inicial (tipoRelacion/tipoContrato
-   *     opcionales desde que el modal rápido del wizard dejó de
-   *     pedirlos — "completar después"; cargo sigue siendo obligatorio).
-   * @return {Promise<Object>} La persona creada.
+   * Carga Empresas por ID (cache simple).
+   * @param {string[]} ids IDs.
+   * @return {Promise<Object<string, Object>>} Mapa id -> Empresa.
    */
-  async crearPersona(payload) {
-    const {
-      nombre, apellido, empresaId, estado,
-      tipoRelacion, cargo, tipoContrato, jornada, fechaInicio,
-    } = payload;
+  async _empresasPorId(ids) {
+    const unicos = [...new Set(ids.filter(Boolean))];
+    const lista = await Promise.all(unicos.map((id) =>
+      empresaRepository.getById(id)));
+    return Object.fromEntries(unicos.map((id, i) => [id, lista[i]]));
+  }
 
+  /**
+   * Persona con su empresa y cargo actuales derivados (visibles para el
+   * actor).
+   * @param {string} id ID de la persona.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Persona con `empresaActual`.
+   */
+  async obtenerPersona(id, actor) {
+    const persona = await this.getPersonaById(id, actor);
+    const [relacion, visibles] = await Promise.all([
+      empresaPersonaRepository.getActivaBySujeto(id),
+      empresaIdsVisibles(actor),
+    ]);
+    const empresas = await this._empresasPorId([relacion?.empresaId]);
+    return {
+      ...persona,
+      empresaActual: this._empresaActual(relacion, visibles, empresas),
+    };
+  }
+
+  /**
+   * Lista personas visibles para el actor, con su empresa y cargo actuales
+   * (derivados de la relación activa). Con `empresaId`, solo las que
+   * tienen relación ACTIVA con esa Empresa.
+   * @param {{estado: (string|undefined), empresaId: (string|undefined)}}
+   *     filtros Filtros de búsqueda.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object[]>} Lista de personas.
+   */
+  async listarPersonas(filtros, actor) {
+    const {estado, empresaId} = filtros || {};
+    const [personas, sujetosVisibles, empresasVisibles, activas] =
+        await Promise.all([
+          personaRepository.list({estado}),
+          sujetoIdsVisibles(actor, "persona"),
+          empresaIdsVisibles(actor),
+          empresaPersonaRepository.listActivas(),
+        ]);
+    const activaPorPersona = new Map(activas.map((r) => [r.personaId, r]));
+    const empresas = await this._empresasPorId(activas.map((r) => r.empresaId));
+    return personas
+        .filter((p) => !sujetosVisibles || sujetosVisibles.has(p.id))
+        .filter((p) => !empresaId ||
+          activaPorPersona.get(p.id)?.empresaId === empresaId)
+        .map((p) => ({
+          ...p,
+          empresaActual: this._empresaActual(
+              activaPorPersona.get(p.id), empresasVisibles, empresas,
+          ),
+        }));
+  }
+
+  /**
+   * Error 409 IDENTIFICACION_EXISTENTE. Devuelve SOLO lo necesario para
+   * ofrecer crear la relación: el id, nombre, apellido e identificación de
+   * la Persona existente (nunca su empresa, cargo ni historial, que pueden
+   * estar fuera del alcance del actor). Se arma después del intento de alta
+   * fallido, fuera de cualquier transacción.
+   * @param {string} clave Clave del índice personasIdentificacion.
+   * @param {Object} identificacion Identificación pedida.
+   * @return {Promise<AppError>} El error a lanzar.
+   */
+  async _errorIdentificacionExistente(clave, identificacion) {
+    const indice = await db.collection(IDENTIFICACION_COLLECTION)
+        .doc(clave).get();
+    const personaId = indice.data()?.personaId || null;
+    const existente = personaId ?
+        await personaRepository.getById(personaId) : null;
+    const etiquetaTipo = identificacion.tipo === "RUT" ? "RUT" : "Pasaporte";
+    return new AppError(
+        409,
+        "DUPLICADO: ya existe una Persona registrada con este " +
+        `${etiquetaTipo} (${identificacion.numero}).`,
+        {
+          codigo: "IDENTIFICACION_EXISTENTE",
+          detalle: {
+            personaId,
+            nombre: existente?.nombre || null,
+            apellido: existente?.apellido || null,
+            identificacion: existente?.identificacion || identificacion,
+          },
+        },
+    );
+  }
+
+  /**
+   * Crea una Persona junto con su índice de unicidad de identificación
+   * (personasIdentificacion, RN-040) y su relación laboral inicial
+   * (empresaPersonas), los tres en UNA escritura atómica. Si la identificación
+   * ya existe responde 409 con código IDENTIFICACION_EXISTENTE y la
+   * Persona existente, para ofrecer crearle la relación con la Empresa
+   * elegida en vez de duplicarla.
+   * @param {Object} payload `identificacion` (o `rut`), nombre,
+   *     apellido, empresaId y los campos de la relación (cargo obligatorio;
+   *     tipoRelacion, tipoContrato, jornada, fechaInicio opcionales).
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} La persona creada, con `empresaActual`.
+   */
+  async crearPersona(payload, actor) {
+    const {nombre, apellido, empresaId, estado} = payload;
     if (!nombre || !apellido || !empresaId) {
       throw new AppError(
           400,
-          "Faltan campos obligatorios: 'nombre', 'apellido' y " +
-          "'empresaId' son requeridos.",
+          "Faltan campos obligatorios: 'empresaId', 'nombre' y 'apellido' " +
+          "son requeridos.",
       );
     }
-
-    // Compatibilidad hacia atrás: formularios que todavía envían `rut`
-    // plano (ej. PersonaFormPage.jsx, no migrado en esta pasada) siguen
-    // funcionando igual que antes, armando `identificacion` internamente.
     const identificacionEntrada = payload.identificacion ||
         (payload.rut ?
             {tipo: "RUT", numero: payload.rut, pais: "Chile"} : null);
     if (!identificacionEntrada) {
       throw new AppError(
           400,
-          "Falta la identificación de la persona " +
-          "('identificacion' o 'rut').",
+          "Falta la identificación de la persona ('identificacion' o 'rut').",
       );
     }
     const identificacion = validarIdentificacion(identificacionEntrada);
-
-    await this._validarEmpresaActiva(empresaId);
+    await empresaPersonaService.validarEmpresa(empresaId, actor);
+    const campos = empresaPersonaService.camposRelacion(payload, false);
+    const fechaInicio = payload.fechaInicio ?
+        new Date(payload.fechaInicio) : new Date();
+    if (isNaN(fechaInicio.getTime())) {
+      throw new AppError(400, "fechaInicio no es una fecha válida.");
+    }
 
     const estadoFinal = estado || "activo";
     if (!ESTADOS_VALIDOS.includes(estadoFinal)) {
@@ -142,70 +233,63 @@ class PersonaService {
     const clave = claveIdentificacion(identificacion);
     const refIndice = db.collection(IDENTIFICACION_COLLECTION).doc(clave);
     const refPersona = db.collection(personaRepository.COLLECTION).doc();
-
     const datosPersona = {
       identificacion,
-      // Se sigue poblando para identificaciones tipo RUT: todo el resto
-      // del sistema (búsquedas, fichas, exportables) todavía lee `rut`
-      // directo — queda null para Pasaporte, una persona extranjera
-      // genuinamente no tiene RUT (esas pantallas se actualizarán en una
-      // pasada aparte para mostrar `identificacion` en vez de solo `rut`).
+      // Copia del RUT para búsquedas y fichas que leen `rut` directo (null
+      // para Pasaporte).
       rut: identificacion.tipo === "RUT" ? identificacion.numero : null,
       nombre: nombre.trim(),
       apellido: apellido.trim(),
-      empresaId,
-      empresaActivaId: empresaId,
-      cargoActivo: cargo ? cargo.trim() : null,
       estado: estadoFinal,
     };
+    const relacion = empresaPersonaService.prepararAlta(
+        refPersona.id, empresaId, campos, fechaInicio,
+    );
 
-    await db.runTransaction(async (tx) => {
-      const indiceExistente = await tx.get(refIndice);
-      if (indiceExistente.exists) {
-        const etiquetaTipo =
-            identificacion.tipo === "RUT" ? "RUT" : "Pasaporte";
-        throw new AppError(
-            409,
-            `DUPLICADO: ya existe una Persona registrada con este ` +
-            `${etiquetaTipo} (${identificacion.numero}).`,
-        );
-      }
-      tx.set(refPersona, {
-        ...datosPersona,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      tx.set(refIndice, {
-        personaId: refPersona.id,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+    // Escritura atómica SIN lecturas previas (mismo criterio que el alta de
+    // Empresa): `create` del índice falla con ALREADY_EXISTS si la
+    // identificación ya está tomada y entonces no se escribe nada.
+    const lote = db.batch();
+    lote.create(refIndice, {
+      personaId: refPersona.id,
+      createdAt: FieldValue.serverTimestamp(),
     });
-
-    const creada = {id: refPersona.id, ...datosPersona};
-
-    // Si la validación de campos de la relación falla acá, la Persona ya
-    // quedó creada (mismo trade-off aceptado en el resto del sistema para
-    // operaciones no-transaccionales de dos pasos) — se propaga el error
-    // igual para que el cliente sepa que algo quedó incompleto.
-    await relacionLaboralService.crearRelacionInicial(creada.id, {
-      empresaId, tipoRelacion, cargo, tipoContrato, jornada, fechaInicio,
+    lote.set(refPersona, {
+      ...datosPersona,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
+    lote.set(relacion.ref, relacion.data);
+    try {
+      await lote.commit();
+    } catch (err) {
+      if (err.code !== ALREADY_EXISTS) throw err;
+      throw await this._errorIdentificacionExistente(clave, identificacion);
+    }
 
-    return creada;
+    await bitacoraLogger.registrarEvento({
+      mandanteId: actor?.mandanteId || null,
+      entidad: "persona",
+      entidadId: refPersona.id,
+      accion: "creado",
+      actor,
+      detalle: {empresaId, relacionId: relacion.ref.id},
+    });
+    return this.obtenerPersona(refPersona.id, actor);
   }
 
   /**
-   * Actualiza los campos editables de identidad de una persona existente.
-   * `empresaId`/`empresaActivaId`/`cargoActivo` quedan deliberadamente
-   * fuera de `allowedFields`: el vínculo laboral con una Empresa ya NO se
-   * edita acá — solo a través de
-   * relacionLaboralService.cambiarEmpresa (RN-063).
+   * Actualiza la identidad de una Persona (nombre, apellido, estado). La
+   * identificación no se edita después de creada, salvo superadmin (mueve
+   * el índice de unicidad en una transacción). La Empresa se cambia por
+   * empresaPersonaService (cambiar empresa / terminar relación).
    * @param {string} id ID de la persona.
    * @param {Object} payload Campos a actualizar.
+   * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object|null>} La persona actualizada.
    */
-  async actualizarPersona(id, payload) {
-    const existente = await this.getPersonaById(id); // Verifica existencia
+  async actualizarPersona(id, payload, actor) {
+    const existente = await this.getPersonaById(id, actor);
     if (existente.anonimizada === true) {
       throw new AppError(
           409, "La Persona fue anonimizada: sus datos ya no se pueden editar.",
@@ -220,33 +304,76 @@ class PersonaService {
       }
     }
 
-    // El RUT no puede cambiarse directamente por este método.
-    if (payload.rut) {
-      throw new AppError(
-          400,
-          "El RUT de la Persona no puede ser modificado directamente.",
-      );
+    const nuevaIdentificacion = payload.identificacion ||
+        (payload.rut ? {tipo: "RUT", numero: payload.rut, pais: "Chile"} :
+          null);
+    if (nuevaIdentificacion) {
+      const validada = validarIdentificacion(nuevaIdentificacion);
+      const anterior = existente.identificacion ?
+          claveIdentificacion(existente.identificacion) : null;
+      if (claveIdentificacion(validada) !== anterior) {
+        if (actor.rol !== "superadmin") {
+          throw new AppError(
+              403, "La identificación de la Persona no se puede modificar.",
+          );
+        }
+        await this._cambiarIdentificacion(id, anterior, validada);
+      }
     }
 
     if (updateData.estado && !ESTADOS_VALIDOS.includes(updateData.estado)) {
       throw new AppError(400, `Estado '${updateData.estado}' no válido.`);
     }
-
     if (updateData.nombre) updateData.nombre = updateData.nombre.trim();
     if (updateData.apellido) {
       updateData.apellido = updateData.apellido.trim();
     }
+    if (Object.keys(updateData).length > 0) {
+      await personaRepository.update(id, updateData);
+    }
+    return this.obtenerPersona(id, actor);
+  }
 
-    return await personaRepository.update(id, updateData);
+  /**
+   * Cambia la identificación (solo superadmin) moviendo el índice de
+   * unicidad en una transacción; rechaza si la nueva ya existe.
+   * @param {string} id ID de la persona.
+   * @param {?string} claveAnterior Clave del índice actual.
+   * @param {Object} identificacion Identificación nueva validada.
+   * @return {Promise<void>}
+   */
+  async _cambiarIdentificacion(id, claveAnterior, identificacion) {
+    const refNueva = db.collection(IDENTIFICACION_COLLECTION)
+        .doc(claveIdentificacion(identificacion));
+    await db.runTransaction(async (tx) => {
+      const ocupada = await tx.get(refNueva);
+      if (ocupada.exists && ocupada.data().personaId !== id) {
+        throw new AppError(
+            409, "Ya existe otra Persona con esa identificación.",
+        );
+      }
+      tx.set(refNueva, {
+        personaId: id, createdAt: FieldValue.serverTimestamp(),
+      });
+      if (claveAnterior) {
+        tx.delete(db.collection(IDENTIFICACION_COLLECTION).doc(claveAnterior));
+      }
+      tx.update(db.collection(personaRepository.COLLECTION).doc(id), {
+        identificacion,
+        rut: identificacion.tipo === "RUT" ? identificacion.numero : null,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
   }
 
   /**
    * Desactiva una persona existente.
    * @param {string} id ID de la persona.
+   * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object|null>} La persona desactivada.
    */
-  async desactivarPersona(id) {
-    await this.getPersonaById(id);
+  async desactivarPersona(id, actor) {
+    await this.getPersonaById(id, actor);
     return await personaRepository.setEstado(id, "inactivo");
   }
 
@@ -262,7 +389,7 @@ class PersonaService {
    *     `perfilesRecurso` ({id, nombre}).
    */
   async obtenerResumen(id, actor) {
-    await this.getPersonaById(id); // Verifica existencia
+    await this.getPersonaById(id, actor); // Existencia y alcance
 
     const docs = await participacionPersonaService.listar(
         {personaId: id, estado: "activa"}, actor,
@@ -320,7 +447,7 @@ class PersonaService {
    * @return {Promise<Object[]>} Eventos, más reciente primero.
    */
   async obtenerEventos(id, actor, {limit} = {}) {
-    await this.getPersonaById(id); // Verifica existencia
+    await this.getPersonaById(id, actor); // Existencia y alcance
 
     const documentos =
         await participacionPersonaRepository.list({personaId: id});

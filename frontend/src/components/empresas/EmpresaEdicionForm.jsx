@@ -2,11 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import { HardHat, AlertCircle } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
+import { mandanteService } from "../../services/mandanteService";
+import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { storageService } from "../../services/storageService";
 import { formatRutDisplay, validateRut, cleanRut } from "../../utils/rutFormatters";
 import { EmpresaLogoUploader } from "../shared/EmpresaLogoUploader";
 
-const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
+const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
+// Roles que eligen el Mandante al crear; los roles de Mandante lo tienen fijo (el propio).
+const ROLES_ELIGEN_MANDANTE = ["superadmin", "admin_comercial"];
 
 // Formulario de datos identitarios (crear / editar). Se usa en dos lugares:
 //   - EmpresaFormPage: solo para CREAR (pantalla propia).
@@ -20,6 +25,17 @@ export const EmpresaEdicionForm = ({
   const { profile } = useAuth();
   const esEdicion = Boolean(id);
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
+  const eligeMandante = ROLES_ELIGEN_MANDANTE.includes(profile?.rol);
+  // El RUT no se edita después de creado, salvo superadmin.
+  const rutEditable = !esEdicion || profile?.rol === "superadmin";
+
+  // Mandante al que se asocia la Empresa al crearla (empresaMandantes). Solo en alta: después
+  // se gestiona en la pestaña "Mandantes" del detalle.
+  const [mandanteId, setMandanteId] = useState(eligeMandante ? "" : (profile?.mandanteId || ""));
+  const [mandantes, setMandantes] = useState([]);
+  // RUT ya registrado (409 RUT_EXISTENTE): se ofrece asociar la Empresa existente al Mandante.
+  const [rutExistente, setRutExistente] = useState(null);
+  const [asociando, setAsociando] = useState(false);
 
   const [formData, setFormData] = useState({
     rut: "",
@@ -59,6 +75,17 @@ export const EmpresaEdicionForm = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (esEdicion) return;
+    if (eligeMandante) {
+      mandanteService.listar("activo").then(setMandantes).catch(() => setMandantes([]));
+    } else if (profile?.mandanteId) {
+      mandanteService.obtenerPorId(profile.mandanteId)
+        .then((m) => setMandantes(m ? [m] : []))
+        .catch(() => setMandantes([]));
+    }
+  }, [esEdicion, eligeMandante, profile?.mandanteId]);
 
   useEffect(() => {
     if (!esEdicion) return;
@@ -110,7 +137,8 @@ export const EmpresaEdicionForm = ({
     const newErrors = {};
     if (!formData.razonSocial.trim()) newErrors.razonSocial = "La razón social es obligatoria.";
     if (!formData.giro.trim()) newErrors.giro = "El giro es obligatorio.";
-    if (!esEdicion) {
+    if (!esEdicion && !mandanteId) newErrors.mandanteId = "Seleccione el Mandante.";
+    if (rutEditable) {
       if (!formData.rut.trim()) {
         newErrors.rut = "El RUT es obligatorio.";
       } else if (!validateRut(formData.rut)) {
@@ -162,10 +190,10 @@ export const EmpresaEdicionForm = ({
 
     try {
       if (esEdicion) {
-        delete payload.rut;
+        if (!rutEditable) delete payload.rut;
         await empresaService.actualizar(id, payload);
       } else {
-        const nueva = await empresaService.crear(payload);
+        const nueva = await empresaService.crear({ ...payload, mandanteId });
         if (logoPendiente) {
           // Best-effort: la Empresa ya quedó creada — si la subida del
           // logo falla, no se revierte la creación. No se usa
@@ -185,11 +213,32 @@ export const EmpresaEdicionForm = ({
       }
       onGuardado?.();
     } catch (err) {
-      setServerError(err.message);
+      if (err.codigo === "RUT_EXISTENTE") {
+        setRutExistente(err.detalle || {});
+      } else {
+        setServerError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Asocia la Empresa ya registrada con ese RUT al Mandante elegido, en vez de duplicarla.
+  const asociarExistente = async () => {
+    setAsociando(true);
+    try {
+      await empresaService.asociarMandante(rutExistente.empresaId, mandanteId);
+      setRutExistente(null);
+      onGuardado?.();
+    } catch (err) {
+      setRutExistente(null);
+      setServerError(err.message || "No se pudo asociar la Empresa.");
+    } finally {
+      setAsociando(false);
+    }
+  };
+
+  const nombreMandanteElegido = getMandanteDisplayName(mandantes.find((m) => m.id === mandanteId)) || "el Mandante";
 
   // Aviso de cambios sin guardar: se compara con una foto del formulario tomada al
   // terminar de cargar.
@@ -235,6 +284,39 @@ export const EmpresaEdicionForm = ({
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Identificación de la Empresa</h3>
           </div>
 
+          {!esEdicion && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mandante *</label>
+              {eligeMandante ? (
+                <select
+                  name="mandanteId"
+                  value={mandanteId}
+                  onChange={(e) => {
+                    setMandanteId(e.target.value);
+                    if (errors.mandanteId) setErrors((prev) => ({ ...prev, mandanteId: null }));
+                  }}
+                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                    errors.mandanteId ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                  }`}
+                >
+                  <option value="">Seleccione un Mandante...</option>
+                  {mandantes.map((m) => (
+                    <option key={m.id} value={m.id}>{getMandanteDisplayName(m)}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={getMandanteDisplayName(mandantes[0]) || ""}
+                  disabled
+                  className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed"
+                />
+              )}
+              {errors.mandanteId && <p className="text-xs text-red-500 mt-1">{errors.mandanteId}</p>}
+              <p className="text-[11px] text-slate-400 mt-1">La Empresa quedará asociada a este Mandante.</p>
+            </div>
+          )}
+
           <EmpresaLogoUploader
             empresaId={esEdicion ? id : undefined}
             logoUrl={esEdicion ? formData.logoUrl : logoPreviewUrl}
@@ -246,7 +328,7 @@ export const EmpresaEdicionForm = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">RUT *</label>
-              {esEdicion ? (
+              {!rutEditable ? (
                 <>
                   <input
                     type="text"
@@ -411,6 +493,27 @@ export const EmpresaEdicionForm = ({
         </div>
         )}
       </form>
+      {rutExistente && (
+        rutExistente.yaAsociada ? (
+          <ConfirmacionModal
+            titulo="La Empresa ya existe"
+            mensaje={`${rutExistente.razonSocial || "Una Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada y asociada a ${nombreMandanteElegido}.`}
+            textoConfirmar="Entendido"
+            textoCancelar="Cerrar"
+            onCancelar={() => setRutExistente(null)}
+            onConfirmar={() => setRutExistente(null)}
+          />
+        ) : (
+          <ConfirmacionModal
+            titulo="Ya existe una Empresa con este RUT"
+            mensaje={`${rutExistente.razonSocial || "Una Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada. Puede asociarla a ${nombreMandanteElegido} en vez de crear un duplicado. Los datos ingresados en este formulario no se aplicarán.`}
+            textoConfirmar="Asociar Empresa existente"
+            ocupado={asociando}
+            onCancelar={() => setRutExistente(null)}
+            onConfirmar={asociarExistente}
+          />
+        )
+      )}
     </div>
   );
 };

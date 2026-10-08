@@ -1,4 +1,5 @@
 const personaService = require("../services/personaService");
+const empresaPersonaService = require("../services/empresaPersonaService");
 const derechosArcoService = require("../services/derechosArcoService");
 
 /**
@@ -15,7 +16,7 @@ class PersonaController {
   async getById(req, res, next) {
     try {
       const {id} = req.params;
-      const persona = await personaService.getPersonaById(id);
+      const persona = await personaService.obtenerPersona(id, req.user);
       res.status(200).json({data: persona});
     } catch (error) {
       next(error);
@@ -33,7 +34,7 @@ class PersonaController {
     try {
       const {estado, empresaId} = req.query;
       const personas = await personaService.listarPersonas(
-          {estado, empresaId},
+          {estado, empresaId}, req.user,
       );
       res.status(200).json({data: personas});
     } catch (error) {
@@ -50,7 +51,8 @@ class PersonaController {
    */
   async create(req, res, next) {
     try {
-      const nuevaPersona = await personaService.crearPersona(req.body);
+      const nuevaPersona =
+          await personaService.crearPersona(req.body, req.user);
       res.status(201).json({
         message: "Persona creada exitosamente.",
         data: nuevaPersona,
@@ -71,7 +73,7 @@ class PersonaController {
     try {
       const {id} = req.params;
       const personaActualizada = await personaService.actualizarPersona(
-          id, req.body,
+          id, req.body, req.user,
       );
       res.status(200).json({
         message: "Persona actualizada exitosamente.",
@@ -92,7 +94,7 @@ class PersonaController {
   async deactivate(req, res, next) {
     try {
       const {id} = req.params;
-      const persona = await personaService.desactivarPersona(id);
+      const persona = await personaService.desactivarPersona(id, req.user);
       res.status(200).json({
         message: "Persona desactivada exitosamente.",
         data: persona,
@@ -190,6 +192,64 @@ class PersonaController {
           req.params.id, req.user, {limit: req.query.limit},
       );
       res.status(200).json({data: eventos});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Historial de relaciones con Empresas visible para el actor.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async listarRelaciones(req, res, next) {
+    try {
+      const data = await empresaPersonaService.listarPorSujeto(
+          req.params.id, req.user,
+      );
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Cambia la Empresa (finaliza la relación activa y crea la nueva). Si hay
+   * asignaciones afectadas responde 409 CONFIRMACION_REQUERIDA hasta que
+   * llegue `confirmado: true`.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async cambiarEmpresa(req, res, next) {
+    try {
+      const data = await empresaPersonaService.cambiarEmpresa(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({
+        message: "Empresa de la persona actualizada exitosamente.", data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Termina la relación activa con su Empresa (sin crear otra).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async terminarRelacion(req, res, next) {
+    try {
+      const data = await empresaPersonaService.terminarRelacion(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({message: "Relación terminada.", data});
     } catch (error) {
       next(error);
     }

@@ -22,22 +22,44 @@ class RecursoRepository {
 
   /**
    * Lista recursos, opcionalmente filtrados por estado y/o empresa.
-   * @param {{estado: (string|undefined), empresaId: (string|undefined)}}
-   *     filtros Filtros de búsqueda.
+   * La pertenencia a una Empresa vive en la relación (empresaPersonas /
+   * empresaRecursos): se filtra en el servicio, no aquí.
+   * @param {{estado: (string|undefined)}} filtros Filtros de búsqueda.
    * @return {Promise<object[]>} Lista de recursos.
    */
-  async list({estado, empresaId} = {}) {
+  async list({estado} = {}) {
     let query = db.collection(COLLECTION);
 
-    if (empresaId) {
-      query = query.where("empresaId", "==", empresaId);
-    }
     if (estado) {
       query = query.where("estado", "==", estado);
     }
 
     const snapshot = await query.orderBy("createdAt", "desc").get();
     return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
+   * Recursos con una patente (normalizada en mayúsculas).
+   * @param {string} patente Patente normalizada.
+   * @return {Promise<object[]>} Recursos con esa patente.
+   */
+  async listByPatente(patente) {
+    const snap = await db.collection(COLLECTION)
+        .where("patente", "==", patente).get();
+    return snap.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
+   * Datos de alta con timestamps de servidor (para transacciones).
+   * @param {object} data Datos del recurso.
+   * @return {object} Datos listos para escribir.
+   */
+  datosAlta(data) {
+    return {
+      ...data,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
   }
 
   /**
@@ -91,3 +113,4 @@ class RecursoRepository {
 }
 
 module.exports = new RecursoRepository();
+module.exports.COLLECTION = COLLECTION;

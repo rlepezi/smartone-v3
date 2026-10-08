@@ -59,7 +59,7 @@ const NAV_GROUPS = [
     label: "Gestión Operacional",
     items: [
       { label: "Proyectos", path: "/proyectos", icon: FolderKanban, excludeRoles: ["admin_comercial"] },
-      { label: "Empresas", path: "/empresas", icon: HardHat, excludeRoles: ["admin_comercial"] },
+      { label: "Empresas", path: "/empresas", icon: HardHat },
       { label: "Personas", path: "/personas", icon: Users, excludeRoles: ["admin_comercial"] },
       { label: "Maquinarias", path: "/recursos", icon: Truck, excludeRoles: ["admin_comercial"] },
     ],

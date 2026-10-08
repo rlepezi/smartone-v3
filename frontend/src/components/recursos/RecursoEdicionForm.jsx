@@ -13,6 +13,7 @@ import { CambiarProyectoModal } from "../shared/CambiarProyectoModal";
 import { MandanteChip } from "../shared/MandanteChip";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SUGERENCIAS_TIPO_RELACION_RECURSO } from "../../utils/sugerenciasRelacionLaboral";
 
@@ -56,6 +57,9 @@ export const RecursoEdicionForm = ({
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
   const [serverError, setServerError] = useState(null);
+  // Patente ya usada por otra maquinaria activa visible (409 PATENTE_DUPLICADA): aviso, no bloqueo;
+  // al confirmar se reenvía con confirmarPatenteDuplicada: true.
+  const [patenteDuplicada, setPatenteDuplicada] = useState(null); // {recursoId, nombre, patente}
 
   // Empresa activa (nombre, para el modal "Cambiar Empresa") y si ya
   // tiene alguna participación activa en un Proyecto (para el rótulo
@@ -132,11 +136,8 @@ export const RecursoEdicionForm = ({
           modelo: data.modelo || "",
           anio: data.anio ? String(data.anio) : "",
         }));
-        if (data.empresaId) {
-          empresaService.obtenerPorId(data.empresaId)
-            .then((empresa) => setEmpresaActualNombre(empresa?.razonSocial || null))
-            .catch(() => setEmpresaActualNombre(null));
-        }
+        // Empresa actual: la de su relación activa (null si es de una empresa fuera del alcance).
+        setEmpresaActualNombre(data.empresaActual?.empresaNombre || null);
       })
       .catch((err) => setServerError(err.message || "No se pudo cargar la maquinaria."))
       .finally(() => setCargandoRegistro(false));
@@ -152,11 +153,7 @@ export const RecursoEdicionForm = ({
   const handleEmpresaCambiada = () => {
     setCambiarEmpresaAbierto(false);
     recursoService.obtenerPorId(id)
-      .then((data) => {
-        if (!data.empresaId) return;
-        return empresaService.obtenerPorId(data.empresaId)
-          .then((empresa) => setEmpresaActualNombre(empresa?.razonSocial || null));
-      })
+      .then((data) => setEmpresaActualNombre(data.empresaActual?.empresaNombre || null))
       .catch((err) => console.error("Error al recargar la empresa actual:", err));
   };
 
@@ -189,6 +186,7 @@ export const RecursoEdicionForm = ({
     if (usaTipoPersonalizado && !tipoPersonalizado.trim()) {
       newErrors.tipoPersonalizado = "Debe especificar el tipo.";
     }
+    if (!formData.patente.trim()) newErrors.patente = "La patente es obligatoria.";
     if (!esEdicion) {
       if (!formData.empresaId) {
         newErrors.empresaId = "Debe seleccionar una Empresa.";
@@ -204,18 +202,15 @@ export const RecursoEdicionForm = ({
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setServerError(null);
-
-    if (!validateForm()) return;
+  const guardar = async (confirmarPatenteDuplicada = false) => {
     setLoading(true);
 
     const datosBase = {
       nombre: formData.nombre.trim(),
       tipo: usaTipoPersonalizado ? tipoPersonalizado.trim() : formData.tipo,
       estado: formData.estado,
-      patente: formData.patente.trim() || null,
+      patente: formData.patente.trim(),
+      confirmarPatenteDuplicada,
       marca: formData.marca.trim() || null,
       modelo: formData.modelo.trim() || null,
       anio: formData.anio ? Number(formData.anio) : null,
@@ -234,11 +229,24 @@ export const RecursoEdicionForm = ({
         });
         onGuardado?.();
       }
+      setPatenteDuplicada(null);
     } catch (err) {
-      setServerError(err.message);
+      if (err.codigo === "PATENTE_DUPLICADA") {
+        setPatenteDuplicada(err.detalle || {});
+      } else {
+        setPatenteDuplicada(null);
+        setServerError(err.message);
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError(null);
+    if (!validateForm()) return;
+    await guardar(false);
   };
 
   // Aviso de cambios sin guardar: se compara con una foto del formulario tomada al
@@ -279,6 +287,75 @@ export const RecursoEdicionForm = ({
       )}
 
       <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+        {/*
+          Empresa + relación inicial — SOLO al crear, y como primer bloque: la Maquinaria se crea
+          junto con su relación (empresaRecursos). En edición la Empresa/Proyecto activos se
+          cambian vía "Cambiar Empresa"/"Cambiar Proyecto" (RN-122), nunca con este formulario.
+        */}
+        {!esEdicion && (
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
+              <Building2 className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Empresa</h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
+                <SelectConBusqueda
+                  bloque
+                  conAvatar
+                  invalido={Boolean(errors.empresaId)}
+                  disabled={!puedeEscribir}
+                  value={formData.empresaId}
+                  onChange={(v) => elegirCampo("empresaId", v)}
+                  textoVacio="Seleccione una Empresa..."
+                  placeholder="Buscar por nombre o RUT..."
+                  options={[
+                    { value: "", label: "Seleccione una Empresa..." },
+                    ...empresasOpciones.map((e) => ({
+                      value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
+                    })),
+                  ]}
+                />
+                {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Relación *</label>
+                <input
+                  type="text"
+                  name="tipoRelacion"
+                  value={formData.tipoRelacion}
+                  onChange={handleChange}
+                  disabled={!puedeEscribir}
+                  placeholder="Ej: Propietario, Arrendatario"
+                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
+                    errors.tipoRelacion ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                  }`}
+                />
+                {errors.tipoRelacion && <p className="text-xs text-red-500 mt-1">{errors.tipoRelacion}</p>}
+                {puedeEscribir && <SugerenciasChips opciones={SUGERENCIAS_TIPO_RELACION_RECURSO} valor={formData.tipoRelacion} onElegir={(v) => elegirCampo("tipoRelacion", v)} />}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
+                <input
+                  type="date"
+                  name="fechaInicio"
+                  value={formData.fechaInicio}
+                  onChange={handleChange}
+                  disabled={!puedeEscribir}
+                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
+                    errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                  }`}
+                />
+                {errors.fechaInicio && <p className="text-xs text-red-500 mt-1">{errors.fechaInicio}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
             <Truck className="w-4 h-4 text-primary" />
@@ -395,7 +472,7 @@ export const RecursoEdicionForm = ({
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Patente / Identificación (Opcional)</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Patente / Identificación *</label>
               <input
                 type="text"
                 name="patente"
@@ -403,8 +480,11 @@ export const RecursoEdicionForm = ({
                 onChange={handleChange}
                 disabled={!puedeEscribir}
                 placeholder="Ej: ABCD12"
-                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
+                  errors.patente ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                }`}
               />
+              {errors.patente && <p className="text-xs text-red-500 mt-1">{errors.patente}</p>}
             </div>
 
             <div>
@@ -450,76 +530,6 @@ export const RecursoEdicionForm = ({
           </div>
         </div>
 
-        {/*
-          Empresa + relación inicial — SOLO al crear. En edición la
-          Empresa/Proyecto activos se cambian vía los botones de arriba
-          ("Cambiar Empresa"/"Cambiar Proyecto", RN-122), nunca editando
-          este formulario directo.
-        */}
-        {!esEdicion && (
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-gray-100">
-              <Building2 className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Relación con Empresa Inicial</h3>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
-<SelectConBusqueda
-                  bloque
-                  conAvatar
-                  invalido={Boolean(errors.empresaId)}
-                  disabled={!puedeEscribir}
-                  value={formData.empresaId}
-                  onChange={(v) => elegirCampo("empresaId", v)}
-                  textoVacio="Seleccione una Empresa..."
-                  placeholder="Buscar por nombre o RUT..."
-                  options={[
-                    { value: "", label: "Seleccione una Empresa..." },
-                    ...empresasOpciones.map((e) => ({
-                      value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
-                    })),
-                  ]}
-                />
-                {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Relación *</label>
-                <input
-                  type="text"
-                  name="tipoRelacion"
-                  value={formData.tipoRelacion}
-                  onChange={handleChange}
-                  disabled={!puedeEscribir}
-                  placeholder="Ej: Propietario, Arrendatario"
-                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
-                    errors.tipoRelacion ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                  }`}
-                />
-                {errors.tipoRelacion && <p className="text-xs text-red-500 mt-1">{errors.tipoRelacion}</p>}
-                {puedeEscribir && <SugerenciasChips opciones={SUGERENCIAS_TIPO_RELACION_RECURSO} valor={formData.tipoRelacion} onElegir={(v) => elegirCampo("tipoRelacion", v)} />}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-                <input
-                  type="date"
-                  name="fechaInicio"
-                  value={formData.fechaInicio}
-                  onChange={handleChange}
-                  disabled={!puedeEscribir}
-                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
-                    errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                  }`}
-                />
-                {errors.fechaInicio && <p className="text-xs text-red-500 mt-1">{errors.fechaInicio}</p>}
-              </div>
-            </div>
-          </div>
-        )}
-
         {!enDetalle && (
         <div className="flex items-center justify-end gap-3 pt-2">
           <button
@@ -541,6 +551,18 @@ export const RecursoEdicionForm = ({
         </div>
         )}
       </form>
+
+      {patenteDuplicada && (
+        <ConfirmacionModal
+          peligro
+          titulo="Patente ya registrada"
+          mensaje={`La patente ${patenteDuplicada.patente || formData.patente.trim()} ya la usa otra maquinaria activa: ${patenteDuplicada.nombre || "sin nombre"}. La patente no es única; puede continuar si corresponde.`}
+          textoConfirmar="Guardar de todas formas"
+          ocupado={loading}
+          onCancelar={() => setPatenteDuplicada(null)}
+          onConfirmar={() => guardar(true)}
+        />
+      )}
 
       {cambiarEmpresaAbierto && (
         <CambiarEmpresaRecursoModal

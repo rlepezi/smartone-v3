@@ -39,16 +39,14 @@ class PersonaRepository {
 
   /**
    * Lista personas, opcionalmente filtradas por estado y/o empresa.
-   * @param {{estado: (string|undefined), empresaId: (string|undefined)}}
-   *     filtros Filtros de búsqueda.
+   * La pertenencia a una Empresa vive en la relación (empresaPersonas /
+   * empresaRecursos): se filtra en el servicio, no aquí.
+   * @param {{estado: (string|undefined)}} filtros Filtros de búsqueda.
    * @return {Promise<object[]>} Lista de personas.
    */
-  async list({estado, empresaId} = {}) {
+  async list({estado} = {}) {
     let query = db.collection(COLLECTION);
 
-    if (empresaId) {
-      query = query.where("empresaId", "==", empresaId);
-    }
     if (estado) {
       query = query.where("estado", "==", estado);
     }

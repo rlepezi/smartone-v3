@@ -1,9 +1,31 @@
 import { apiClient } from "../api/apiClient";
 
 export const empresaService = {
-  async listar(estado) {
-    const query = estado ? `?estado=${estado}` : "";
+  // `mandanteId`: solo las empresas asociadas a ese Mandante (empresaMandantes activo). El
+  // alcance del usuario lo aplica siempre el backend.
+  async listar(estado, { mandanteId } = {}) {
+    const params = new URLSearchParams();
+    if (estado) params.set("estado", estado);
+    if (mandanteId) params.set("mandanteId", mandanteId);
+    const query = params.toString() ? `?${params.toString()}` : "";
     const res = await apiClient(`/empresas${query}`);
+    return res.data;
+  },
+
+  // Mandantes asociados (empresaMandantes) y su gestión. Asociar: superadmin/admin_comercial a
+  // cualquier Mandante; mandante_admin solo al propio. Desasociar: superadmin/admin_comercial.
+  async listarMandantes(id) {
+    const res = await apiClient(`/empresas/${id}/mandantes`);
+    return res.data;
+  },
+
+  async asociarMandante(id, mandanteId) {
+    const res = await apiClient(`/empresas/${id}/mandantes`, { method: "POST", body: { mandanteId } });
+    return res.data;
+  },
+
+  async desasociarMandante(id, mandanteId) {
+    const res = await apiClient(`/empresas/${id}/mandantes/${mandanteId}`, { method: "DELETE" });
     return res.data;
   },
 

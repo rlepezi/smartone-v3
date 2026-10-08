@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { View, FlatList, TouchableOpacity, Text, StyleSheet } from "react-native";
 import { useAsync } from "../hooks/useAsync";
 import { useListPaging } from "../hooks/useListPaging";
 import { recursoService } from "../services/recursoService";
-import { empresasApi } from "../api/empresas";
 import { colors } from "../theme/colors";
 import { spacing, radius, minTouchTarget } from "../theme/spacing";
 import { typography } from "../theme/typography";
@@ -24,21 +23,9 @@ const ESTADOS = [
   { value: "inactivo", label: "Inactivas" },
 ];
 
-function useNombreEmpresa(empresaId) {
-  const [nombre, setNombre] = useState(null);
-  useEffect(() => {
-    if (!empresaId) return;
-    let activo = true;
-    empresasApi.obtener(empresaId)
-        .then((e) => activo && setNombre(e?.razonSocial || null))
-        .catch(() => {});
-    return () => { activo = false; };
-  }, [empresaId]);
-  return nombre;
-}
-
+// Empresa actual: la de la relación activa (empresaActual), ya resuelta por la API.
 function MaquinaRow({ item, onPress }) {
-  const empresaNombre = useNombreEmpresa(item.empresaId);
+  const empresaNombre = item.empresaActual?.empresaNombre || null;
   return (
     <ListRow
       entity="maquinas"
