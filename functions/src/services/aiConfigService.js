@@ -2,6 +2,11 @@ const {AI_CONFIG_ENCRYPTION_KEY} = require("../utils/secretosIA");
 const Anthropic = require("@anthropic-ai/sdk");
 const configuracionIARepository =
     require("../repositories/configuracionIARepository");
+const revisionRequerimientoIARepository =
+    require("../repositories/revisionRequerimientoIARepository");
+const pruebaReglaIARepository =
+    require("../repositories/pruebaReglaIARepository");
+const {UMBRAL_CONFIANZA_POR_DEFECTO} = require("../reglasIA/resultado");
 const procesamientoIARepository =
     require("../repositories/procesamientoIARepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
@@ -303,15 +308,21 @@ class AIConfigService {
 
   /**
    * Parámetros de modelo y precios vigentes (para extracción y costos).
+   * `umbralConfianzaReglas`: bajo esta confianza una regla interpretativa
+   * va a revisión manual (configuracionIA/global; 0,7 si no está).
    * @return {Promise<{modeloPorDefecto: string, preciosPorModelo: Object,
-   *     limiteGastoMensualUsd: ?number}>} Parámetros.
+   *     limiteGastoMensualUsd: ?number, umbralConfianzaReglas: number}>}
+   *     Parámetros.
    */
   async obtenerParametros() {
     const config = await this._config();
+    const umbral = Number(config.umbralConfianzaReglas);
     return {
       modeloPorDefecto: config.modeloPorDefecto,
       preciosPorModelo: config.preciosPorModelo,
       limiteGastoMensualUsd: config.limiteGastoMensualUsd,
+      umbralConfianzaReglas: umbral > 0 && umbral <= 1 ? umbral :
+        UMBRAL_CONFIANZA_POR_DEFECTO,
     };
   }
 
@@ -350,7 +361,16 @@ class AIConfigService {
     // Un día de margen hacia atrás (zona horaria); el corte exacto es por
     // la fecha en Santiago.
     const desde = new Date(Date.parse(`${mes}-01T00:00:00Z`) - MS_DIA);
-    const costos = await procesamientoIARepository.listCostosDesde(desde);
+    // Procesamientos de carpetas + pruebas de reglas ("Probar reglas") +
+    // revisiones por requerimiento ("Revisar con IA").
+    const [procesamientos, pruebas, revisiones] = await Promise.all([
+      procesamientoIARepository.listCostosDesde(desde),
+      pruebaReglaIARepository.listCostosDesde(desde),
+      revisionRequerimientoIARepository.listCostosDesde(desde),
+    ]);
+    const costos = [...procesamientos,
+      ...[...pruebas, ...revisiones].map((p) => ({createdAt: p.createdAt,
+        costoUsd: p.costoEstimado}))];
     const gasto = costos
         .filter((c) => c.createdAt &&
             fechaSantiago(c.createdAt.toDate()).startsWith(mes))

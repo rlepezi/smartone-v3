@@ -333,13 +333,16 @@ class EvaluacionService {
    * @param {Object} [origenIA] Solo Revisiones IA (nunca del cliente):
    *     {resultadoRevisionId, procesamientoIds}; la evaluación queda con
    *     modalidad "ia_asistida" y esas referencias.
+   *     `payload.revisionIAId` (opcional): revisión IA por requerimiento
+   *     cuya propuesta se aplicó; se valida aquí y, en la misma transacción,
+   *     la revisión pasa a "confirmada" con el ID de esta evaluación.
    * @return {Promise<Object>} La evaluación creada, con el detalle de
    *     qué Evidencias quedaron vinculadas y cuáles fueron rechazadas.
    */
   async crearEvaluacion(payload, actor, origenIA = null) {
     const {
       expedienteRequerimientoId, resultado, observaciones, evidenciaIds,
-      fechaVencimiento, metodoVerificacion,
+      fechaVencimiento, metodoVerificacion, revisionIAId,
     } = payload;
 
     if (!expedienteRequerimientoId || !resultado) {
@@ -371,6 +374,13 @@ class EvaluacionService {
     }
     this.exigirInstanciaEvaluable(expediente, instancia);
     await this._validarSujeto(instancia, expediente);
+    // Diferido: revisionRequerimientoIAService también usa este servicio.
+    const revisionIA = revisionIAId && !origenIA ?
+      await require("./revisionRequerimientoIAService").validarParaConfirmar(
+          revisionIAId, expedienteRequerimientoId, actor) : null;
+    const revisionRef = revisionIA ? db.collection(
+        require("../repositories/revisionRequerimientoIARepository")
+            .COLLECTION).doc(revisionIA.id) : null;
 
     const tieneEvidencia =
         await this._tieneEvidenciaDocumental(expedienteRequerimientoId);
@@ -418,13 +428,24 @@ class EvaluacionService {
     );
 
     await db.runTransaction(async (tx) => {
-      const [instanciaSnap, expedienteSnap, vigentesSnap, activasSnap] =
-          await Promise.all([
-            tx.get(instanciaRef), tx.get(expedienteRef), tx.get(vigentesQuery),
-            tx.get(activasQuery),
-          ]);
+      const [instanciaSnap, expedienteSnap, vigentesSnap, activasSnap,
+        revisionSnap] = await Promise.all([
+        tx.get(instanciaRef), tx.get(expedienteRef), tx.get(vigentesQuery),
+        tx.get(activasQuery), revisionRef ? tx.get(revisionRef) : null,
+      ]);
       const actual = instanciaSnap.data();
       this.exigirInstanciaEvaluable(expedienteSnap.data(), actual);
+      if (revisionSnap && revisionSnap.data()?.estado !== "propuesta") {
+        throw new AppError(409, "La revisión IA ya fue confirmada o " +
+            "descartada.");
+      }
+      if (revisionRef) {
+        tx.update(revisionRef, {
+          estado: "confirmada", evaluacionId: nuevaRef.id,
+          resultadoConfirmado: resultado,
+          resueltaAt: FieldValue.serverTimestamp(), resueltaBy: actor.uid,
+        });
+      }
 
       reemplazoEvaluacionId = vigentesSnap.docs[0]?.id || null;
       vigentesSnap.docs.forEach((d) => tx.update(d.ref, {
@@ -441,7 +462,8 @@ class EvaluacionService {
         recursoId: instancia.recursoId || null,
         fechaVencimiento: fechaVencimientoDate,
         resultado,
-        modalidad: origenIA ? "ia_asistida" : "manual",
+        modalidad: origenIA || revisionIA ? "ia_asistida" : "manual",
+        ...(revisionIA ? {revisionIAId: revisionIA.id} : {}),
         ...(origenIA ? {
           resultadoRevisionId: origenIA.resultadoRevisionId,
           procesamientoIds: origenIA.procesamientoIds || [],
@@ -501,8 +523,18 @@ class EvaluacionService {
         personaId: instancia.personaId || null,
         recursoId: instancia.recursoId || null,
         metodoVerificacion: metodoFinal,
+        ...(revisionIA ? {revisionIAId: revisionIA.id} : {}),
       },
     });
+    if (revisionIA) {
+      await bitacoraLogger.registrarEvento({
+        mandanteId, entidad: "revisionesRequerimientoIA",
+        entidadId: revisionIA.id, accion: "confirmada", actor,
+        detalle: {evaluacionId: nuevaRef.id, resultado,
+          resultadoPropuesto: revisionIA.resultadoPropuesto?.resultado || null,
+          expedienteId: expediente.id, expedienteRequerimientoId},
+      });
+    }
 
     // El estado del Expediente se deriva de sus contadores.
     await expedienteService.recalcularEstado(expediente.id, actor);

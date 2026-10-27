@@ -7,6 +7,7 @@ import { BloqueCarpeta } from "./BloqueCarpeta";
 import { BloqueRequerimientos } from "./BloqueRequerimientos";
 import { MatrizRevision } from "./MatrizRevision";
 import { BloqueValidar } from "./BloqueValidar";
+import { RevisionesPorRequerimiento } from "./RevisionesPorRequerimiento";
 
 const ROLES_CONFIGURAN_CATALOGO = ["superadmin", "mandante_admin"];
 // Validar y aceptar crean sesiones y evaluaciones: mismos roles que operan Revisiones IA.
@@ -152,6 +153,8 @@ export const RevisionIAExpediente = ({ expediente, usuarioId, rol, onEvaluarManu
           onCambio={recargar}
         />
       </section>
+
+      {["superadmin", "evaluador"].includes(rol) && <RevisionesPorRequerimiento expedienteId={expedienteId} />}
     </div>
   );
 };

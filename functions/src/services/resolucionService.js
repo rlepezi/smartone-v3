@@ -7,9 +7,6 @@ const tipoDocumentalRepository =
 const expedienteRequerimientoRepository =
     require("../repositories/expedienteRequerimientoRepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
-const requerimientoRepository =
-    require("../repositories/requerimientoRepository");
-const evaluacionRepository = require("../repositories/evaluacionRepository");
 const evidenciaRepository = require("../repositories/evidenciaRepository");
 const evidenciaService = require("./evidenciaService");
 const evidenciaRequerimientoService =
@@ -181,82 +178,6 @@ class ResolucionService {
       String(payload.expedienteId) : null;
     return this._ejecutar({resultado, accion, resultadoFinal, observacion,
       actor, expedienteId, fechaVencimientoManual});
-  }
-
-  /**
-   * Motivo por el que un resultado NO puede aceptarse automáticamente, o
-   * null si puede. Regla: propuesta "cumple" (todas las reglas sin
-   * no_cumple ni revisión), RUN del documento confirmado contra la Persona,
-   * sin conflictos entre archivos, tipo documental activo con estado IA
-   * "activo" (no piloto) y todos los requerimientos enlazados en modo
-   * "automatico".
-   * @param {Object} resultado Resultado de revisión ("propuesto").
-   * @return {Promise<?string>} Motivo o null.
-   */
-  async motivoNoAutomatico(resultado) {
-    if (resultado.estado !== "propuesto") return "ya_resuelto";
-    if (resultado.propuesta !== "cumple") return "propuesta_no_cumple";
-    if (resultado.estadoEnlace !== "confirmado") return "run_sin_confirmar";
-    if ((resultado.conflictos || []).length > 0) return "conflictos";
-    const requeridos = (resultado.enlaces || []).filter((e) =>
-      e.requerido && e.expedienteRequerimientoId);
-    if (requeridos.length === 0) return "sin_requerimientos";
-    const tipo = await tipoDocumentalRepository.getByCodigo(
-        resultado.tipoDocumentalCodigo,
-    );
-    if (!tipo || tipo.estado !== "activo" || tipo.estadoIA !== "activo") {
-      return "tipo_no_activo";
-    }
-    const requerimientos = await requerimientoRepository.getByIds(
-        [...new Set(requeridos.map((e) => e.requerimientoId))],
-    );
-    const porId = new Map(requerimientos.map((r) => [r.id, r]));
-    const todosAutomaticos = requeridos.every((e) =>
-      porId.get(e.requerimientoId)?.modoValidacion === "automatico");
-    if (!todosAutomaticos) return "requerimiento_no_automatico";
-    // La IA nunca reemplaza sola una evaluación manual (o reutilizada)
-    // vigente: queda como propuesta ("Discrepancia" en el expediente).
-    const instancias = await Promise.all(requeridos.map((e) =>
-      expedienteRequerimientoRepository.getById(e.expedienteRequerimientoId)));
-    const vigentes = await Promise.all(instancias
-        .filter((i) => i?.evaluacionVigenteId)
-        .map((i) => evaluacionRepository.getById(i.evaluacionVigenteId)));
-    const conManual = vigentes.some((v) => v && v.estado === "vigente" &&
-      v.resultado !== "pendiente" && v.modalidad !== "ia_asistida");
-    return conManual ? "evaluacion_manual_vigente" : null;
-  }
-
-  /**
-   * Acepta automáticamente los resultados que cumplen la regla de
-   * `motivoNoAutomatico`. Un error en uno no detiene a los demás: ese
-   * resultado queda "propuesto" para el evaluador.
-   * @param {Object[]} resultados Resultados recién consolidados.
-   * @param {Object} actor Usuario que ejecuta la revisión.
-   * @return {Promise<Object[]>} Resultados, con los aceptados actualizados.
-   */
-  async aceptarAutomaticos(resultados, actor) {
-    const salida = [];
-    for (const resultado of resultados) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const motivo = await this.motivoNoAutomatico(resultado);
-        if (motivo) {
-          salida.push(resultado);
-          continue;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        const {resultado: actualizado} = await this._ejecutar({
-          resultado, accion: "aceptar", resultadoFinal: "cumple",
-          observacion: null, actor, automatica: true,
-        });
-        salida.push(actualizado);
-      } catch (error) {
-        console.error("Aceptación automática fallida:", resultado.id,
-            error.message);
-        salida.push(resultado);
-      }
-    }
-    return salida;
   }
 
   /**

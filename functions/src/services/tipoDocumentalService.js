@@ -14,6 +14,9 @@ const bitacoraLogger = require("../utils/bitacoraLogger");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
 const AppError = require("../utils/AppError");
 const {
+  conDefaults, validarEntidades, validarCampos,
+} = require("../reglasIA/tiposDocumentales");
+const {
   concordancia, costoPromedio, agruparPorNormalizar,
 } = require("../utils/metricasIA");
 
@@ -53,7 +56,8 @@ class TipoDocumentalService {
         requerimientosPorTipo.flat().map((r) => r.mandanteId),
     );
     return tipos.map((t, i) => ({
-      ...t,
+      // entidades y campos: los guardados o los base (sin migración).
+      ...conDefaults(t),
       concordancia: concordancia(t.metricas),
       costoPromedioUsd: costoPromedio(t.metricas),
       requerimientos: requerimientosPorTipo[i].map((r) => ({
@@ -62,7 +66,7 @@ class TipoDocumentalService {
         estado: r.estado,
         mandanteId: r.mandanteId,
         mandanteNombre: nombres.get(r.mandanteId) || r.mandanteId,
-        modoValidacion: r.modoValidacion || "manual",
+        estadoIA: r.estadoIA || "sin_reglas",
       })),
     })).sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es"));
   }
@@ -93,7 +97,8 @@ class TipoDocumentalService {
   }
 
   /**
-   * Edita estadoIA, modeloPreferido y umbralLegibilidad.
+   * Edita estadoIA, modeloPreferido, umbralLegibilidad, entidades (a qué
+   * entidades aplica) y campos (qué extrae la IA).
    * @param {string} id ID del tipo.
    * @param {Object} payload Campos.
    * @param {Object} actor Usuario autenticado.
@@ -129,7 +134,17 @@ class TipoDocumentalService {
       }
       cambios.umbralLegibilidad = umbral;
     }
-    if (Object.keys(cambios).length === 0) return previo;
+    if (payload.entidades !== undefined) {
+      const r = validarEntidades(payload.entidades);
+      if (!r.ok) throw new AppError(400, r.error);
+      cambios.entidades = r.valor;
+    }
+    if (payload.campos !== undefined) {
+      const r = validarCampos(payload.campos);
+      if (!r.ok) throw new AppError(400, r.error);
+      cambios.campos = r.valor;
+    }
+    if (Object.keys(cambios).length === 0) return conDefaults(previo);
     const actualizado = await tipoDocumentalRepository.update(id, cambios);
     const detalle = {};
     Object.keys(cambios).forEach((campo) => {

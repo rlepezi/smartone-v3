@@ -17,6 +17,7 @@ const requerimientoRepository =
 const empresaRepository = require("../repositories/empresaRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
 const reglas = require("./reglasService");
+const requerimientoReglaIAService = require("./requerimientoReglaIAService");
 const resultadoCompletitudRepository =
     require("../repositories/resultadoCompletitudRepository");
 const {cleanRut} = require("../utils/rutValidator");
@@ -165,6 +166,10 @@ class ConsolidacionService {
       ),
     ]);
     const requerimientoPorId = new Map(requerimientos.map((r) => [r.id, r]));
+    // LC-04: las clases aceptadas son el parámetro de la regla
+    // "clases_aceptadas" del requerimiento (ya no parametrosValidacion).
+    const clasesPorRequerimiento = await requerimientoReglaIAService
+        .clasesAceptadasPorRequerimiento(requerimientos.map((r) => r.id));
     const empresaPorId = new Map(empresas.map((e) => [e.id, e]));
     const proyectoPorId = new Map(proyectos.map((p) => [p.id, p]));
 
@@ -202,16 +207,13 @@ class ConsolidacionService {
             return;
           }
           coinciden.forEach((i) => {
-            const req = requerimientoPorId.get(i.requerimientoId);
             enlacesPorTipo[tipo.codigo].push({
               ...base,
               requerimientoId: i.requerimientoId,
               expedienteRequerimientoId: i.id,
               requerido: true,
               clasesAceptadas:
-                  req.parametrosValidacion?.clasesAceptadas || null,
-              diasAlertaVencimiento:
-                  req.parametrosValidacion?.diasAlertaVencimiento ?? null,
+                  clasesPorRequerimiento.get(i.requerimientoId) || null,
             });
           });
         });
@@ -234,11 +236,9 @@ class ConsolidacionService {
   _aplicarReglas({codigo, datos, conflictos, persona, tipo, enlaces,
     fechasEnNombre = []}) {
     const requeridos = enlaces.filter((e) => e.requerido);
-    const diasAlerta = requeridos.map((e) => e.diasAlertaVencimiento)
-        .find((d) => d !== null && d !== undefined) ??
-        reglas.DIAS_ALERTA_POR_DEFECTO;
     const ctx = {
-      datos, conflictos, hoy: hoySantiago(), diasAlerta, fechasEnNombre,
+      datos, conflictos, hoy: hoySantiago(),
+      diasAlerta: reglas.DIAS_ALERTA_POR_DEFECTO, fechasEnNombre,
       persona: persona ? {
         run: persona.rut,
         nombre: `${persona.nombre || ""} ${persona.apellido || ""}`.trim(),

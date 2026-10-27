@@ -154,6 +154,33 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Reglas de revisión IA (biblioteca, versiones y vínculos con
+    // requerimientos): solo superadmin las ve; solo el backend escribe. Los
+    // roles de mandante no ven esta funcionalidad.
+    match /reglasIA/{docId} {
+      allow read: if tieneRol("superadmin");
+      allow write: if false;
+      match /versiones/{version} {
+        allow read: if tieneRol("superadmin");
+        allow write: if false;
+      }
+    }
+    match /requerimientoReglas/{docId} {
+      allow read: if tieneRol("superadmin");
+      allow write: if false;
+    }
+    // Revisiones IA por requerimiento ("Revisar con IA"): superadmin y
+    // evaluador; solo el backend escribe.
+    match /revisionesRequerimientoIA/{docId} {
+      allow read: if tieneRol("superadmin") || tieneRol("evaluador");
+      allow write: if false;
+    }
+    // Pruebas de reglas IA ("Probar reglas"): solo superadmin las lee.
+    match /pruebasReglasIA/{docId} {
+      allow read: if tieneRol("superadmin");
+      allow write: if false;
+    }
+
     // Catálogo de tipos documentales de Revisiones IA: lectura para
     // usuarios autenticados; solo el backend escribe.
     match /tiposDocumentales/{docId} {

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { X, AlertCircle, CheckCircle2, Info, Sparkles } from "lucide-react";
+import { X, AlertCircle, CheckCircle2, Info } from "lucide-react";
 import { requerimientoService, etiquetaTipoEntidad, NOMBRE_CORTO_MAX } from "../../services/requerimientoService";
-import { revisionIAService, MODOS_VALIDACION } from "../../services/revisionIAService";
 import { AplicaAPills } from "./AplicaAPills";
 import { CrearPerfilRecurso } from "../perfiles-recurso/CrearPerfilRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { OpcionesRadio } from "../shared/OpcionesRadio";
 import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
+import { Tabs } from "../shared/Tabs";
+import { ReglasIARequerimiento } from "./reglas-ia/ReglasIARequerimiento";
 
 const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
 const CLASE_LABEL = "block text-xs font-semibold text-gray-700 mb-1.5";
@@ -14,8 +15,6 @@ const ETIQUETA_PLURAL = { persona: "persona", recurso: "maquinaria" };
 
 const DATOS_VACIOS = {
   nombre: "", nombreCorto: "", descripcion: "", requiereVencimiento: false, esDocumentoIdentidad: false,
-  // Validación con IA (solo Persona). clasesAceptadas: texto separado por comas.
-  tipoDocumentalId: "", modoValidacion: "manual", clasesAceptadas: "", diasAlertaVencimiento: "",
 };
 
 const iguales = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -31,9 +30,11 @@ const ordenados = (ids) => (Array.isArray(ids) ? [...ids].sort() : ids);
 //  - `preseleccion`: { perfilParticipacionIds, perfilRecursoIds } marcados en los chips del catálogo.
 //  - `onGuardado(requerimiento)`: tras cada guardado (el catálogo recarga su listado).
 //  - `onPerfilRecursoCreado()`: se creó un Perfil de Recurso desde el estado vacío.
+//  - `mostrarReglasIA`: pestaña "Reglas IA" al editar (solo superadmin). Sus cambios se guardan al
+//    momento, aparte del formulario.
 export const RequerimientoModal = ({
   mandante, tipoEntidad, perfilesParticipacion, perfilesRecurso, requerimiento = null,
-  preseleccion = {}, onGuardado, onCerrar, onPerfilRecursoCreado,
+  preseleccion = {}, onGuardado, onCerrar, onPerfilRecursoCreado, mostrarReglasIA = false,
 }) => {
   const esEdicion = Boolean(requerimiento);
   const esEmpresa = tipoEntidad === "empresa";
@@ -55,10 +56,6 @@ export const RequerimientoModal = ({
     descripcion: requerimiento.descripcion || "",
     requiereVencimiento: Boolean(requerimiento.requiereVencimiento),
     esDocumentoIdentidad: Boolean(requerimiento.esDocumentoIdentidad),
-    tipoDocumentalId: requerimiento.tipoDocumentalId || "",
-    modoValidacion: requerimiento.modoValidacion || "manual",
-    clasesAceptadas: (requerimiento.parametrosValidacion?.clasesAceptadas || []).join(", "),
-    diasAlertaVencimiento: requerimiento.parametrosValidacion?.diasAlertaVencimiento ?? "",
   } : DATOS_VACIOS);
 
   const [contexto, setContexto] = useState(contextoInicial);
@@ -71,20 +68,14 @@ export const RequerimientoModal = ({
   const [guardando, setGuardando] = useState(false);
   const [toast, setToast] = useState(null);
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
-  const esPersona = tipoEntidad === "persona";
-  const [tiposDocumentales, setTiposDocumentales] = useState([]);
-
-  // Tipos documentales para "Validación con IA" (solo Persona). Si no se pueden cargar, la sección
-  // queda sin opciones y el Requerimiento sigue siendo manual.
-  useEffect(() => {
-    if (!esPersona) return undefined;
-    let vigente = true;
-    revisionIAService.listarTiposDocumentales()
-      .then((lista) => { if (vigente) setTiposDocumentales(lista || []); })
-      .catch(() => {});
-    return () => { vigente = false; };
-  }, [esPersona]);
-  const tipoElegido = tiposDocumentales.find((t) => t.id === datos.tipoDocumentalId) || null;
+  const conReglasIA = esEdicion && mostrarReglasIA;
+  const [pestana, setPestana] = useState("datos");
+  // Al cerrar tras usar "Reglas IA", el listado recarga (badge de estado IA).
+  const [tocoReglas, setTocoReglas] = useState(false);
+  const cerrar = () => {
+    if (tocoReglas) onGuardado?.(requerimiento);
+    onCerrar();
+  };
 
   const hayCambios = !iguales(
     { contexto: { ...contexto, perfilRecursoIds: ordenados(contexto.perfilRecursoIds), perfilParticipacionIds: ordenados(contexto.perfilParticipacionIds) }, datos, estado },
@@ -98,7 +89,7 @@ export const RequerimientoModal = ({
   const pedirCierre = () => {
     if (guardando) return;
     if (hayCambios) setConfirmarDescarte(true);
-    else onCerrar();
+    else cerrar();
   };
 
   // Escape cierra (pidiendo confirmación si hay cambios). No actúa si hay otro modal encima.
@@ -106,6 +97,8 @@ export const RequerimientoModal = ({
     const alPresionar = (e) => {
       if (e.key !== "Escape" || confirmarDescarte) return;
       if (document.querySelector('[aria-label="Nuevo Perfil de Recurso"]')) return;
+      // Modales de "Reglas IA" abiertos encima (agregar, copiar, probar…).
+      if (document.querySelectorAll('[role="dialog"]').length > 1) return;
       pedirCierre();
     };
     document.addEventListener("keydown", alPresionar);
@@ -147,13 +140,6 @@ export const RequerimientoModal = ({
     const corto = datos.nombreCorto.trim();
     if (!corto) nuevos.nombreCorto = "El nombre corto es obligatorio.";
     else if (corto.length > NOMBRE_CORTO_MAX) nuevos.nombreCorto = `Máximo ${NOMBRE_CORTO_MAX} caracteres.`;
-    if (esPersona && datos.modoValidacion !== "manual" && !datos.tipoDocumentalId) {
-      nuevos.tipoDocumentalId = "Elija un tipo documental para la validación con IA.";
-    }
-    const dias = String(datos.diasAlertaVencimiento).trim();
-    if (esPersona && dias && !(/^\d+$/.test(dias) && Number(dias) <= 365)) {
-      nuevos.diasAlertaVencimiento = "Ingrese un número entero de 0 a 365.";
-    }
     if (contexto.perfilParticipacionIds.length === 0) {
       nuevos.perfilParticipacionIds = "Seleccione al menos un Perfil de Participación.";
     }
@@ -175,17 +161,6 @@ export const RequerimientoModal = ({
       descripcion: datos.descripcion.trim() || null,
       requiereVencimiento: datos.requiereVencimiento,
       esDocumentoIdentidad: tipoEntidad === "persona" && datos.esDocumentoIdentidad,
-      ...(esPersona ? {
-        tipoDocumentalId: datos.tipoDocumentalId || null,
-        modoValidacion: datos.tipoDocumentalId ? datos.modoValidacion : "manual",
-        parametrosValidacion: datos.tipoDocumentalId ? {
-          clasesAceptadas: tipoElegido?.codigo === "LICENCIA_CL"
-            ? datos.clasesAceptadas.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean)
-            : [],
-          diasAlertaVencimiento: String(datos.diasAlertaVencimiento).trim() === ""
-            ? null : Number(datos.diasAlertaVencimiento),
-        } : null,
-      } : {}),
       aplicabilidad: {
         perfilParticipacionIds: contexto.perfilParticipacionIds,
         perfilRecursoIds: esEmpresa ? null : contexto.perfilRecursoIds,
@@ -204,7 +179,7 @@ export const RequerimientoModal = ({
         setErrores({});
         nombreRef.current?.focus();
       } else {
-        onCerrar();
+        cerrar();
       }
     } catch (err) {
       // Lo escrito se conserva; el error se muestra en el modal.
@@ -244,6 +219,17 @@ export const RequerimientoModal = ({
           </button>
         </div>
 
+        {conReglasIA && (
+          <div className="px-5">
+            <Tabs tabs={[{ key: "datos", label: "Datos" }, { key: "reglas", label: "Reglas IA" }]} active={pestana}
+              onChange={(k) => { setPestana(k); if (k === "reglas") setTocoReglas(true); }} />
+          </div>
+        )}
+        {pestana === "reglas" && conReglasIA ? (
+          <div className="flex-1 min-h-0 overflow-y-auto p-5">
+            <ReglasIARequerimiento requerimientoId={requerimiento.id} />
+          </div>
+        ) : (
         <form onSubmit={alEnviar} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
           {toast && (
             <div role="status" className="flex items-center gap-2 p-3 rounded-xl bg-sage-lighter border border-sage-light text-sage-darker text-xs font-semibold">
@@ -384,72 +370,6 @@ export const RequerimientoModal = ({
               </label>
             )}
 
-            {esPersona && (
-              <details
-                open={Boolean(datos.tipoDocumentalId) || Boolean(errores.tipoDocumentalId)}
-                className="rounded-2xl border border-slate-100 bg-slate-50/60 [&_summary::-webkit-details-marker]:hidden"
-              >
-                <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer text-xs font-bold text-carbon-dark select-none">
-                  <Sparkles className="w-4 h-4 text-primary" /> Validación con IA
-                  <span className="ml-auto text-[11px] font-semibold text-slate-400">
-                    {tipoElegido ? `${tipoElegido.nombre} · ${MODOS_VALIDACION.find((m) => m.value === datos.modoValidacion)?.label.split(" (")[0]}` : "Manual"}
-                  </span>
-                </summary>
-                <div className="px-4 pb-4 space-y-4">
-                  <div>
-                    <label htmlFor="req-tipo-documental" className={CLASE_LABEL}>Tipo documental</label>
-                    <select
-                      id="req-tipo-documental" name="tipoDocumentalId" value={datos.tipoDocumentalId} onChange={cambiarDato}
-                      className={`${CLASE_INPUT} ${errores.tipoDocumentalId ? "border-red-400 bg-red-50/30" : "border-gray-200"}`}
-                    >
-                      <option value="">Sin validación con IA</option>
-                      {tiposDocumentales.map((t) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                    </select>
-                    {errores.tipoDocumentalId
-                      ? <p className="text-xs text-red-500 mt-1">{errores.tipoDocumentalId}</p>
-                      : <p className="text-[11px] text-slate-400 mt-1">Revisiones IA enlaza los documentos de este tipo con este requerimiento</p>}
-                  </div>
-                  {datos.tipoDocumentalId && (
-                    <>
-                      <div>
-                        <label htmlFor="req-modo-validacion" className={CLASE_LABEL}>Modo de validación</label>
-                        <select id="req-modo-validacion" name="modoValidacion" value={datos.modoValidacion} onChange={cambiarDato} className={`${CLASE_INPUT} border-gray-200`}>
-                          {MODOS_VALIDACION.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                        </select>
-                        {datos.modoValidacion === "automatico" && (
-                          <p className="text-[11px] text-slate-400 mt-1">
-                            Se acepta sin evaluador cuando el tipo documental está Activo (no piloto), el RUN coincide con la persona, no hay diferencias entre archivos y todas las reglas cumplen. Si no, queda pendiente para el evaluador.
-                          </p>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {tipoElegido?.codigo === "LICENCIA_CL" && (
-                          <div>
-                            <label htmlFor="req-clases" className={CLASE_LABEL}>Clases aceptadas</label>
-                            <input
-                              id="req-clases" type="text" name="clasesAceptadas" value={datos.clasesAceptadas} onChange={cambiarDato}
-                              placeholder="Ej.: D, A2" className={`${CLASE_INPUT} border-gray-200`}
-                            />
-                            <p className="text-[11px] text-slate-400 mt-1">Separadas por coma. Vacío: no se exige clase</p>
-                          </div>
-                        )}
-                        <div>
-                          <label htmlFor="req-dias-alerta" className={CLASE_LABEL}>Días de alerta de vencimiento</label>
-                          <input
-                            id="req-dias-alerta" type="number" min="0" max="365" name="diasAlertaVencimiento"
-                            value={datos.diasAlertaVencimiento} onChange={cambiarDato} placeholder="30"
-                            className={`${CLASE_INPUT} ${errores.diasAlertaVencimiento ? "border-red-400 bg-red-50/30" : "border-gray-200"}`}
-                          />
-                          {errores.diasAlertaVencimiento
-                            ? <p className="text-xs text-red-500 mt-1">{errores.diasAlertaVencimiento}</p>
-                            : <p className="text-[11px] text-slate-400 mt-1">Vacío: 30 días</p>}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </details>
-            )}
 
             {esEdicion && (
               <div>
@@ -494,6 +414,7 @@ export const RequerimientoModal = ({
             )}
           </div>
         </form>
+        )}
       </div>
 
       {confirmarDescarte && (
@@ -504,7 +425,7 @@ export const RequerimientoModal = ({
           textoConfirmar="Descartar"
           textoCancelar="Seguir editando"
           onCancelar={() => setConfirmarDescarte(false)}
-          onConfirmar={onCerrar}
+          onConfirmar={cerrar}
         />
       )}
     </div>

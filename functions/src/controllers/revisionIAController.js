@@ -208,7 +208,8 @@ class RevisionIAController {
    */
   async listarTipos(req, res, next) {
     try {
-      const data = await revisionIAService.listarTiposDocumentales();
+      const data = await revisionIAService.listarTiposDocumentales(
+          req.query.entidad || null);
       res.status(200).json({data});
     } catch (error) {
       next(error);

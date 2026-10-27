@@ -97,6 +97,32 @@ class RequerimientoRepository {
   }
 
   /**
+   * Actualiza campos sueltos (estado IA y tipo documental de las reglas de
+   * revisión; no toca el nombre ni sus vínculos de perfil).
+   * @param {string} id ID del documento.
+   * @param {Object} cambios Campos.
+   * @return {Promise<object>} Requerimiento actualizado.
+   */
+  async update(id, cambios) {
+    await db.collection(COLLECTION).doc(id)
+        .update({...cambios, updatedAt: FieldValue.serverTimestamp()});
+    return this.getById(id);
+  }
+
+  /**
+   * Requerimientos activos de todos los Mandantes, solo con su entidad y
+   * estado IA (cobertura de las reglas de revisión).
+   * @return {Promise<object[]>} Lista de {id, tipoEntidad, estadoIA}.
+   */
+  async listActivosResumenIA() {
+    const snapshot = await db.collection(COLLECTION)
+        .where("estado", "==", "activo")
+        .select("tipoEntidad", "estadoIA")
+        .get();
+    return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
    * Requerimientos activos de un Mandante, solo con su tipo de entidad
    * (para contar a qué Perfiles de Recurso aplica cada vínculo).
    * @param {string} mandanteId ID del Mandante.

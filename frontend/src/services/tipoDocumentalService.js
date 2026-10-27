@@ -8,7 +8,7 @@ export const tipoDocumentalService = {
     return res.data;
   },
 
-  // cambios: { estadoIA, modeloPreferido, umbralLegibilidad }.
+  // cambios: { estadoIA, modeloPreferido, umbralLegibilidad, entidades, campos }.
   async actualizar(id, cambios) {
     const res = await apiClient(`/tipos-documentales/${id}`, { method: "PUT", body: cambios });
     return res.data;

@@ -3,8 +3,6 @@ const requerimientoRepository =
 const perfilRequerimientoRepository =
     require("../repositories/perfilRequerimientoRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
-const tipoDocumentalRepository =
-    require("../repositories/tipoDocumentalRepository");
 const perfilRequerimientoService = require("./perfilRequerimientoService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {TIPOS_ENTIDAD} = require("../utils/aplicabilidadRequerimiento");
@@ -24,9 +22,6 @@ const ESTADOS_VALIDOS = ["activo", "inactivo"];
 const NOMBRE_MAX = 200;
 const NOMBRE_CORTO_MAX = 40;
 const DESCRIPCION_MAX = 2000;
-// Validación con IA (Revisiones IA): solo Requerimientos de Persona.
-const MODOS_VALIDACION = ["manual", "asistido", "automatico"];
-const MAX_DIAS_ALERTA = 365;
 
 // Roles cuyo acceso queda siempre acotado a su propio Mandante.
 const ROLES_ALCANCE_FORZADO = ["mandante_admin", "mandante_lector"];
@@ -56,65 +51,6 @@ class RequerimientoService {
       );
     }
     return texto;
-  }
-
-  /**
-   * Valida los campos de "Validación con IA". Solo aplican a Requerimientos
-   * de Persona; para Empresa y Maquinaria quedan en manual, sin tipo.
-   * @param {Object} entrada {tipoDocumentalId, modoValidacion,
-   *     parametrosValidacion}.
-   * @param {string} tipoEntidad Tipo del Requerimiento.
-   * @return {Promise<{tipoDocumentalId: ?string, modoValidacion: string,
-   *     parametrosValidacion: ?Object}>} Campos normalizados.
-   */
-  async _validacionIA(entrada, tipoEntidad) {
-    const sinIA = {
-      tipoDocumentalId: null, modoValidacion: "manual",
-      parametrosValidacion: null,
-    };
-    if (tipoEntidad !== "persona") return sinIA;
-    const modo = entrada.modoValidacion || "manual";
-    if (!MODOS_VALIDACION.includes(modo)) {
-      throw new AppError(400, `Modo de validación '${modo}' no válido. ` +
-          `Valores permitidos: ${MODOS_VALIDACION.join(", ")}.`);
-    }
-    const tipoDocumentalId = entrada.tipoDocumentalId || null;
-    if (tipoDocumentalId) {
-      const tipo = await tipoDocumentalRepository.getById(tipoDocumentalId);
-      if (!tipo || tipo.estado !== "activo") {
-        throw new AppError(400, "El tipo documental indicado no existe.");
-      }
-    } else if (modo !== "manual") {
-      throw new AppError(400,
-          "La validación asistida o automática requiere un tipo documental.");
-    }
-    let parametros = null;
-    const p = entrada.parametrosValidacion;
-    if (tipoDocumentalId && p && typeof p === "object") {
-      const clases = Array.isArray(p.clasesAceptadas) ?
-          [...new Set(p.clasesAceptadas
-              .map((c) => String(c).trim().toUpperCase()).filter(Boolean))] :
-          [];
-      const dias = p.diasAlertaVencimiento;
-      const diasAlerta = dias === null || dias === undefined || dias === "" ?
-          null : Number(dias);
-      if (diasAlerta !== null && !(Number.isInteger(diasAlerta) &&
-          diasAlerta >= 0 && diasAlerta <= MAX_DIAS_ALERTA)) {
-        throw new AppError(400, "Los días de alerta de vencimiento deben " +
-            `ser un entero entre 0 y ${MAX_DIAS_ALERTA}.`);
-      }
-      if (clases.length || diasAlerta !== null) {
-        parametros = {
-          clasesAceptadas: clases.length ? clases : null,
-          diasAlertaVencimiento: diasAlerta,
-        };
-      }
-    }
-    return {
-      tipoDocumentalId,
-      modoValidacion: tipoDocumentalId ? modo : "manual",
-      parametrosValidacion: parametros,
-    };
   }
 
   /**
@@ -385,7 +321,10 @@ class RequerimientoService {
       // tiene sentido para Personas.
       esDocumentoIdentidad: tipoEntidad === "persona" &&
           Boolean(datosEntrada.esDocumentoIdentidad),
-      ...await this._validacionIA(datosEntrada, tipoEntidad),
+      // Reglas de revisión IA: el tipo documental y el estado IA se
+      // configuran en la pestaña "Reglas IA" (requerimientoReglaIAService).
+      tipoDocumentalId: null,
+      estadoIA: "sin_reglas",
     };
     const plan = await this._planVinculos(
         {id: ref.id, ...datos}, aplicabilidad, [], actor,
@@ -461,18 +400,6 @@ class RequerimientoService {
       cambios.esDocumentoIdentidad = tipoEntidad === "persona" &&
           Boolean(entrada.esDocumentoIdentidad);
     }
-    if (entrada.tipoDocumentalId !== undefined ||
-        entrada.modoValidacion !== undefined ||
-        entrada.parametrosValidacion !== undefined) {
-      Object.assign(cambios, await this._validacionIA({
-        tipoDocumentalId: entrada.tipoDocumentalId !== undefined ?
-            entrada.tipoDocumentalId : existente.tipoDocumentalId,
-        modoValidacion: entrada.modoValidacion !== undefined ?
-            entrada.modoValidacion : existente.modoValidacion,
-        parametrosValidacion: entrada.parametrosValidacion !== undefined ?
-            entrada.parametrosValidacion : existente.parametrosValidacion,
-      }, tipoEntidad));
-    }
     if (entrada.estado !== undefined) {
       if (!ESTADOS_VALIDOS.includes(entrada.estado)) {
         throw new AppError(400, `Estado '${entrada.estado}' no válido.`);
@@ -514,7 +441,6 @@ class RequerimientoService {
 
     const cambioEstado = cambios.estado !== undefined &&
         cambios.estado !== existente.estado;
-    // Por valor: parametrosValidacion es un mapa.
     const camposEditados = Object.keys(cambios).filter((k) =>
       k !== "estado" &&
       JSON.stringify(cambios[k] ?? null) !==

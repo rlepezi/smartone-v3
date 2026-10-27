@@ -33,7 +33,7 @@ export const PanelDocumentos = ({
   onIrADocumentacion, onRepositorio, onCarpetaAsignada,
 }) => {
   const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio });
-  const { expandible, expandido, alternarExpandido } = usePanelDocumentos();
+  const { expandible, expandido, alternarExpandido, informarArchivo } = usePanelDocumentos();
   const mapeo = repositorio?.mapeo || MAPEO_VACIO;
   const local = repositorio?.tipo === "local";
 
@@ -82,9 +82,17 @@ export const PanelDocumentos = ({
   useEffect(() => {
     if (!visor || !carpeta.lista) return undefined;
     let vigente = true;
-    obtenerArchivo(carpeta.handle, visor).then((f) => { if (vigente) setArchivo(f); });
+    obtenerArchivo(carpeta.handle, visor).then((f) => {
+      if (!vigente) return;
+      setArchivo(f);
+      // Para "Revisar con IA" de la evaluación.
+      informarArchivo(f ? { file: f, rutaRelativa: visor } : null);
+    });
     return () => { vigente = false; };
-  }, [visor, carpeta.lista, carpeta.handle]);
+  }, [visor, carpeta.lista, carpeta.handle, informarArchivo]);
+
+  // Otro sujeto (el panel se vuelve a montar) o salir: ya no hay archivo abierto.
+  useEffect(() => () => informarArchivo(null), [informarArchivo]);
 
   // Al volver a la lista se restaura la posición de scroll.
   useLayoutEffect(() => {
@@ -214,7 +222,7 @@ export const PanelDocumentos = ({
     return (
       <div className="flex flex-col h-full min-h-0">
         <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-100 bg-slate-50">
-          <button type="button" onClick={() => setVisor(null)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-primary hover:bg-primary-lighter">
+          <button type="button" onClick={() => { setVisor(null); informarArchivo(null); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-primary hover:bg-primary-lighter">
             <ArrowLeft className="w-3.5 h-3.5" /> Archivos
           </button>
           <span className="flex-1 min-w-0 truncate text-[11px] font-semibold text-carbon-dark" title={nombre}>{nombre}</span>

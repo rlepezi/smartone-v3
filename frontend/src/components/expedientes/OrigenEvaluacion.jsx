@@ -11,7 +11,9 @@ const ORIGEN = {
 // quién la registró y cuándo.
 export const OrigenEvaluacion = ({ evaluacion }) => {
   if (!evaluacion || evaluacion.resultado === "pendiente") return null;
-  const origen = ORIGEN[evaluacion.modalidad] || ORIGEN.manual;
+  const base = ORIGEN[evaluacion.modalidad] || ORIGEN.manual;
+  // "Revisar con IA" por requerimiento: el evaluador confirmó la propuesta de las reglas IA.
+  const origen = evaluacion.revisionIAId ? { ...base, texto: "Propuesta IA (reglas del requerimiento) confirmada por el evaluador" } : base;
   const titulo = `${origen.texto} · ${evaluacion.evaluadorNombre || "—"} · ${formatFechaHora(evaluacion.createdAt)}`;
   return (
     <span title={titulo} className={`shrink-0 ${origen.clase}`}>

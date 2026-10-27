@@ -10,9 +10,12 @@ import {
   Paperclip,
   PieChart,
   Search,
+  Sparkles,
   UploadCloud,
   X,
 } from "lucide-react";
+import { revisionRequerimientoIAService } from "../../services/revisionRequerimientoIAService";
+import { RevisarConIARequisito } from "./RevisarConIARequisito";
 import { useAuth } from "../../contexts/AuthContext";
 import { expedienteService } from "../../services/expedienteService";
 import { proyectoService } from "../../services/proyectoService";
@@ -136,6 +139,10 @@ export const PlanillaEvaluacion = ({
   const puedeEvaluar = ["superadmin", "evaluador"].includes(profile?.rol);
   const puedeAdjuntarEvidencia = ["superadmin", "mandante_admin"].includes(profile?.rol);
   const puedeReintentarGeneracion = ["superadmin", "mandante_admin"].includes(profile?.rol);
+  // "Revisar con IA" por requerimiento (reglas IA): superadmin y evaluador.
+  const puedeRevisarIA = ["superadmin", "evaluador"].includes(profile?.rol);
+  const [estadoIA, setEstadoIA] = useState({ habilitados: new Set(), propuestas: new Map() });
+  const [revisionAbierta, setRevisionAbierta] = useState(null); // instanciaId con el panel abierto
 
   // Modo: normalmente se infiere de qué parámetro de ruta vino (personaId/recursoId), como en
   // EvaluarExpedientePage/RequerimientosProyecto. El Detalle de Expediente en cambio puede tener
@@ -294,6 +301,38 @@ export const PlanillaEvaluacion = ({
     setError(err.message || "No se pudieron cargar los requisitos.");
   });
 
+  // Requerimientos con IA habilitada y propuestas pendientes de "Revisar con IA".
+  const cargarEstadoIA = () => revisionRequerimientoIAService.estado(expedienteId)
+    .then((e) => setEstadoIA({
+      habilitados: new Set(e?.requerimientosHabilitados || []),
+      propuestas: new Map((e?.propuestas || []).map((p) => [p.expedienteRequerimientoId, p])),
+    }))
+    .catch(() => {});
+  useEffect(() => {
+    if (!puedeRevisarIA) return;
+    cargarEstadoIA();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expedienteId, recargarSenal, puedeRevisarIA]);
+  const conPropuesta = (instanciaId, revision) => setEstadoIA((e) => {
+    const propuestas = new Map(e.propuestas);
+    if (revision) propuestas.set(instanciaId, revision); else propuestas.delete(instanciaId);
+    return { ...e, propuestas };
+  });
+  // "Aplicar propuesta": llena SI/NO, la observación y la fecha de vencimiento; NO guarda.
+  const aplicarPropuesta = (instancia, revision) => {
+    const p = revision.propuestaEvaluacion || {};
+    setRespuestas((prev) => ({
+      ...prev,
+      [instancia.id]: {
+        ...prev[instancia.id],
+        resultado: p.resultado ?? prev[instancia.id]?.resultado ?? null,
+        observaciones: p.observaciones || prev[instancia.id]?.observaciones || "",
+        fechaVencimiento: (instancia.requiereVencimiento && p.fechaVencimiento) || prev[instancia.id]?.fechaVencimiento || "",
+        revisionIAId: revision.id,
+      },
+    }));
+  };
+
   useEffect(() => {
     if (!expediente || !filtroSujeto) return;
     cargarSujeto(filtroSujeto, claveActual);
@@ -448,6 +487,8 @@ export const PlanillaEvaluacion = ({
         if (r.requiereVencimiento && respuesta.fechaVencimiento) {
           payload.fechaVencimiento = respuesta.fechaVencimiento;
         }
+        // Propuesta IA aplicada: al guardar, la revisión queda confirmada.
+        if (respuesta.revisionIAId) payload.revisionIAId = respuesta.revisionIAId;
         return evaluacionService.crear(payload);
       }),
     );
@@ -467,7 +508,9 @@ export const PlanillaEvaluacion = ({
 
     setResultadoGuardado({ guardadas, fallidas, sinCambios: false });
     setGuardando(false);
-    if (modificados.length > 0) await Promise.all([cargarBase(true), cargarSujeto(filtroSujeto, claveActual)]);
+    if (modificados.length > 0) {
+      await Promise.all([cargarBase(true), cargarSujeto(filtroSujeto, claveActual), puedeRevisarIA ? cargarEstadoIA() : null]);
+    }
     if (guardadas > 0) onGuardado?.();
   };
 
@@ -933,8 +976,11 @@ export const PlanillaEvaluacion = ({
                   // "Cumple" sin documento: la justificación es obligatoria.
                   const conJustificacion = pideJustificacion(r.id);
                   const faltaJustificacion = conJustificacion && intentoGuardar && !(respuesta.observaciones || "").trim();
+                  const conIA = puedeRevisarIA && !soloLectura && estadoIA.habilitados.has(r.requerimientoId);
+                  const propuestaIA = estadoIA.propuestas.get(r.id) || null;
                   return (
-                    <tr key={r.id} data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO}`}>
+                    <React.Fragment key={r.id}>
+                    <tr data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO}`}>
                       <td className="py-3 pr-3 text-slate-400 font-semibold">{index + 1}</td>
                       <td className="py-3 pr-3 max-w-xs">
                         <div className="flex items-start gap-1.5">
@@ -951,6 +997,14 @@ export const PlanillaEvaluacion = ({
                             </a>
                           )}
                         </div>
+                        {conIA && (
+                          <button type="button" onClick={() => setRevisionAbierta(revisionAbierta === r.id ? null : r.id)}
+                            aria-expanded={revisionAbierta === r.id}
+                            className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-primary/30 bg-primary-lighter text-[10px] font-bold text-primary-dark hover:bg-primary-lighter/70">
+                            <Sparkles className="w-3 h-3" /> {propuestaIA ? "Propuesta IA" : "Revisar con IA"}
+                            {respuesta.revisionIAId && <span className="text-sage-darker">· aplicada</span>}
+                          </button>
+                        )}
                         {!r.requiereVencimiento && respuesta.fechaVencimiento && (
                           // El Requerimiento dejó de pedir vencimiento: la fecha registrada se conserva,
                           // pero ya no es obligatoria y las nuevas evaluaciones no la piden.
@@ -1040,6 +1094,26 @@ export const PlanillaEvaluacion = ({
                         )}
                       </td>
                     </tr>
+                    {conIA && revisionAbierta === r.id && (
+                      <tr>
+                        <td colSpan={8} className="pb-4">
+                          <RevisarConIARequisito
+                            expedienteId={expedienteId}
+                            instancia={r}
+                            propuesta={propuestaIA}
+                            aplicada={Boolean(propuestaIA) && respuesta.revisionIAId === propuestaIA.id}
+                            onRevisada={(rev) => conPropuesta(r.id, rev)}
+                            onAplicar={(rev) => aplicarPropuesta(r, rev)}
+                            onDescartada={() => {
+                              conPropuesta(r.id, null);
+                              setRespuestas((prev) => ({ ...prev, [r.id]: { ...prev[r.id], revisionIAId: undefined } }));
+                            }}
+                            onCerrar={() => setRevisionAbierta(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

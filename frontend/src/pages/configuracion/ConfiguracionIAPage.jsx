@@ -8,6 +8,7 @@ import { TabFuentes } from "../../components/configuracion-ia/TabFuentes";
 import { TabTipos } from "../../components/configuracion-ia/TabTipos";
 import { TabEstructura } from "../../components/configuracion-ia/TabEstructura";
 import { TabConsumo } from "../../components/configuracion-ia/TabConsumo";
+import { TabReglas } from "../../components/configuracion-ia/TabReglas";
 
 // Pestañas y quién las ve. Las sin permiso no se muestran.
 const PESTANAS = [
@@ -15,6 +16,7 @@ const PESTANAS = [
   { key: "fuentes", label: "Fuentes documentales", roles: ["superadmin", "mandante_admin"] },
   { key: "estructura", label: "Estructura de carpetas", roles: ["superadmin", "mandante_admin"] },
   { key: "tipos", label: "Tipos documentales", roles: ["superadmin"] },
+  { key: "reglas", label: "Reglas de revisión", roles: ["superadmin"] },
   { key: "consumo", label: "Consumo", roles: ["superadmin", "mandante_admin"] },
 ];
 
@@ -36,7 +38,7 @@ export const ConfiguracionIAPage = () => {
     <div className="space-y-6 max-w-6xl">
       <PageHeader
         title="Inteligencia Artificial"
-        subtitle="Conexión, fuentes documentales, estructura de carpetas, tipos documentales y consumo de Revisiones IA"
+        subtitle="Conexión, fuentes documentales, estructura de carpetas, tipos documentales, reglas de revisión y consumo"
         icon={BrainCircuit}
         onRefresh={() => window.location.reload()}
       />
@@ -49,6 +51,7 @@ export const ConfiguracionIAPage = () => {
       {activa === "fuentes" && <TabFuentes />}
       {activa === "estructura" && <TabEstructura />}
       {activa === "tipos" && <TabTipos />}
+      {activa === "reglas" && <TabReglas />}
       {activa === "consumo" && <TabConsumo esSuperadmin={esSuperadmin} />}
     </div>
   );

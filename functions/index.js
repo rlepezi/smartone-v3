@@ -92,6 +92,11 @@ const fuenteDocumentalRoutes =
 const tipoDocumentalRoutes = require("./src/routes/tipoDocumentalRoutes");
 const plantillaEstructuraRoutes =
     require("./src/routes/plantillaEstructuraRoutes");
+const reglaIARoutes = require("./src/routes/reglaIARoutes");
+const revisionRequerimientoIARoutes =
+  require("./src/routes/revisionRequerimientoIARoutes");
+const requerimientoReglaIARoutes =
+  require("./src/routes/requerimientoReglaIARoutes");
 const acreditacionRoutes = require("./src/routes/acreditacionRoutes");
 const sesionRoutes = require("./src/routes/sesionRoutes");
 const sesionMantenimientoService =
@@ -139,6 +144,9 @@ app.use("/revisiones-ia", revisionIARoutes);
 app.use("/fuentes-documentales", fuenteDocumentalRoutes);
 app.use("/tipos-documentales", tipoDocumentalRoutes);
 app.use("/plantillas-estructura", plantillaEstructuraRoutes);
+app.use("/revisiones-requerimiento-ia", revisionRequerimientoIARoutes);
+app.use("/reglas-ia/requerimientos", requerimientoReglaIARoutes);
+app.use("/reglas-ia", reglaIARoutes);
 app.use("/acreditaciones", acreditacionRoutes);
 app.use("/sesiones", sesionRoutes);
 app.use("/admin/respaldos", respaldoRoutes);

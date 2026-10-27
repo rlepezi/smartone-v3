@@ -117,7 +117,7 @@ class RevisionExpedienteService {
         libre});
       return {
         ...r,
-        modoValidacion: requerimiento?.modoValidacion || "manual",
+        estadoIA: requerimiento?.estadoIA || "sin_reglas",
         elegible: el.elegible,
         motivo: el.motivo,
         motivoTexto: el.motivo ? MOTIVOS_NO_ELEGIBLE[el.motivo] : null,

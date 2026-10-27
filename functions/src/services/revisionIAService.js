@@ -26,6 +26,9 @@ const {inicioDiaSantiago} = require("../utils/fechaSantiago");
 const {sumarDias} = require("../utils/reporteCalculos");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
+const {
+  ENTIDADES: ENTIDADES_TIPO, conDefaults: conDefaultsTipo, disponibleParaIA,
+} = require("../reglasIA/tiposDocumentales");
 const configRevisionExpedienteRepository =
     require("../repositories/configRevisionExpedienteRepository");
 
@@ -397,17 +400,10 @@ class RevisionIAService {
     }
     const clave = String(entidadClave || "").trim();
     if (!clave) throw new AppError(400, "Falta la entidad.");
-    const consolidado = await consolidacionService.consolidarEntidad({
+    // Sin aceptación automática: la IA solo propone y el evaluador confirma.
+    return await consolidacionService.consolidarEntidad({
       sesion, entidadClave: clave,
     });
-    // Requerimientos en modo "automatico": lo que cumple todas las reglas
-    // se acepta sin esperar al evaluador (ver resolucionService).
-    return {
-      ...consolidado,
-      resultados: await resolucionService.aceptarAutomaticos(
-          consolidado.resultados, actor,
-      ),
-    };
   }
 
   /**
@@ -560,14 +556,23 @@ class RevisionIAService {
   }
 
   /**
-   * Tipos documentales activos (para el selector del Requerimiento).
-   * @return {Promise<Object[]>} [{id, codigo, nombre, estadoIA}].
+   * Tipos documentales disponibles para IA (selector del Requerimiento):
+   * activos, con estado IA "piloto" o "activo" (un "no_normalizado" no
+   * aparece) y, si se indica, que apliquen a esa entidad.
+   * @param {?string} entidad "persona" | "empresa" | "recurso", o null.
+   * @return {Promise<Object[]>} [{id, codigo, nombre, estadoIA, entidades,
+   *     campos}].
    */
-  async listarTiposDocumentales() {
+  async listarTiposDocumentales(entidad = null) {
+    if (entidad && !ENTIDADES_TIPO.includes(entidad)) {
+      throw new AppError(400, `Entidad no válida. Valores permitidos: ` +
+          `${ENTIDADES_TIPO.join(", ")}.`);
+    }
     return (await tipoDocumentalRepository.list())
-        .filter((t) => t.estado === "activo")
-        .map(({id, codigo, nombre, estadoIA}) => ({id, codigo, nombre,
-          estadoIA}))
+        .filter((t) => disponibleParaIA(t, entidad))
+        .map(conDefaultsTipo)
+        .map(({id, codigo, nombre, estadoIA, entidades, campos}) => ({id,
+          codigo, nombre, estadoIA, entidades, campos}))
         .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
   }
 }

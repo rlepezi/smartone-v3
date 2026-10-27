@@ -13,6 +13,7 @@ import { StatusBadge, MAPA_ACTIVO_INACTIVO } from "../../components/shared/Statu
 import { OpcionesRadio } from "../../components/shared/OpcionesRadio";
 import { Pagination } from "../../components/shared/Pagination";
 import { RequerimientoModal } from "../../components/requerimientos/RequerimientoModal";
+import { estadoIAReq } from "../../utils/reglasIA";
 import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
@@ -520,13 +521,13 @@ export const RequerimientosListPage = () => {
                             {r.nombre !== titulo && <span className="block text-xs text-slate-500 truncate">{r.nombre}</span>}
                             <span className="block text-xs text-slate-400 truncate">{aplica}</span>
                           </span>
-                          {r.tipoDocumentalId && r.modoValidacion && r.modoValidacion !== "manual" && (
+                          {esSuperadmin && r.estadoIA && r.estadoIA !== "sin_reglas" && (
                             <span
-                              title={r.modoValidacion === "automatico" ? "Se evalúa automáticamente con IA" : "La IA propone la evaluación y un evaluador la confirma"}
-                              className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-lighter text-primary-dark text-[10px] font-bold"
+                              title="Estado de las reglas de revisión IA (la IA propone y un evaluador confirma)"
+                              className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold ${estadoIAReq(r).clase}`}
                             >
                               <Sparkles className="w-3 h-3" aria-hidden="true" />
-                              {r.modoValidacion === "automatico" ? "IA automática" : "IA asistida"}
+                              {estadoIAReq(r).label}
                             </span>
                           )}
                           {r.requiereVencimiento && (
@@ -589,6 +590,7 @@ export const RequerimientosListPage = () => {
           )}
           preseleccion={{ perfilParticipacionIds: chipsPP, perfilRecursoIds: chipsPR }}
           onGuardado={() => cargarRequerimientos()}
+          mostrarReglasIA={esSuperadmin}
           onPerfilRecursoCreado={() => cargarPerfilesRecurso()}
           onCerrar={cerrarModal}
         />

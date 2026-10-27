@@ -14,7 +14,9 @@ export const revisionIAService = {
   estado: (mandanteId) => get(conParams("/revisiones-ia/estado", { mandanteId })),
 
   // Tipos documentales activos (selector "Validación con IA" del Requerimiento).
-  listarTiposDocumentales: () => get("/revisiones-ia/tipos-documentales"),
+  // Tipos disponibles para IA (activos, estado IA piloto o activo); con entidad, solo los de esa
+  // entidad ("persona" | "empresa" | "recurso").
+  listarTiposDocumentales: (entidad = null) => get(conParams("/revisiones-ia/tipos-documentales", { entidad })),
 
   // archivos: [{ mime, tamanoBytes, paginas? }] → { costoEstimadoUsd, modelo }.
   estimar: (mandanteId, archivos) => post("/revisiones-ia/estimar", { mandanteId, archivos }),
@@ -61,9 +63,3 @@ export const revisionIAService = {
   // Pestaña Consumo de Configuración IA (superadmin y mandante_admin).
   consumo: (mandanteId) => get(conParams("/revisiones-ia/consumo", { mandanteId })),
 };
-
-export const MODOS_VALIDACION = [
-  { value: "manual", label: "Manual" },
-  { value: "asistido", label: "Asistido (la IA propone, un evaluador confirma)" },
-  { value: "automatico", label: "Automático" },
-];

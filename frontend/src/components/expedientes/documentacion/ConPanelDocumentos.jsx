@@ -30,6 +30,7 @@ export const ConPanelDocumentos = ({ panel, children }) => {
   const [abierto, setAbierto] = useState(() => leer(CLAVE_PANEL_ABIERTO, true));
   const [expandido, setExpandido] = useState(() => leer(CLAVE_PANEL_EXPANDIDO, false));
   const [ancho, setAncho] = useState(esAncho);
+  const [archivoAbierto, setArchivoAbierto] = useState(null);
 
   useEffect(() => {
     const alCambiar = () => setAncho(esAncho());
@@ -48,7 +49,9 @@ export const ConPanelDocumentos = ({ panel, children }) => {
       guardar(CLAVE_PANEL_EXPANDIDO, !v);
       return !v;
     }),
-  }), [ancho, expandido]);
+    archivoAbierto,
+    informarArchivo: setArchivoAbierto,
+  }), [ancho, expandido, archivoAbierto]);
 
   const botonAbrir = (
     <button type="button" onClick={() => cambiar(true)} aria-expanded={false}

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, FileQuestion, IdCard, Pencil } from "lucide-react";
+import { ChevronDown, ChevronRight, FileQuestion, IdCard, Pencil, Plus, Trash2 } from "lucide-react";
+import { ENTIDADES_IA, TIPOS_CAMPO, estadoIAReq, etiquetaEntidad } from "../../utils/reglasIA";
 import { tipoDocumentalService } from "../../services/tipoDocumentalService";
 import { configuracionIAService } from "../../services/configuracionIAService";
 import { ErrorBanner } from "../shared/ErrorBanner";
@@ -14,16 +15,22 @@ const ESTADO_IA = {
   piloto: { label: "Piloto", clase: "bg-amber-50 text-amber-700 border-amber-200" },
   activo: { label: "Activo", clase: "bg-sage-lighter text-sage-darker border-sage-light" },
 };
-const MODO = { manual: "Manual", asistido: "Asistido", automatico: "Automático" };
 const CLASE_BADGE = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
 
-// Modal de edición de un tipo (estado IA, modelo preferido, umbral de legibilidad).
+// Modal de edición de un tipo: estado IA, modelo preferido, umbral de legibilidad, a qué entidades
+// aplica y qué campos extrae la IA (los usan las reglas de revisión).
 const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
   const [datos, setDatos] = useState({
     estadoIA: tipo.estadoIA || "piloto",
     modeloPreferido: tipo.modeloPreferido || "",
     umbralLegibilidad: String(tipo.umbralLegibilidad ?? 0.8),
+    entidades: tipo.entidades || ["persona"],
+    campos: (tipo.campos || []).map((c) => ({ ...c })),
   });
+  const alternarEntidad = (e) => setDatos((d) => ({
+    ...d, entidades: d.entidades.includes(e) ? d.entidades.filter((x) => x !== e) : [...d.entidades, e],
+  }));
+  const cambiarCampo = (i, k, v) => setDatos((d) => ({ ...d, campos: d.campos.map((c, j) => (j === i ? { ...c, [k]: v } : c)) }));
   const [confirmarActivo, setConfirmarActivo] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
@@ -36,6 +43,7 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
     try {
       onGuardado(await tipoDocumentalService.actualizar(tipo.id, {
         estadoIA: datos.estadoIA, modeloPreferido: datos.modeloPreferido || null, umbralLegibilidad: umbral,
+        entidades: datos.entidades, campos: datos.campos.map((c) => ({ ...c, clave: c.clave.trim(), etiqueta: c.etiqueta.trim() })),
       }));
     } catch (err) {
       setError(err.message || "No se pudo guardar el tipo documental.");
@@ -47,13 +55,18 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
   const alEnviar = (e) => {
     e.preventDefault();
     if (!umbralValido) return;
+    if (!datos.entidades.length) { setError("Elija al menos una entidad."); return; }
+    if (!datos.campos.length || datos.campos.some((c) => !c.clave.trim() || !c.etiqueta.trim())) {
+      setError("Cada campo necesita clave y etiqueta.");
+      return;
+    }
     if (datos.estadoIA === "activo" && tipo.estadoIA !== "activo") setConfirmarActivo(true);
     else guardar();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => !guardando && onCancelar()}>
-      <form role="dialog" aria-modal="true" aria-labelledby="editar-tipo-titulo" onSubmit={alEnviar} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-dropdown w-full max-w-md p-6 space-y-4">
+      <form role="dialog" aria-modal="true" aria-labelledby="editar-tipo-titulo" onSubmit={alEnviar} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4">
         <h3 id="editar-tipo-titulo" className="text-sm font-bold text-carbon-dark">Editar {tipo.nombre}</h3>
         {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
         <label className="block">
@@ -75,6 +88,36 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
           <input type="number" min="0.5" max="1" step="0.05" value={datos.umbralLegibilidad} onChange={(e) => setDatos((d) => ({ ...d, umbralLegibilidad: e.target.value }))} className={CLASE_INPUT} />
           {!umbralValido && <span className="block text-[11px] text-red-500 mt-1">Debe estar entre 0,5 y 1,0.</span>}
         </label>
+        <fieldset>
+          <legend className={CLASE_LABEL}>Aplica a</legend>
+          <div className="flex flex-wrap gap-3">
+            {ENTIDADES_IA.map((e) => (
+              <label key={e.value} className="flex items-center gap-1.5 text-xs">
+                <input type="checkbox" checked={datos.entidades.includes(e.value)} onChange={() => alternarEntidad(e.value)} className="rounded text-primary" /> {e.label}
+              </label>
+            ))}
+          </div>
+          <span className="block text-[11px] text-slate-400 mt-1">Solo los requerimientos de estas entidades podrán usar este tipo.</span>
+        </fieldset>
+        <div>
+          <span className={CLASE_LABEL}>Campos que extrae la IA</span>
+          <div className="space-y-1.5">
+            {datos.campos.map((c, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <input value={c.clave} onChange={(e) => cambiarCampo(i, "clave", e.target.value)} placeholder="clave (p. ej. rut)" aria-label="Clave" className={`${CLASE_INPUT} w-36 font-mono`} />
+                <input value={c.etiqueta} onChange={(e) => cambiarCampo(i, "etiqueta", e.target.value)} placeholder="Etiqueta" aria-label="Etiqueta" className={`${CLASE_INPUT} flex-1 min-w-[10rem]`} />
+                <select value={c.tipo} onChange={(e) => cambiarCampo(i, "tipo", e.target.value)} aria-label="Tipo de campo" className={`${CLASE_INPUT} w-28`}>
+                  {TIPOS_CAMPO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <button type="button" onClick={() => setDatos((d) => ({ ...d, campos: d.campos.filter((_, j) => j !== i) }))} aria-label={`Quitar ${c.clave || "campo"}`} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => setDatos((d) => ({ ...d, campos: [...d.campos, { clave: "", etiqueta: "", tipo: "texto" }] }))} className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline">
+            <Plus className="w-3 h-3" /> Agregar campo
+          </button>
+          <span className="block text-[11px] text-slate-400 mt-1">Las reglas de revisión indican qué campos necesitan; el tipo debe proveerlos.</span>
+        </div>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onCancelar} disabled={guardando} className={CLASE_SECUNDARIO}>Cancelar</button>
           <button type="submit" disabled={guardando || !umbralValido} className={CLASE_PRIMARIO}>{guardando ? "Guardando..." : "Guardar"}</button>
@@ -157,6 +200,7 @@ export const TabTipos = () => {
                   <th className="px-3 py-2.5"><span className="sr-only">Requerimientos</span></th>
                   <th className="px-3 py-2.5">Nombre</th>
                   <th className="px-3 py-2.5">Código</th>
+                  <th className="px-3 py-2.5">Aplica a</th>
                   <th className="px-3 py-2.5">Estado IA</th>
                   <th className="px-3 py-2.5 text-right">Versión</th>
                   <th className="px-3 py-2.5">Modelo preferido</th>
@@ -193,6 +237,7 @@ export const TabTipos = () => {
                         </td>
                         <td className="px-3 py-2.5 font-bold text-carbon-dark">{t.nombre}</td>
                         <td className="px-3 py-2.5 font-mono text-slate-500">{t.codigo}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{(t.entidades || []).map(etiquetaEntidad).join(", ")}</td>
                         <td className="px-3 py-2.5"><span className={`${CLASE_BADGE} ${estadoIA.clase}`}>{estadoIA.label}</span></td>
                         <td className="px-3 py-2.5 text-right text-slate-600">{t.version}</td>
                         <td className="px-3 py-2.5 text-slate-600">{t.modeloPreferido || <span className="text-slate-400">por defecto</span>}</td>
@@ -214,16 +259,16 @@ export const TabTipos = () => {
                       {abierto && (
                         <tr className="bg-slate-50/60">
                           <td />
-                          <td colSpan={12} className="px-3 py-3">
+                          <td colSpan={13} className="px-3 py-3">
                             {t.requerimientos.length === 0 ? (
-                              <p className="text-[11px] text-slate-400">Ningún requerimiento usa este tipo. Se asocia en el catálogo de Requerimientos, sección "Validación con IA".</p>
+                              <p className="text-[11px] text-slate-400">Ningún requerimiento usa este tipo. Se asocia en el catálogo de Requerimientos, pestaña "Reglas IA" del requerimiento.</p>
                             ) : (
                               <ul className="space-y-1">
                                 {t.requerimientos.map((r) => (
                                   <li key={r.id} className="flex flex-wrap gap-x-3 text-[11px]">
                                     <Link to={`/requerimientos/${r.id}`} className="font-bold text-primary hover:text-primary-dark hover:underline">{r.nombre}</Link>
                                     <span className="text-slate-500">{r.mandanteNombre}</span>
-                                    <span className="text-slate-500">Modo: {MODO[r.modoValidacion] || r.modoValidacion}</span>
+                                    <span className="text-slate-500">Estado IA: {estadoIAReq(r).label}</span>
                                     {r.estado !== "activo" && <span className="text-slate-400">(inactivo)</span>}
                                   </li>
                                 ))}
