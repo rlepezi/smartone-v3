@@ -5,6 +5,8 @@ import { empresaService } from "../../../services/empresaService";
 import { perfilRecursoService } from "../../../services/perfilRecursoService";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { PasoPerfil } from "../wizard/PasoPerfil";
+import { CrearPerfilRecurso } from "../../../components/perfiles-recurso/CrearPerfilRecurso";
+import { SelectorPerfilRecurso } from "../../../components/perfiles-recurso/SelectorPerfilRecurso";
 
 // Paso 3 del wizard de Reemplazar Acreditación. Para Empresa es el mismo
 // selector de Perfil de Participación que ya usa el wizard de Nueva
@@ -30,6 +32,8 @@ export const PasoPerfilOEmpresa = ({
   const [participacionExistente, setParticipacionExistente] = useState(null);
   const [errorParticipacion, setErrorParticipacion] = useState(null);
   const [perfilesDisponibles, setPerfilesDisponibles] = useState([]);
+  const [perfilesCargados, setPerfilesCargados] = useState(false);
+  const tipoPerfil = entidadTipo === "persona" ? "persona" : "recurso";
 
   useEffect(() => {
     if (esEmpresa || !empresaId) return;
@@ -39,13 +43,24 @@ export const PasoPerfilOEmpresa = ({
       .catch(() => setEmpresaNombre(null));
   }, [esEmpresa, empresaId]);
 
+  const cargarPerfiles = () => perfilRecursoService
+    .listar({ mandanteId, tipo: tipoPerfil, estado: "activo" })
+    .then((data) => setPerfilesDisponibles(data || []))
+    .catch(() => setPerfilesDisponibles([]))
+    .finally(() => setPerfilesCargados(true));
+
   useEffect(() => {
     if (esEmpresa || !mandanteId) return;
-    perfilRecursoService
-      .listar({ mandanteId, tipo: entidadTipo === "persona" ? "persona" : "recurso", estado: "activo" })
-      .then((data) => setPerfilesDisponibles(data || []))
-      .catch(() => setPerfilesDisponibles([]));
-  }, [esEmpresa, entidadTipo, mandanteId]);
+    cargarPerfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [esEmpresa, tipoPerfil, mandanteId]);
+
+  // Perfil creado desde este paso: se recarga la lista; si era el primero, queda elegido.
+  const handlePerfilCreado = ({ id }) => {
+    const eraElPrimero = perfilesDisponibles.length === 0;
+    cargarPerfiles();
+    if (eraElPrimero && id && perfilRecursoIds.length === 0) onCambiarPerfiles([id]);
+  };
 
   useEffect(() => {
     if (esEmpresa || !empresaId || !proyectoSel?.id) return;
@@ -109,40 +124,26 @@ export const PasoPerfilOEmpresa = ({
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-          {entidadTipo === "persona" ? "Perfiles de Recurso en el Proyecto destino * (uno o más)" : "Perfil de Recurso en el Proyecto destino *"}
-        </label>
-        {entidadTipo === "persona" ? (
-          <div className="flex flex-wrap gap-2">
-            {perfilesDisponibles.map((p) => {
-              const activo = perfilRecursoIds.includes(p.id);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  aria-pressed={activo}
-                  onClick={() => onCambiarPerfiles(activo
-                    ? perfilRecursoIds.filter((x) => x !== p.id) : [...perfilRecursoIds, p.id])}
-                  className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
-                    activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  {p.nombre}
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex items-center gap-3 mb-1.5">
+          <label className="block text-xs font-semibold text-gray-700">
+            {entidadTipo === "persona" ? "Perfiles de Recurso en el Proyecto destino * (uno o más)" : "Perfil de Recurso en el Proyecto destino *"}
+          </label>
+          {perfilesDisponibles.length > 0 && (
+            <CrearPerfilRecurso variante="enlace" tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
+          )}
+        </div>
+        {perfilesCargados && perfilesDisponibles.length === 0 ? (
+          <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
         ) : (
-          <select
-            value={perfilRecursoIds[0] || ""}
-            onChange={(e) => onCambiarPerfiles(e.target.value ? [e.target.value] : [])}
-            className="w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-          >
-            <option value="" disabled>Selecciona un perfil...</option>
-            {perfilesDisponibles.map((p) => (
-              <option key={p.id} value={p.id}>{p.nombre}</option>
-            ))}
-          </select>
+          <SelectorPerfilRecurso
+            tipo={tipoPerfil}
+            perfiles={perfilesDisponibles}
+            valor={perfilRecursoIds}
+            onChange={onCambiarPerfiles}
+            mandanteId={mandanteId}
+            onPerfilCreado={cargarPerfiles}
+            etiqueta={entidadTipo === "persona" ? "Perfiles de Recurso" : "Perfil de Recurso"}
+          />
         )}
       </div>
 

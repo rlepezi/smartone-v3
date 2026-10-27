@@ -10,9 +10,13 @@ export const RESULTADOS_EVALUACION = [
 ];
 
 export const evaluacionService = {
-  async listarPorExpediente(expedienteId, incluirHistorial = false) {
+  // `sujeto` opcional: { personaId } | { recursoId } | { empresa: true } — solo las de ese sujeto.
+  async listarPorExpediente(expedienteId, incluirHistorial = false, sujeto = {}) {
     const params = new URLSearchParams({ expedienteId });
     if (incluirHistorial) params.set("incluirHistorial", "true");
+    if (sujeto.personaId) params.set("personaId", sujeto.personaId);
+    if (sujeto.recursoId) params.set("recursoId", sujeto.recursoId);
+    if (sujeto.empresa) params.set("empresa", "true");
     const res = await apiClient(`/evaluaciones?${params.toString()}`);
     return res.data;
   },

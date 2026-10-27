@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Users, Truck, ClipboardCheck, FileText, Plus } from "lucide-react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Users, Truck, FileText, Plus } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
-import { evaluacionService, RESULTADOS_EVALUACION } from "../../services/evaluacionService";
+import { evaluacionService } from "../../services/evaluacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { reporteService } from "../../services/reporteService";
 import { participacionService } from "../../services/participacionService";
@@ -17,9 +17,9 @@ import { proyectoService } from "../../services/proyectoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { formatCatalogo } from "../../utils/formatCatalogo";
-import { formatFecha } from "../../utils/fechaFormatters";
-import { evaluarSujeto } from "../../utils/evaluacionSujeto";
-import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
+import { formatFecha } from "../../utils/fechas";
+import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
+import { expedienteRequerimientoService } from "../../services/expedienteRequerimientoService";
 import { estadoPorCumplimiento, claseAnilloCumplimiento } from "../../utils/cumplimientoClases";
 import { KpiCard, KpiValor, TarjetaPanel, CampoInfo } from "../../components/shared/DetalleUI";
 import { Tabs } from "../../components/shared/Tabs";
@@ -45,7 +45,6 @@ import { BarraCumplimiento } from "../../components/proyectos/EmpresasParticipan
 // Mismos roles que ya exige el backend en POST /evaluaciones: mandante_admin
 // es intencionalmente solo lectura acá (no evalúa a sus propias contratistas).
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
-const ROLES_EVALUACION = ["superadmin", "evaluador"];
 // Gestión de la asociación Empresa-Mandante (pestaña Mandantes).
 const ROLES_GESTION_MANDANTES = ["superadmin", "admin_comercial"];
 
@@ -80,10 +79,11 @@ export const EmpresaDetailPage = () => {
   const { id } = useParams();
   const { profile } = useAuth();
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
-  const puedeEvaluar = ROLES_EVALUACION.includes(profile?.rol);
   const gestionaMandantes = ROLES_GESTION_MANDANTES.includes(profile?.rol);
 
-  const [tab, setTab] = useState("resumen");
+  // `?tab=historial` (desde la Actividad Reciente del Dashboard) abre directo esa pestaña.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => (TABS.some((t) => t.key === searchParams.get("tab")) ? searchParams.get("tab") : "resumen"));
 
   const {
     modoEdicion, iniciarEdicion, cancelar, alGuardar, confirmarSalida,
@@ -112,22 +112,12 @@ export const EmpresaDetailPage = () => {
   const [personasEmpresa, setPersonasEmpresa] = useState([]);
   const [recursosEmpresa, setRecursosEmpresa] = useState([]);
   const [evaluacionesEmpresa, setEvaluacionesEmpresa] = useState([]);
+  // Instancias de Requerimiento de nivel Empresa (de todos sus Expedientes).
+  const [instanciasEmpresa, setInstanciasEmpresa] = useState([]);
   const [expedientesEmpresa, setExpedientesEmpresa] = useState([]);
   const [sujetosEmpresa, setSujetosEmpresa] = useState([]);
   const perfilesPorId = usePerfilesRecurso();
   const [cargandoActividad, setCargandoActividad] = useState(true);
-
-  // Evaluación inline de un Requerimiento de nivel Empresa — mismo
-  // formulario y endpoint (evaluacionService.crear) que ya usaba la pantalla
-  // combinada anterior.
-  const [evaluacionAbierta, setEvaluacionAbierta] = useState(null); // {expedienteId, requerimientoId}
-  const [resultadoForm, setResultadoForm] = useState(RESULTADOS_EVALUACION[0]?.value || "");
-  const [observacionesForm, setObservacionesForm] = useState("");
-  // Método de verificación: "" = documental (hay evidencia adjunta; el backend lo comprueba);
-  // "presencial"/"otro" = sin documento, con justificación obligatoria en Observaciones.
-  const [metodoForm, setMetodoForm] = useState("");
-  const [evaluando, setEvaluando] = useState(false);
-  const [errorEvaluacion, setErrorEvaluacion] = useState(null);
 
   const cargarResumenYAvance = () => {
     const p1 = empresaService
@@ -155,7 +145,9 @@ export const EmpresaDetailPage = () => {
       // alcanzable por el actor y se acota acá.
       expedienteService.listar({}),
       sujetoService.listar({ empresaId: id, estado: "activa" }),
-    ]).then(([personasData, recursosData, evaluacionesData, expedientesData, sujetosData]) => {
+      expedienteRequerimientoService.listarPorSujeto({ empresaId: id }).catch(() => []),
+    ]).then(([personasData, recursosData, evaluacionesData, expedientesData, sujetosData, instanciasData]) => {
+      setInstanciasEmpresa(instanciasData || []);
       setPersonasEmpresa(personasData || []);
       setRecursosEmpresa(recursosData || []);
       setEvaluacionesEmpresa(evaluacionesData || []);
@@ -216,21 +208,15 @@ export const EmpresaDetailPage = () => {
 
   // Requerimientos de nivel Empresa agrupados por Proyecto/Expediente (una
   // Empresa con Participaciones en varios Proyectos puede tener Perfiles —
-  // y Requerimientos — distintos en cada uno).
+  // y Requerimientos — distintos en cada uno): sus instancias activas.
   const requerimientosPorProyecto = expedientesEmpresa
     .filter((exp) => exp.estado !== "cerrado")
     .map((exp) => {
       const participacion = (resumen?.participacionesActivas || [])
         .find((p) => p.proyectoId === exp.proyectoId);
-      const items = (exp.requerimientosAplicables || [])
-        .filter((r) => aplicaRequerimientoASujeto(r, { tipoEntidad: "empresa" }))
-        .map((r) => {
-          const vigente = evaluacionesEmpresa.find(
-            (ev) => ev.expedienteId === exp.id && ev.requerimientoId === r.requerimientoId &&
-              !ev.personaId && !ev.recursoId,
-          );
-          return { ...r, resultado: vigente?.resultado || "pendiente" };
-        });
+      const items = instanciasEmpresa
+        .filter((i) => i.expedienteId === exp.id)
+        .map((i) => ({ ...i, resultado: i.evaluacionVigenteId ? i.resultado : "pendiente" }));
       const cumplen = items.filter((r) => r.resultado === "cumple").length;
       return {
         expedienteId: exp.id,
@@ -284,48 +270,6 @@ export const EmpresaDetailPage = () => {
     (grupo) => !proyectoSeleccionadoId || grupo.proyectoId === proyectoSeleccionadoId,
   );
 
-  const abrirEvaluacion = (expedienteId, requerimientoId) => {
-    setEvaluacionAbierta({ expedienteId, requerimientoId });
-    setResultadoForm(RESULTADOS_EVALUACION[0]?.value || "");
-    setObservacionesForm("");
-    setMetodoForm("");
-    setErrorEvaluacion(null);
-  };
-
-  const cerrarEvaluacion = () => {
-    setEvaluacionAbierta(null);
-    setErrorEvaluacion(null);
-  };
-
-  const handleGuardarEvaluacion = async () => {
-    if (!resultadoForm) {
-      setErrorEvaluacion("Debe seleccionar un resultado.");
-      return;
-    }
-    if (metodoForm && !observacionesForm.trim()) {
-      setErrorEvaluacion("Sin documento adjunto, la justificación (Observaciones) es obligatoria.");
-      return;
-    }
-    setEvaluando(true);
-    setErrorEvaluacion(null);
-    try {
-      await evaluacionService.crear({
-        expedienteId: evaluacionAbierta.expedienteId,
-        requerimientoId: evaluacionAbierta.requerimientoId,
-        resultado: resultadoForm,
-        observaciones: observacionesForm.trim() || null,
-        ...(metodoForm ? { metodoVerificacion: metodoForm } : {}),
-      });
-      await Promise.all([cargarActividad(), cargarResumenYAvance()]);
-      cerrarEvaluacion();
-    } catch (err) {
-      console.error("Error al guardar la evaluación:", err);
-      setErrorEvaluacion(err.message || "No se pudo guardar la evaluación.");
-    } finally {
-      setEvaluando(false);
-    }
-  };
-
   if (cargando) {
     return <div className="max-w-7xl mx-auto py-16 text-center text-slate-400 text-xs">Cargando empresa...</div>;
   }
@@ -362,6 +306,12 @@ export const EmpresaDetailPage = () => {
     conteoEstados[estadoPorCumplimiento(p.evaluacion?.avancePct ?? null).clave]++;
   });
   const colorAnillo = claseAnilloCumplimiento;
+  const FILAS_ESTADO = [
+    { clave: "acreditado", label: "Acreditadas", punto: "bg-sage-dark" },
+    { clave: "en_proceso", label: "En proceso", punto: "bg-amber-400" },
+    { clave: "pendiente", label: "Pendientes", punto: "bg-red-500" },
+    { clave: "sin_evaluar", label: "Sin evaluar", punto: "bg-slate-400" },
+  ];
 
   const cargando0 = cargandoResumen;
 
@@ -446,11 +396,24 @@ export const EmpresaDetailPage = () => {
           avance === undefined ? (
             <div className="h-14 w-14 rounded-full bg-slate-100 animate-pulse" />
           ) : (
-            <div className="relative w-14 h-14">
-              <ProgressRing value={avance || 0} size={56} strokeWidth={6} progressClassName={colorAnillo(avance)} />
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-black text-carbon-dark">
-                {avance === null ? "—" : `${avance}%`}
-              </span>
+            <div className="flex items-center gap-3">
+              <div className="relative w-14 h-14 shrink-0">
+                <ProgressRing value={avance || 0} size={56} strokeWidth={6} progressClassName={colorAnillo(avance)} />
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-black text-carbon-dark">
+                  {avance === null ? "—" : `${avance}%`}
+                </span>
+              </div>
+              {/* Participaciones activas por estado, según su propio % de cumplimiento. */}
+              <ul className="flex-1 min-w-0 space-y-0.5" title="Participaciones activas según su propio cumplimiento">
+                {FILAS_ESTADO.map((fila) => (
+                  <li key={fila.clave} className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-slate-500 truncate">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${fila.punto}`} /> {fila.label}
+                    </span>
+                    <span className="font-black text-carbon-dark">{cargando0 ? "…" : conteoEstados[fila.clave]}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ),
         )}
@@ -522,50 +485,6 @@ export const EmpresaDetailPage = () => {
           </div>
 
           <div className="space-y-6 min-w-0">
-            {tarjetaCard("Cumplimiento", (
-              avance === undefined || cargando0 ? (
-                <p className="text-xs text-slate-400">Cargando...</p>
-              ) : (
-                <div className="space-y-4">
-                  <div className="relative w-28 h-28 mx-auto">
-                    <ProgressRing value={avance || 0} size={112} strokeWidth={10} progressClassName={colorAnillo(avance)} />
-                    <span className="absolute inset-0 flex items-center justify-center text-xl font-black text-carbon-dark">
-                      {avance === null ? "—" : `${avance}%`}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {[
-                      { clave: "acreditado", label: "Acreditadas", punto: "bg-sage-dark" },
-                      { clave: "en_proceso", label: "En proceso", punto: "bg-amber-400" },
-                      { clave: "pendiente", label: "Pendientes", punto: "bg-red-500" },
-                      { clave: "sin_evaluar", label: "Sin evaluar", punto: "bg-slate-400" },
-                    ].map((fila) => (
-                      <div key={fila.clave} className="flex items-center justify-between text-xs">
-                        <span className="inline-flex items-center gap-2 font-semibold text-slate-600">
-                          <span className={`w-2.5 h-2.5 rounded-full ${fila.punto}`} /> {fila.label}
-                        </span>
-                        <span className="font-black text-carbon-dark">{conteoEstados[fila.clave]}</span>
-                      </div>
-                    ))}
-                    <p className="text-[10px] text-slate-400 pt-1">Cuenta las participaciones activas según su propio cumplimiento.</p>
-                  </div>
-                </div>
-              )
-            ))}
-
-            {tarjetaCard("Recursos", (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-600"><Users className="w-3.5 h-3.5 text-slate-400" /> Personas</span>
-                  <span className="font-black text-carbon-dark">{cargando0 ? "…" : resumen?.personasCount ?? "-"}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-600"><Truck className="w-3.5 h-3.5 text-slate-400" /> Maquinarias</span>
-                  <span className="font-black text-carbon-dark">{cargando0 ? "…" : resumen?.recursosCount ?? "-"}</span>
-                </div>
-              </div>
-            ))}
-
             {tarjetaCard("Últimos Eventos", (
               <UltimosEventos entidadId={id} cargar={(limit) => empresaService.obtenerEventos(id, { limit })} />
             ))}
@@ -777,83 +696,30 @@ export const EmpresaDetailPage = () => {
                 {proyectoSeleccionadoId ? "Este proyecto no tiene Requerimientos de nivel Empresa aplicables." : "Sin Requerimientos de nivel Empresa aplicables."}
               </p>
             ) : (
-              <div className="space-y-4">
-                {gruposVisibles.map((grupo) => (
-                  <GrupoRequerimientos
-                    key={grupo.expedienteId}
-                    titulo={grupo.proyectoNombre}
-                    subtitulo={grupo.perfilNombre}
-                    pctCumple={grupo.pctCumple}
-                    items={grupo.items}
-                    renderEstado={(r) => {
-                      const abierta =
-                        evaluacionAbierta?.expedienteId === grupo.expedienteId &&
-                        evaluacionAbierta?.requerimientoId === r.requerimientoId;
-                      return (
-                        <div className="flex items-center gap-2">
-                          <StatusBadge value={r.resultado} map={MAPA_EVALUACION} />
-                          {puedeEvaluar && !abierta && (
-                            <ActionButton icon={ClipboardCheck} onClick={() => abrirEvaluacion(grupo.expedienteId, r.requerimientoId)}>
-                              Evaluar
-                            </ActionButton>
-                          )}
-                        </div>
-                      );
-                    }}
-                    renderDetalle={(r) => {
-                      const abierta =
-                        evaluacionAbierta?.expedienteId === grupo.expedienteId &&
-                        evaluacionAbierta?.requerimientoId === r.requerimientoId;
-                      if (!abierta) return null;
-                      return (
-                        <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
-                          <ErrorBanner message={errorEvaluacion} />
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Resultado</label>
-                            <select
-                              value={resultadoForm}
-                              onChange={(e) => setResultadoForm(e.target.value)}
-                              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
-                            >
-                              {RESULTADOS_EVALUACION.map((res) => (
-                                <option key={res.value} value={res.value}>{res.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Método de verificación</label>
-                            <select
-                              value={metodoForm}
-                              onChange={(e) => setMetodoForm(e.target.value)}
-                              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
-                            >
-                              <option value="">Documental (con evidencia adjunta)</option>
-                              <option value="presencial">Presencial (en terreno) — sin documento</option>
-                              <option value="otro">Otro — sin documento</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Observaciones / justificación</label>
-                            <textarea
-                              value={observacionesForm}
-                              onChange={(e) => setObservacionesForm(e.target.value)}
-                              rows={2}
-                              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs resize-none"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <ActionButton variant="primary" busy={evaluando} busyLabel="Guardando..." onClick={handleGuardarEvaluacion}>
-                              Confirmar
-                            </ActionButton>
-                            <ActionButton disabled={evaluando} onClick={cerrarEvaluacion}>
-                              Cancelar
-                            </ActionButton>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                ))}
+              <div className="space-y-3">
+                {gruposVisibles.map((grupo) => {
+                  const ayuda = `Ir al expediente de ${grupo.proyectoNombre} para evaluar o ajustar sus requerimientos`;
+                  return (
+                    <Link
+                      key={grupo.expedienteId}
+                      to={`/expedientes/${grupo.expedienteId}?tab=empresa`}
+                      title={ayuda}
+                      aria-label={ayuda}
+                      className="group block rounded-xl p-3 border border-transparent hover:bg-slate-50 hover:border-primary-light focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-colors"
+                    >
+                      <GrupoRequerimientos
+                        titulo={grupo.proyectoNombre}
+                        subtitulo={grupo.perfilNombre}
+                        pctCumple={grupo.pctCumple}
+                        items={grupo.items}
+                        renderEstado={(r) => <StatusBadge value={r.resultado} map={MAPA_EVALUACION} />}
+                      />
+                      <p className="mt-1.5 text-[11px] font-semibold text-primary opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">
+                        {ayuda} →
+                      </p>
+                    </Link>
+                  );
+                })}
               </div>
             )
           ), null)}

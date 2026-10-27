@@ -21,6 +21,27 @@ class PersonaRepository {
   }
 
   /**
+   * Obtiene varios personas por ID en lecturas por lote (db.getAll), sin
+   * una consulta por documento. Los IDs inexistentes se omiten.
+   * @param {string[]} ids IDs de los documentos.
+   * @return {Promise<object[]>} Documentos encontrados.
+   */
+  async getByIds(ids) {
+    const unicos = [...new Set((ids || []).filter(Boolean))];
+    const resultado = [];
+    for (let i = 0; i < unicos.length; i += 100) {
+      const refs = unicos.slice(i, i + 100)
+          .map((id) => db.collection(COLLECTION).doc(id));
+      // eslint-disable-next-line no-await-in-loop
+      const docs = await db.getAll(...refs);
+      docs.forEach((d) => {
+        if (d.exists) resultado.push({id: d.id, ...d.data()});
+      });
+    }
+    return resultado;
+  }
+
+  /**
    * Busca una persona por su RUT normalizado.
    * @param {string} rutNormalizado RUT ya normalizado.
    * @return {Promise<object|null>} La persona o null si no existe.

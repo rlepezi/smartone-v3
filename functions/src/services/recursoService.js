@@ -5,7 +5,7 @@ const empresaRecursoRepository =
     require("../repositories/empresaRecursoRepository");
 const empresaRecursoService = require("./empresaRecursoService");
 const {
-  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto,
+  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto, mandanteDeContexto,
 } = require("../utils/alcanceMandante");
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
@@ -301,12 +301,11 @@ class RecursoService {
     });
     const creado = {id: refRecurso.id, ...nuevoRecurso};
 
-    // Recurso es catálogo global (sin mandanteId) — mismo criterio que
-    // Persona/Requerimiento: el evento queda registrado igual, aunque los
-    // roles con alcance forzado por mandante no lo verán en su feed de
-    // bitácora filtrado por mandanteId.
+    // Recurso es catálogo global (sin mandanteId): el evento lleva el
+    // Mandante de contexto (el del actor o el único de su Empresa) — mismo
+    // criterio que Persona.
     await bitacoraLogger.registrarEvento({
-      mandanteId: null,
+      mandanteId: await mandanteDeContexto(actor, {empresaId}),
       entidad: "recurso",
       entidadId: creado.id,
       accion: "creado",
@@ -379,6 +378,10 @@ class RecursoService {
     }
 
     const actualizado = await recursoRepository.update(id, updateData);
+    const relacionActiva = await empresaRecursoRepository.getActivaBySujeto(id);
+    const mandanteId = await mandanteDeContexto(actor, {
+      empresaId: relacionActiva?.empresaId,
+    });
 
     // La transición de estado se registra aparte (mismo criterio que
     // Perfil de Participación/Usuario): un cambio de estado es
@@ -387,7 +390,7 @@ class RecursoService {
         updateData.estado !== existente.estado;
     if (estadoCambio) {
       await bitacoraLogger.registrarEvento({
-        mandanteId: null,
+        mandanteId,
         entidad: "recurso",
         entidadId: id,
         accion: "transicion_estado",
@@ -406,7 +409,7 @@ class RecursoService {
         detalle[campo] = {anterior: existente[campo], nuevo: updateData[campo]};
       });
       await bitacoraLogger.registrarEvento({
-        mandanteId: null,
+        mandanteId,
         entidad: "recurso",
         entidadId: id,
         accion: "actualizado",

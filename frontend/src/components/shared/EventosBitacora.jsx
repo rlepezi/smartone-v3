@@ -1,21 +1,34 @@
 import React, { useEffect, useState } from "react";
 import { describirEvento } from "../../utils/bitacoraFormatters";
-import { formatTiempoRelativo } from "../../utils/fechaFormatters";
+import { contextoEvento } from "../../utils/bitacoraContexto";
+import { useNombresBitacora } from "../../hooks/useNombresBitacora";
+import { formatTiempoRelativo } from "../../utils/fechas";
 import { Pagination } from "./Pagination";
 
 // Eventos de Bitácora de una entidad (Proyecto, Empresa...). `cargar(limit)`
 // devuelve la lista real del backend; `entidadId` identifica la fuente para
 // recargar al cambiar. No infiere ni inventa eventos.
-const ListaEventos = ({ eventos }) => (
-  <ul className="divide-y divide-slate-100">
-    {eventos.map((ev) => (
-      <li key={ev.id} className="py-2.5 text-xs">
-        <p className="font-semibold text-slate-700">{describirEvento(ev)}</p>
-        <p className="text-[11px] text-slate-400">{formatTiempoRelativo(ev.createdAt)}</p>
-      </li>
-    ))}
-  </ul>
-);
+// Cada evento: qué pasó, el detalle (de qué empresa o proyecto a cuál), quién lo hizo y cuándo.
+const ListaEventos = ({ eventos }) => {
+  const nombres = useNombresBitacora();
+  return (
+    <ul className="divide-y divide-slate-100">
+      {eventos.map((ev) => {
+        const { detalle } = contextoEvento(ev, nombres);
+        return (
+          <li key={ev.id} className="py-2.5 text-xs">
+            <p className="font-semibold text-slate-700">{describirEvento(ev)}</p>
+            {detalle && <p className="text-[11px] text-slate-600">{detalle}</p>}
+            <p className="text-[11px] text-slate-400">
+              {formatTiempoRelativo(ev.createdAt)}
+              {ev.actorNombre ? ` · por ${ev.actorNombre}` : ""}
+            </p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
 
 // `undefined` mientras carga, `null` si falla.
 const useEventos = (cargar, entidadId, limit) => {

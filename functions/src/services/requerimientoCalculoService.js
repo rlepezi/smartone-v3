@@ -5,27 +5,26 @@ const perfilRequerimientoRepository =
 
 /**
  * Motor de cálculo de Requerimientos aplicables a un Perfil de
- * Participación. Extraído de `expedienteService.crearExpediente` para
- * poder reutilizarlo sin duplicar la lógica (RN-032: el snapshot
- * resultante queda fijo para siempre en el Expediente que lo consuma —
- * salvo la sincronización explícita de Expedientes abiertos al editar
- * vínculos, ver expedienteService.sincronizarRequerimientosDePerfil).
+ * Participación: la configuración vigente de la que se generan y
+ * sincronizan las instancias de cada Expediente (ver
+ * expedienteRequerimientoService) y que usan las vistas previas.
  *
- * Forma de cada entrada del snapshot:
+ * Forma de cada entrada:
  *   {requerimientoId, nombre, nombreCorto, tipoEntidad,
- *    perfilRecursoIds: null | [ids], requiereVencimiento, orden}
+ *    perfilRecursoIds: null | [ids], requiereVencimiento,
+ *    esDocumentoIdentidad, orden}
  * - perfilRecursoIds null = aplica a todos los sujetos del tipo (siempre
  *   null para "empresa").
  * - Con varios vínculos del mismo Requerimiento, orden es el menor.
  */
 class RequerimientoCalculoService {
   /**
-   * Construye la entrada de snapshot de un Requerimiento a partir de sus
+   * Construye la entrada de configuración de un Requerimiento a partir de sus
    * vínculos activos con un Perfil de Participación (función pura).
    * @param {Object} requerimiento Documento del Requerimiento (con `id`).
    * @param {Object[]} vinculos Vínculos activos de ese Requerimiento en el
    *     Perfil de Participación (al menos uno).
-   * @return {Object} Entrada del snapshot.
+   * @return {Object} Entrada de configuración.
    */
   construirEntrada(requerimiento, vinculos) {
     const tipoEntidad = requerimiento.tipoEntidad;
@@ -43,18 +42,19 @@ class RequerimientoCalculoService {
       tipoEntidad,
       perfilRecursoIds,
       requiereVencimiento: Boolean(requerimiento.requiereVencimiento),
+      esDocumentoIdentidad: Boolean(requerimiento.esDocumentoIdentidad),
       orden: ordenes.length ? Math.min(...ordenes) : null,
     };
   }
 
   /**
-   * Agrupa vínculos activos por Requerimiento y arma el snapshot, en el
+   * Agrupa vínculos activos por Requerimiento y arma las entradas, en el
    * orden en que aparece cada Requerimiento. Ignora vínculos de
    * Requerimientos que no estén en `requerimientosPorId` (inactivos).
    * @param {Object[]} vinculos Vínculos activos.
    * @param {Object<string, Object>} requerimientosPorId Requerimientos
    *     activos por ID.
-   * @return {Object[]} Entradas del snapshot.
+   * @return {Object[]} Entradas de configuración.
    */
   agruparEnSnapshot(vinculos, requerimientosPorId) {
     const porRequerimiento = new Map();
@@ -71,17 +71,20 @@ class RequerimientoCalculoService {
   }
 
   /**
-   * Calcula el snapshot de Requerimientos aplicables para un Perfil de
+   * Calcula las entradas de Requerimientos aplicables para un Perfil de
    * Participación, combinando el catálogo activo de Requerimientos con
    * los vínculos activos de Perfil-Requerimiento.
    * @param {string} perfilParticipacionId ID del Perfil de Participación.
-   * @return {Promise<Array<Object>>} Snapshot de Requerimientos aplicables.
+   * @return {Promise<Array<Object>>} Entradas de Requerimientos aplicables.
    */
   async calcularRequerimientosAplicables(perfilParticipacionId) {
-    const [catalogoActivo, vinculosActivos] = await Promise.all([
-      requerimientoRepository.list({estado: "activo"}),
-      perfilRequerimientoRepository.getActivosByPerfil(perfilParticipacionId),
-    ]);
+    const vinculosActivos = await perfilRequerimientoRepository
+        .getActivosByPerfil(perfilParticipacionId);
+    if (vinculosActivos.length === 0) return [];
+    // Solo los Requerimientos del Mandante del Perfil (el de sus vínculos).
+    const catalogoActivo = await requerimientoRepository.list({
+      mandanteId: vinculosActivos[0].mandanteId, estado: "activo",
+    });
     const requerimientosPorId = {};
     catalogoActivo.forEach((r) => {
       requerimientosPorId[r.id] = r;

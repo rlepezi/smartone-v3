@@ -2,10 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate } from "react-router-dom";
 import {
-  FolderKanban, AlertCircle, Wand2, CalendarRange, Eye, Trash2, Copy, Download,
+  FolderKanban, AlertCircle, CalendarRange, Eye, Trash2, Copy, Download,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-import { proyectoService, ESTADOS_PROYECTO } from "../../services/proyectoService";
+import { proyectoService, ESTADOS_PROYECTO, textoCierreExpedientes } from "../../services/proyectoService";
+import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { mandanteService } from "../../services/mandanteService";
 import { MandanteChip } from "../shared/MandanteChip";
 import { TarjetaPanel } from "../shared/DetalleUI";
@@ -14,19 +15,17 @@ import {
   REGIONES_CHILE, TIPOS_PROYECTO,
 } from "../../utils/catalogosProyecto";
 import { calcularCronograma, ESTADOS_CRONOGRAMA } from "../../utils/cronogramaProyecto";
+import { DateInput } from "../ui/DateInput";
+import { aFechaISO } from "../../utils/fechas";
+import { aMayusculas } from "../../utils/texto";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
+import { CampoMandante } from "../shared/CampoMandante";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
 const MAX_OBSERVACIONES = 500;
 
 const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed";
 const CLASE_LABEL = "block text-xs font-semibold text-gray-700 mb-1.5";
-
-const toDateInputValue = (valor) => {
-  if (!valor) return "";
-  const date = valor._seconds ? new Date(valor._seconds * 1000) : new Date(valor);
-  if (isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-};
 
 const FORM_VACIO = {
   nombre: "",
@@ -71,28 +70,25 @@ export const ProyectoEdicionForm = ({
   const navigate = useNavigate();
   const { profile } = useAuth();
   const actorRol = profile?.rol;
-  const actorMandanteId = profile?.mandanteId || null;
-  const esMandanteAdmin = actorRol === "mandante_admin";
   const esEdicion = Boolean(id);
+  // Mandante del proyecto nuevo: fijo, único o elegido (solo en alta).
+  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
+  const sinSelectorMandante = contextoMandante.modo !== "seleccionable";
+  const nombreRef = useRef(null);
   const tieneRolEscritura = ROLES_ESCRITURA.includes(actorRol);
 
-  const [formData, setFormData] = useState({
-    ...FORM_VACIO,
-    mandanteId: esMandanteAdmin ? actorMandanteId || "" : "",
-  });
+  const [formData, setFormData] = useState(FORM_VACIO);
 
   const [estadoActual, setEstadoActual] = useState(null);
   const [estadoForm, setEstadoForm] = useState("");
   const [fechaTerminoReal, setFechaTerminoReal] = useState("");
   const [mandanteNombre, setMandanteNombre] = useState("");
   const [mandanteLogoUrl, setMandanteLogoUrl] = useState(null);
-  const [actorMandanteNombre, setActorMandanteNombre] = useState("");
-  const [actorMandanteLogoUrl, setActorMandanteLogoUrl] = useState(null);
-  const [mandantesActivos, setMandantesActivos] = useState([]);
-  const [codigoSugerido, setCodigoSugerido] = useState(null);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [eliminando, setEliminando] = useState(false);
+  // Confirmación de finalizar o archivar: { tipo: "finalizar" | "archivar", cantidad }.
+  const [confirmacionCierre, setConfirmacionCierre] = useState(null);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
   const [serverError, setServerError] = useState(null);
 
@@ -120,49 +116,6 @@ export const ProyectoEdicionForm = ({
   const puedeEscribir = tieneRolEscritura && !proyectoArchivado;
 
   useEffect(() => {
-    if (!esMandanteAdmin && !esEdicion) {
-      mandanteService
-        .listar("activo")
-        .then((data) => setMandantesActivos(data || []))
-        .catch((err) => console.error("Error al cargar mandantes:", err));
-    }
-  }, [esMandanteAdmin, esEdicion]);
-
-  useEffect(() => {
-    if (!esMandanteAdmin || esEdicion || !actorMandanteId) return;
-    mandanteService
-      .obtenerPorId(actorMandanteId)
-      .then((data) => {
-        setActorMandanteNombre(getMandanteDisplayName(data) || actorMandanteId);
-        setActorMandanteLogoUrl(data?.logoUrl || null);
-      })
-      .catch(() => setActorMandanteNombre(actorMandanteId));
-  }, [esMandanteAdmin, esEdicion, actorMandanteId]);
-
-  // Sugerencia de código: solo en creación, y solo cuando ya se conoce el
-  // mandanteId. Si la llamada falla, simplemente no se muestra el chip.
-  useEffect(() => {
-    if (esEdicion) return;
-    const mandanteIdParaSugerencia = esMandanteAdmin ? actorMandanteId : formData.mandanteId;
-    if (!mandanteIdParaSugerencia) {
-      setCodigoSugerido(null);
-      return;
-    }
-    let cancelado = false;
-    proyectoService
-      .obtenerSiguienteCodigo(mandanteIdParaSugerencia)
-      .then((data) => {
-        if (!cancelado) setCodigoSugerido(data?.codigoSugerido || null);
-      })
-      .catch(() => {
-        if (!cancelado) setCodigoSugerido(null);
-      });
-    return () => {
-      cancelado = true;
-    };
-  }, [esEdicion, esMandanteAdmin, actorMandanteId, formData.mandanteId]);
-
-  useEffect(() => {
     if (!esEdicion) return;
     proyectoService
       .obtenerPorId(id)
@@ -171,18 +124,18 @@ export const ProyectoEdicionForm = ({
           nombre: data.nombre || "",
           codigo: data.codigo || "",
           mandanteId: data.mandanteId || "",
-          fechaInicio: toDateInputValue(data.fechaInicio),
-          fechaTermino: toDateInputValue(data.fechaTermino),
+          fechaInicio: aFechaISO(data.fechaInicio),
+          fechaTermino: aFechaISO(data.fechaTermino),
           descripcion: data.descripcion || "",
           ubicacion: data.ubicacion || "",
           tipoProyecto: data.tipoProyecto || "",
           observaciones: data.observaciones || "",
-          fechaInicioEfectiva: toDateInputValue(data.fechaInicioEfectiva),
-          fechaTerminoReprogramada: toDateInputValue(data.fechaTerminoReprogramada),
+          fechaInicioEfectiva: aFechaISO(data.fechaInicioEfectiva),
+          fechaTerminoReprogramada: aFechaISO(data.fechaTerminoReprogramada),
         });
         setEstadoActual(data.estado || null);
         setEstadoForm(data.estado || "");
-        setFechaTerminoReal(toDateInputValue(data.fechaTerminoReal));
+        setFechaTerminoReal(aFechaISO(data.fechaTerminoReal));
         try {
           const mandante = await mandanteService.obtenerPorId(data.mandanteId);
           setMandanteNombre(getMandanteDisplayName(mandante) || data.mandanteId);
@@ -197,7 +150,7 @@ export const ProyectoEdicionForm = ({
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: name === "nombre" ? aMayusculas(value) : value }));
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: null }));
     }
@@ -206,8 +159,7 @@ export const ProyectoEdicionForm = ({
   const validateForm = () => {
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
-    if (!formData.codigo.trim()) newErrors.codigo = "El código es obligatorio.";
-    if (!esEdicion && !esMandanteAdmin && !formData.mandanteId) {
+    if (!esEdicion && !contextoMandante.mandanteId) {
       newErrors.mandanteId = "Debe seleccionar un Mandante.";
     }
     if (!formData.fechaInicio) {
@@ -227,16 +179,37 @@ export const ProyectoEdicionForm = ({
     return Object.keys(newErrors).length === 0;
   };
 
+  // Expedientes abiertos del Proyecto (se cierran al finalizarlo o archivarlo).
+  const pedirConfirmacionCierre = async (tipo) => {
+    setServerError(null);
+    try {
+      const cantidad = await proyectoService.expedientesAbiertos(id);
+      setConfirmacionCierre({ tipo, cantidad });
+    } catch (err) {
+      setServerError(err.message || "No se pudo consultar los expedientes del proyecto.");
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setServerError(null);
     if (!validateForm()) return;
+    // Pasar a "finalizado" cierra los Expedientes del Proyecto: se confirma antes.
+    if (esEdicion && estadoForm === "finalizado" && estadoActual !== "finalizado") {
+      await pedirConfirmacionCierre("finalizar");
+      return;
+    }
+    await guardar();
+  };
+
+  const guardar = async () => {
+    setConfirmacionCierre(null);
     setLoading(true);
 
+    // Sin código: lo asigna el backend al crear y no se edita.
     const payload = {
       nombre: formData.nombre.trim(),
-      codigo: formData.codigo.trim(),
-      mandanteId: esMandanteAdmin ? actorMandanteId : formData.mandanteId,
+      mandanteId: contextoMandante.mandanteId,
       fechaInicio: formData.fechaInicio,
       fechaTermino: formData.fechaTermino || null,
       descripcion: formData.descripcion.trim() || null,
@@ -267,10 +240,10 @@ export const ProyectoEdicionForm = ({
 
   // Eliminación LÓGICA: el proyecto pasa a "archivado" (estado terminal) — no se
   // borra ningún dato, igual que en el resto del sistema.
-  const handleEliminar = async () => {
-    if (!window.confirm("¿Eliminar este proyecto? Pasará a estado Archivado y ya no podrá modificarse. No se borra información.")) {
-      return;
-    }
+  const handleEliminar = () => pedirConfirmacionCierre("archivar");
+
+  const archivar = async () => {
+    setConfirmacionCierre(null);
     setEliminando(true);
     setServerError(null);
     try {
@@ -312,9 +285,29 @@ export const ProyectoEdicionForm = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {esEdicion ? (
+            <div>
+              <label className={CLASE_LABEL}>Mandante *</label>
+              <div className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed flex items-center">
+                <MandanteChip nombre={mandanteNombre} logoUrl={mandanteLogoUrl} />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">El Mandante no puede modificarse después de creado.</p>
+            </div>
+          ) : (
+            <div className={sinSelectorMandante ? "md:col-span-2" : ""}>
+              <CampoMandante
+                contexto={contextoMandante}
+                error={errors.mandanteId}
+                focoRef={nombreRef}
+                onChange={() => setErrors((prev) => ({ ...prev, mandanteId: null }))}
+              />
+            </div>
+          )}
+
           <div>
             <label className={CLASE_LABEL}>Nombre del proyecto *</label>
             <input
+              ref={nombreRef}
               type="text"
               name="nombre"
               value={formData.nombre}
@@ -326,61 +319,14 @@ export const ProyectoEdicionForm = ({
             {errors.nombre && <p className="text-xs text-red-500 mt-1">{errors.nombre}</p>}
           </div>
 
-          <div>
-            <label className={CLASE_LABEL}>Código *</label>
-            <input
-              type="text"
-              name="codigo"
-              value={formData.codigo}
-              onChange={handleChange}
-              disabled={!puedeEscribir}
-              placeholder="Ej: PRJ-2026-001"
-              className={`${CLASE_INPUT} ${errors.codigo ? "border-red-400 bg-red-50/30" : "border-gray-200"}`}
-            />
-            {errors.codigo && <p className="text-xs text-red-500 mt-1">{errors.codigo}</p>}
-            {!esEdicion && codigoSugerido && (
-              <button
-                type="button"
-                onClick={() => setFormData((prev) => ({ ...prev, codigo: codigoSugerido }))}
-                disabled={!puedeEscribir}
-                className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-lighter text-primary text-[11px] font-semibold hover:bg-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Wand2 className="w-3 h-3" />
-                Sugerencia: {codigoSugerido}
-              </button>
-            )}
-          </div>
-
-          <div>
-            <label className={CLASE_LABEL}>Mandante *</label>
-            {esEdicion ? (
-              <>
-                <div className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed flex items-center">
-                  <MandanteChip nombre={mandanteNombre} logoUrl={mandanteLogoUrl} />
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">El Mandante no puede modificarse después de creado.</p>
-              </>
-            ) : esMandanteAdmin ? (
-              <div className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed flex items-center">
-                <MandanteChip nombre={actorMandanteNombre || ""} logoUrl={actorMandanteLogoUrl} />
-              </div>
-            ) : (
-              <>
-                <select
-                  name="mandanteId"
-                  value={formData.mandanteId}
-                  onChange={handleChange}
-                  className={`${CLASE_INPUT} ${errors.mandanteId ? "border-red-400 bg-red-50/30" : "border-gray-200"}`}
-                >
-                  <option value="">Seleccione un Mandante...</option>
-                  {mandantesActivos.map((m) => (
-                    <option key={m.id} value={m.id}>{getMandanteDisplayName(m)}</option>
-                  ))}
-                </select>
-                {errors.mandanteId && <p className="text-xs text-red-500 mt-1">{errors.mandanteId}</p>}
-              </>
-            )}
-          </div>
+          {/* El código lo asigna el sistema al crear (PRJ-AAAA-NNN); no se edita. */}
+          {esEdicion && (
+            <div>
+              <label className={CLASE_LABEL}>Código</label>
+              <input type="text" value={formData.codigo} disabled className={`${CLASE_INPUT} border-gray-200 font-mono`} />
+              <p className="text-[11px] text-slate-400 mt-1">Asignado automáticamente al crear el proyecto.</p>
+            </div>
+          )}
 
           <div>
             <label className={CLASE_LABEL}>Estado *</label>
@@ -409,8 +355,7 @@ export const ProyectoEdicionForm = ({
 
           <div>
             <label className={CLASE_LABEL}>Fecha de inicio *</label>
-            <input
-              type="date"
+            <DateInput
               name="fechaInicio"
               value={formData.fechaInicio}
               onChange={handleChange}
@@ -422,8 +367,7 @@ export const ProyectoEdicionForm = ({
 
           <div>
             <label className={CLASE_LABEL}>Fecha de término planificada</label>
-            <input
-              type="date"
+            <DateInput
               name="fechaTermino"
               value={formData.fechaTermino}
               onChange={handleChange}
@@ -495,8 +439,7 @@ export const ProyectoEdicionForm = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className={CLASE_LABEL}>Fecha de inicio efectiva</label>
-            <input
-              type="date"
+            <DateInput
               name="fechaInicioEfectiva"
               value={formData.fechaInicioEfectiva}
               onChange={handleChange}
@@ -507,8 +450,7 @@ export const ProyectoEdicionForm = ({
 
           <div>
             <label className={CLASE_LABEL}>Fecha de término reprogramada</label>
-            <input
-              type="date"
+            <DateInput
               name="fechaTerminoReprogramada"
               value={formData.fechaTerminoReprogramada}
               onChange={handleChange}
@@ -521,7 +463,7 @@ export const ProyectoEdicionForm = ({
           {proyectoFinalizado && (
             <div>
               <label className={CLASE_LABEL}>Fecha de término real</label>
-              <input type="date" value={fechaTerminoReal} disabled className={`${CLASE_INPUT} border-gray-200`} />
+              <DateInput value={fechaTerminoReal} disabled className={`${CLASE_INPUT} border-gray-200`} />
               <p className="text-[11px] text-slate-400 mt-1">Se completó automáticamente al finalizar el proyecto.</p>
             </div>
           )}
@@ -558,7 +500,7 @@ export const ProyectoEdicionForm = ({
         {puedeEscribir && (
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (!esEdicion && !contextoMandante.modo) || contextoMandante.modo === "ninguno"}
             className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all flex items-center gap-2 disabled:opacity-50"
           >
             {loading ? "Guardando..." : "Guardar Proyecto"}
@@ -633,6 +575,20 @@ export const ProyectoEdicionForm = ({
         </div>
       ) : (
         formulario
+      )}
+
+      {confirmacionCierre && (
+        <ConfirmacionModal
+          peligro
+          titulo={confirmacionCierre.tipo === "archivar" ? "¿Eliminar este proyecto?" : "¿Finalizar este proyecto?"}
+          mensaje={`${confirmacionCierre.tipo === "archivar"
+            ? "Pasará a estado Archivado y ya no podrá modificarse. No se borra información."
+            : "Un proyecto finalizado solo puede pasar después a Archivado."} ${textoCierreExpedientes(confirmacionCierre.cantidad)}`}
+          textoConfirmar={confirmacionCierre.tipo === "archivar" ? "Eliminar proyecto" : "Finalizar proyecto"}
+          ocupado={loading || eliminando}
+          onCancelar={() => setConfirmacionCierre(null)}
+          onConfirmar={confirmacionCierre.tipo === "archivar" ? archivar : guardar}
+        />
       )}
     </div>
   );

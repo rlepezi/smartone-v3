@@ -12,6 +12,7 @@ import { sujetoService } from "../../services/participacionSujetoService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { mandanteService } from "../../services/mandanteService";
+import { empresaService } from "../../services/empresaService";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
@@ -22,7 +23,7 @@ import { StatusBadge, MAPA_ACTIVO_INACTIVO } from "../../components/shared/Statu
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { EvaluacionCelda } from "../../components/shared/EvaluacionCelda";
-import { evaluarSujeto } from "../../utils/evaluacionSujeto";
+import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
 import { CLASE_LINEA } from "../../utils/lineasAlineadas";
 import { Pagination } from "../../components/shared/Pagination";
 
@@ -49,12 +50,22 @@ export const RecursosListPage = () => {
   const [proyectosPorId, setProyectosPorId] = useState({});
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [mandantesCache, setMandantesCache] = useState({});
+  // Mandantes asociados a cada Empresa (empresaMandantes activos): el Mandante de una Maquinaria
+  // que todavía no está asignada a ningún Proyecto.
+  const [mandantesDeEmpresa, setMandantesDeEmpresa] = useState({});
+  useEffect(() => {
+    empresaService.listar()
+      .then((data) => setMandantesDeEmpresa(Object.fromEntries((data || []).map((e) => [e.id, e.mandanteIds || []]))))
+      .catch(() => setMandantesDeEmpresa({}));
+  }, []);
   const mandantesEnCursoRef = useRef(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
   const [filtroProyecto, setFiltroProyecto] = useState("");
+  const [filtroMandante, setFiltroMandante] = useState("");
+  const [filtroEmpresa, setFiltroEmpresa] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [toggleandoId, setToggleandoId] = useState(null);
   const [page, setPage] = useState(1);
@@ -128,7 +139,10 @@ export const RecursosListPage = () => {
   }, []);
 
   // Mandantes de los Proyectos (nombre + logo), uno por id distinto.
-  const idsMandanteKey = [...new Set(Object.values(proyectosPorId).map((p) => p.mandanteId).filter(Boolean))].join(",");
+  const idsMandanteKey = [...new Set([
+    ...Object.values(proyectosPorId).map((p) => p.mandanteId),
+    ...Object.values(mandantesDeEmpresa).flat(),
+  ].filter(Boolean))].join(",");
   useEffect(() => {
     if (!idsMandanteKey) return;
     const faltantes = idsMandanteKey.split(",").filter(
@@ -197,7 +211,7 @@ export const RecursosListPage = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [filtroTipo, filtroEstado, filtroProyecto, searchTerm]);
+  }, [filtroTipo, filtroEstado, filtroProyecto, filtroMandante, filtroEmpresa, searchTerm]);
 
   // Proyecto(s) Asignado(s): vía participación activa del Recurso — no es un
   // campo propio de Recurso.
@@ -222,10 +236,24 @@ export const RecursosListPage = () => {
       r.patente?.toLowerCase().includes(term);
     const matchTipo = !filtroTipo || r.tipo === filtroTipo;
     const matchProyecto = !filtroProyecto || proyectosAsignadosDe(r.id).includes(filtroProyecto);
-    return matchTerm && matchTipo && matchProyecto;
+    // Mandante: el de alguno de sus Proyectos asignados (igual que la columna Mandante).
+    // Sin asignación, cuenta el Mandante de su Empresa actual (empresaMandantes).
+    const asignados = proyectosAsignadosDe(r.id);
+    const matchMandante = !filtroMandante || (asignados.length > 0
+      ? asignados.some((pid) => proyectosPorId[pid]?.mandanteId === filtroMandante)
+      : (mandantesDeEmpresa[r.empresaActual?.empresaId] || []).includes(filtroMandante));
+    const matchEmpresa = !filtroEmpresa || r.empresaActual?.empresaId === filtroEmpresa;
+    return matchTerm && matchTipo && matchProyecto && matchMandante && matchEmpresa;
   });
 
   const recursosPaginados = recursosFiltrados.slice((page - 1) * pageSize, page * pageSize);
+
+  // Empresas presentes en el listado (su empresa actual), para el filtro Empresa.
+  const empresasOpciones = [...new Map(recursos
+    .filter((r) => r.empresaActual?.empresaId)
+    .map((r) => [r.empresaActual.empresaId, r.empresaActual.empresaNombre || r.empresaActual.empresaId])).entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label, "es"));
 
   // KPIs — sobre el alcance completo del actor (recursosTodos, sin el
   // filtro de Estado de la tabla), igual que en Dashboard/Proyectos/
@@ -330,13 +358,34 @@ export const RecursosListPage = () => {
             searchPlaceholder="Buscar por nombre o patente de la maquinaria..."
             filters={[
               {
-                label: "Tipo de Maquinaria",
-                value: filtroTipo,
-                onChange: setFiltroTipo,
+                label: "Mandante",
+                value: filtroMandante,
+                onChange: setFiltroMandante,
+                options: [
+                  { value: "", label: "Todos los mandantes" },
+                  ...Object.entries(mandantesCache)
+                    .filter(([, info]) => info)
+                    .map(([mid, info]) => ({ value: mid, label: info.nombre }))
+                    .sort((a, b) => a.label.localeCompare(b.label, "es")),
+                ],
+              },
+              {
+                label: "Proyecto",
+                value: filtroProyecto,
+                onChange: setFiltroProyecto,
                 options: [
                   { value: "", label: "Todos" },
-                  ...tiposDisponibles.map((t) => ({ value: t.value, label: t.label })),
+                  // Si hay un Mandante elegido, solo sus Proyectos.
+                  ...Object.entries(proyectosMap)
+                    .filter(([id]) => !filtroMandante || proyectosPorId[id]?.mandanteId === filtroMandante)
+                    .map(([id, label]) => ({ value: id, label })),
                 ],
+              },
+              {
+                label: "Empresa",
+                value: filtroEmpresa,
+                onChange: setFiltroEmpresa,
+                options: [{ value: "", label: "Todas las empresas" }, ...empresasOpciones],
               },
               {
                 label: "Estado",
@@ -349,12 +398,12 @@ export const RecursosListPage = () => {
                 ],
               },
               {
-                label: "Proyecto",
-                value: filtroProyecto,
-                onChange: setFiltroProyecto,
+                label: "Tipo de Maquinaria",
+                value: filtroTipo,
+                onChange: setFiltroTipo,
                 options: [
                   { value: "", label: "Todos" },
-                  ...Object.entries(proyectosMap).map(([id, label]) => ({ value: id, label })),
+                  ...tiposDisponibles.map((t) => ({ value: t.value, label: t.label })),
                 ],
               },
             ]}
@@ -398,7 +447,14 @@ export const RecursosListPage = () => {
                     {item.patente || <span className="text-slate-400 italic font-sans">-</span>}
                   </td>
                   <td className="py-2 px-6 text-slate-600 font-medium">
-                    {lineas((pt) => (
+                    {partes.length === 0 && (mandantesDeEmpresa[item.empresaActual?.empresaId] || []).length > 0 ? (
+                      // Sin asignación activa: los Mandantes de su Empresa actual.
+                      mandantesDeEmpresa[item.empresaActual.empresaId].map((mid) => (
+                        <div key={mid} className={CLASE_LINEA}>
+                          <MandanteChip nombre={mandantesCache[mid]?.nombre || "…"} logoUrl={mandantesCache[mid]?.logoUrl} />
+                        </div>
+                      ))
+                    ) : lineas((pt) => (
                       <MandanteChip
                         nombre={pt.mandante?.nombre || (pt.mandanteId ? "…" : "Sin mandante")}
                         logoUrl={pt.mandante?.logoUrl}

@@ -121,6 +121,25 @@ class EmpresaController {
   }
 
   /**
+   * Personas y Maquinarias relacionadas con una empresa, con sus Proyectos
+   * de asignación activa (página Empresas → Recursos).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async recursos(req, res, next) {
+    try {
+      const data = await empresaService.obtenerRecursos(
+          req.params.id, req.user,
+      );
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Lista los eventos de Bitácora relacionados a una empresa.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

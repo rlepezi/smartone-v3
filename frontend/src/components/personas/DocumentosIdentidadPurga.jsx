@@ -5,7 +5,7 @@ import { evidenciaService } from "../../services/evidenciaService";
 import { TarjetaPanel } from "../shared/DetalleUI";
 import { ErrorBanner } from "../shared/ErrorBanner";
 import { ActionButton } from "../shared/ActionButton";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 
 // Documentos de identidad de una Persona anonimizada y su estado de purga: los pendientes con su fecha
 // límite de eliminación (con la excepción manual "Cancelar eliminación programada", con motivo) y los ya

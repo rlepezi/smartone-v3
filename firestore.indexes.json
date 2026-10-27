@@ -1,6 +1,44 @@
 {
   "indexes": [
     {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "resultado", "order": "ASCENDING"},
+        {"fieldPath": "requiereVencimiento", "order": "ASCENDING"},
+        {"fieldPath": "fechaVencimiento", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "resultado", "order": "ASCENDING"},
+        {"fieldPath": "requiereVencimiento", "order": "ASCENDING"},
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fechaVencimiento", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteEstados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteEstados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "estadoNuevo", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "mandantes",
       "queryScope": "COLLECTION",
       "fields": [
@@ -186,6 +224,15 @@
       "collectionGroup": "requerimientos",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "requerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
         {"fieldPath": "estado", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
@@ -194,6 +241,7 @@
       "collectionGroup": "requerimientos",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
         {"fieldPath": "tipoEntidad", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
@@ -202,6 +250,7 @@
       "collectionGroup": "requerimientos",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
         {"fieldPath": "tipoEntidad", "order": "ASCENDING"},
         {"fieldPath": "estado", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "DESCENDING"}
@@ -391,9 +440,7 @@
       "collectionGroup": "evaluaciones",
       "queryScope": "COLLECTION",
       "fields": [
-        {"fieldPath": "expedienteId", "order": "ASCENDING"},
-        {"fieldPath": "requerimientoId", "order": "ASCENDING"},
-        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "expedienteRequerimientoId", "order": "ASCENDING"},
         {"fieldPath": "estado", "order": "ASCENDING"}
       ]
     },
@@ -401,10 +448,32 @@
       "collectionGroup": "evaluaciones",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "expedienteRequerimientoId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
         {"fieldPath": "expedienteId", "order": "ASCENDING"},
-        {"fieldPath": "requerimientoId", "order": "ASCENDING"},
-        {"fieldPath": "recursoId", "order": "ASCENDING"},
-        {"fieldPath": "estado", "order": "ASCENDING"}
+        {"fieldPath": "personaId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "recursoId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evaluaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "empresaId", "order": "ASCENDING"}
       ]
     },
     {
@@ -627,6 +696,198 @@
       "fields": [
         {"fieldPath": "mandanteId", "order": "ASCENDING"},
         {"fieldPath": "fecha", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "tipoEntidad", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "resultado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fechaVencimiento", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "personaId", "order": "ASCENDING"},
+        {"fieldPath": "mandanteId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "recursoId", "order": "ASCENDING"},
+        {"fieldPath": "mandanteId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "expedienteRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "empresaId", "order": "ASCENDING"},
+        {"fieldPath": "mandanteId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evidenciaRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteRequerimientoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "evidenciaRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "evidenciaId", "order": "ASCENDING"},
+        {"fieldPath": "expedienteRequerimientoId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "procesamientosIA",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "sesionId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "procesamientosIA",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "archivoRef.hashSha256", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "procesamientosIA",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "resultadosRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "sesionId", "order": "ASCENDING"},
+        {"fieldPath": "carpetaRelativa", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "resultadosRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "expedienteIds", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "fuente", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fuente", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "fuente", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sesionesRevision",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fuente", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
     }
   ],

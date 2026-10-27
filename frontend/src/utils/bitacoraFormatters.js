@@ -49,6 +49,15 @@ const CAMPO_RECURSO_LABELS = {
   anio: "año",
 };
 
+const ETIQUETA_ENTIDAD = {
+  persona: "Persona",
+  empresa: "Empresa",
+  recurso: "Maquinaria",
+  evidencia: "Evidencia",
+  mandante: "Mandante",
+  proyecto: "Proyecto",
+};
+
 // Describe un registro de bitácora ({ entidad, accion, detalle }) como un
 // texto legible en español, para el panel "Actividad Reciente" del
 // Dashboard y el historial de detalle de Expediente.
@@ -104,13 +113,30 @@ export const describirEvento = (registro) => {
     return `Proyecto transicionado a ${nuevo}`;
   }
 
-  if (entidad === "persona" && accion === "cambio_empresa") {
-    return "Persona cambió de Empresa";
+  if (entidad === "persona") {
+    if (accion === "cambio_empresa") return "Persona cambió de Empresa";
+    if (accion === "relacion_terminada") return "Persona terminó su relación con la Empresa";
+    if (accion === "anonimizacion_persona") return "Persona anonimizada";
+  }
+
+  if (entidad === "empresa") {
+    if (accion === "asociada_mandante") return "Empresa asociada al Mandante";
+    if (accion === "desasociada_mandante") return "Empresa desasociada del Mandante";
+  }
+
+  if (entidad === "expediente" && accion === "instancias_sincronizadas") {
+    return "Requerimientos del Expediente actualizados";
+  }
+
+  if (entidad === "evidencia") {
+    if (accion === "cancelacion_purga_evidencia") return "Purga de documento cancelada";
+    if (accion === "purga_documento_identidad") return "Documento de identidad purgado";
   }
 
   if (entidad === "recurso") {
     if (accion === "creado") return "Maquinaria creada";
     if (accion === "cambio_empresa") return "Maquinaria cambió de Empresa";
+    if (accion === "relacion_terminada") return "Maquinaria terminó su relación con la Empresa";
     if (accion === "transicion_estado") {
       return detalle?.estadoNuevo === "inactivo"
         ? "Maquinaria desactivada"
@@ -144,6 +170,14 @@ export const describirEvento = (registro) => {
     if (accion === "actualizado") return "Perfil de Recurso actualizado";
   }
 
+  if (entidad === "requerimiento") {
+    if (accion === "creado") return "Requerimiento creado";
+    if (accion === "transicion_estado") {
+      return detalle?.estadoNuevo === "inactivo" ? "Requerimiento desactivado" : "Requerimiento activado";
+    }
+    if (accion === "actualizado") return "Requerimiento actualizado";
+  }
+
   if (entidad === "perfil_participacion") {
     if (accion === "creado") return "Perfil de Participación creado";
     if (accion === "transicion_estado") {
@@ -157,6 +191,14 @@ export const describirEvento = (registro) => {
         ? `Perfil de Participación actualizado (${campos.join(", ")})`
         : "Perfil de Participación actualizado";
     }
+  }
+
+  // Altas, ediciones y cambios de estado genéricos de cualquier entidad.
+  const etiqueta = ETIQUETA_ENTIDAD[entidad];
+  if (etiqueta) {
+    if (accion === "creado") return `${etiqueta} registrada`;
+    if (accion === "actualizado") return `${etiqueta} actualizada`;
+    if (accion === "transicion_estado" && detalle?.estadoNuevo) return `${etiqueta}: estado ${detalle.estadoNuevo}`;
   }
 
   // Cualquier combinación entidad/acción no cubierta arriba usa un label

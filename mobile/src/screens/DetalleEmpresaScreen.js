@@ -3,7 +3,6 @@ import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl } 
 import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { empresaService } from "../services/empresaService";
-import { evaluacionService } from "../services/evaluacionService";
 import { personasApi } from "../api/personas";
 import { colors, entityColors } from "../theme/colors";
 import { estadoExpediente } from "../theme/status";
@@ -23,6 +22,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { SkeletonCard } from "../components/Skeleton";
 import { nombresPerfiles } from "../utils/sujetosParticipacion";
+import { formatFecha } from "../utils/fechas";
 
 export default function DetalleEmpresaScreen({ route, navigation }) {
   const { empresaId } = route.params;
@@ -54,15 +54,10 @@ export default function DetalleEmpresaScreen({ route, navigation }) {
     );
   }, [participacionActiva?.proyectoId, mandanteId]);
 
-  // Une el snapshot de requerimientosAplicables del Expediente (trae
-  // `nombre`) con la Evaluación de empresa — evita mostrar un id crudo.
-  const filasRequerimientos = useMemo(() => {
-    if (!detalle.data) return [];
-    return evaluacionService.combinarConRequerimientos(
-        detalle.data.expediente, detalle.data.requerimientosEmpresa,
-        { tipoEntidad: "empresa" },
-    );
-  }, [detalle.data]);
+  // Requisitos de nivel Empresa: sus instancias con la Evaluación vigente (nombre incluido).
+  const filasRequerimientos = useMemo(
+      () => detalle.data?.filasEmpresa || [], [detalle.data],
+  );
 
   const avance = useMemo(() => {
     let cumple = 0; let noCumple = 0; let pendiente = 0;
@@ -179,10 +174,8 @@ export default function DetalleEmpresaScreen({ route, navigation }) {
                 <View style={styles.mt}>
                   <InfoGrid
                     items={[
-                      { label: "Inicio de contrato", value: participacionRaw.fechaInicio ?
-                        new Date(participacionRaw.fechaInicio).toLocaleDateString("es-CL") : "—" },
-                      { label: "Fin de contrato", value: participacionRaw.fechaTermino ?
-                        new Date(participacionRaw.fechaTermino).toLocaleDateString("es-CL") : "—" },
+                      { label: "Inicio de contrato", value: formatFecha(participacionRaw.fechaInicio) },
+                      { label: "Fin de contrato", value: formatFecha(participacionRaw.fechaTermino) },
                       ...(empresa.contacto?.nombre ?
                         [{ label: "Contacto", value: empresa.contacto.nombre }] : []),
                     ]}

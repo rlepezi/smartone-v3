@@ -14,6 +14,8 @@ const {
 const participacionRepository =
     require("../repositories/participacionRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
+const personaRepository = require("../repositories/personaRepository");
+const recursoRepository = require("../repositories/recursoRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
@@ -25,6 +27,7 @@ const participacionPersonaRepository =
 const participacionRecursoRepository =
     require("../repositories/participacionRecursoRepository");
 const AppError = require("../utils/AppError");
+const {aMayusculas} = require("../utils/mayusculas");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
@@ -97,16 +100,32 @@ class EmpresaService {
    */
   async listarEmpresas(filtros, actor) {
     const {estado, mandanteId} = filtros || {};
-    const [empresas, visibles, delMandante] = await Promise.all([
+    const [empresas, visibles, delMandante, vinculos] = await Promise.all([
       empresaRepository.list({estado}),
       empresaIdsVisibles(actor),
       mandanteId ? empresaMandanteRepository.empresaIdsActivas(mandanteId) :
         null,
+      empresaMandanteRepository.listActivos(),
     ]);
     const filtroMandante = delMandante ? new Set(delMandante) : null;
-    return empresas.filter((e) =>
-      (!visibles || visibles.has(e.id)) &&
-      (!filtroMandante || filtroMandante.has(e.id)));
+    // Mandantes asociados a cada Empresa (empresaMandantes activos): el
+    // listado los muestra aunque la Empresa aún no participe en un Proyecto.
+    // Un rol de Mandante solo ve el propio.
+    const mandantesPorEmpresa = new Map();
+    vinculos.forEach((v) => {
+      if (ROLES_MANDANTE.includes(actor.rol) &&
+          v.mandanteId !== actor.mandanteId) {
+        return;
+      }
+      if (!mandantesPorEmpresa.has(v.empresaId)) {
+        mandantesPorEmpresa.set(v.empresaId, []);
+      }
+      mandantesPorEmpresa.get(v.empresaId).push(v.mandanteId);
+    });
+    return empresas
+        .filter((e) => (!visibles || visibles.has(e.id)) &&
+            (!filtroMandante || filtroMandante.has(e.id)))
+        .map((e) => ({...e, mandanteIds: mandantesPorEmpresa.get(e.id) || []}));
   }
 
   /**
@@ -324,8 +343,8 @@ class EmpresaService {
 
     const nuevaEmpresa = {
       rut: rutNormalizado,
-      razonSocial: razonSocial.trim(),
-      nombreFantasia: (nombreFantasia || razonSocial).trim(),
+      razonSocial: aMayusculas(razonSocial),
+      nombreFantasia: aMayusculas(nombreFantasia || razonSocial),
       giro: giro.trim(),
       contacto: contactoFinal,
       estado: estadoFinal,
@@ -412,10 +431,10 @@ class EmpresaService {
     }
 
     if (updateData.razonSocial) {
-      updateData.razonSocial = updateData.razonSocial.trim();
+      updateData.razonSocial = aMayusculas(updateData.razonSocial);
     }
     if (updateData.nombreFantasia) {
-      updateData.nombreFantasia = updateData.nombreFantasia.trim();
+      updateData.nombreFantasia = aMayusculas(updateData.nombreFantasia);
     }
     if (updateData.giro) updateData.giro = updateData.giro.trim();
 
@@ -504,10 +523,10 @@ class EmpresaService {
     );
 
     // Detalle por participación activa (Proyecto + Perfil de
-    // Participación asociado) — para la columna "Proyecto/Perfil" y el
-    // panel lateral de EmpresasListPage.jsx, que necesitan el nombre, no
-    // solo el conteo. Una Empresa activa normalmente tiene 0-2
-    // participaciones simultáneas, así que resolver cada Proyecto/Perfil
+    // Participación asociado) — para las columnas de EmpresasListPage.jsx,
+    // que necesitan el nombre, no solo el conteo. Una Empresa activa
+    // normalmente tiene 0-2 participaciones simultáneas, así que resolver
+    // cada Proyecto/Perfil
     // por separado (sin `in` batching) es aceptable acá.
     const proyectos = await Promise.all(
         participacionesActivas.map(
@@ -561,6 +580,122 @@ class EmpresaService {
       recursosCount: recursos.length,
       proyectosCount: proyectosActivos.size,
       participacionesActivas: participacionesDetalle,
+    };
+  }
+
+  /**
+   * Personas y Maquinarias con relación (vigente o histórica) con una
+   * Empresa (empresaPersonas / empresaRecursos), con sus Proyectos de
+   * asignación activa por esa Empresa. Todo se resuelve aquí, en lecturas
+   * por lote (sin una consulta por fila). Un rol de Mandante solo ve los
+   * Proyectos de su Mandante. Una fila por sujeto: su relación más
+   * reciente con la Empresa.
+   * @param {string} id ID de la Empresa.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<{empresa: Object, filas: Object[]}>} Encabezado y filas.
+   */
+  async obtenerRecursos(id, actor) {
+    const empresa = await this.getEmpresaById(id, actor); // Alcance
+    const soloMandante = ROLES_MANDANTE.includes(actor.rol) ?
+        actor.mandanteId : null;
+    const filtroAsignaciones = {
+      empresaId: id, estado: "activa",
+      ...(soloMandante ? {mandanteId: soloMandante} : {}),
+    };
+
+    const [relPersonas, relRecursos, asigPersonas, asigRecursos] =
+        await Promise.all([
+          empresaPersonaRepository.listByEmpresas([id]),
+          empresaRecursoRepository.listByEmpresas([id]),
+          participacionPersonaRepository.list(filtroAsignaciones),
+          participacionRecursoRepository.list(filtroAsignaciones),
+        ]);
+
+    // Relación más reciente por sujeto (listByEmpresas ya las ordena).
+    const ultimaPorSujeto = (relaciones, campo) => {
+      const mapa = new Map();
+      relaciones.forEach((r) => {
+        if (!mapa.has(r[campo])) mapa.set(r[campo], r);
+      });
+      return mapa;
+    };
+    const relPersona = ultimaPorSujeto(relPersonas, "personaId");
+    const relRecurso = ultimaPorSujeto(relRecursos, "recursoId");
+
+    const [personas, recursos, proyectos] = await Promise.all([
+      personaRepository.getByIds([...relPersona.keys()]),
+      recursoRepository.getByIds([...relRecurso.keys()]),
+      proyectoRepository.getByIds([
+        ...asigPersonas, ...asigRecursos,
+      ].map((a) => a.proyectoId)),
+    ]);
+    const proyectoPorId = new Map(proyectos.map((p) => [p.id, p]));
+
+    // Proyectos distintos con asignación activa de cada sujeto.
+    const proyectosDe = (asignaciones, campo) => {
+      const mapa = new Map();
+      asignaciones.forEach((a) => {
+        const p = proyectoPorId.get(a.proyectoId);
+        if (!p) return;
+        if (!mapa.has(a[campo])) mapa.set(a[campo], new Map());
+        mapa.get(a[campo]).set(p.id, {
+          id: p.id, nombre: p.nombre, codigo: p.codigo || null,
+        });
+      });
+      return (sujetoId) => [...(mapa.get(sujetoId)?.values() || [])];
+    };
+    const proyectosPersona = proyectosDe(asigPersonas, "personaId");
+    const proyectosRecurso = proyectosDe(asigRecursos, "recursoId");
+
+    const relacionFila = (r) => ({
+      id: r.id,
+      estado: r.estado,
+      tipoRelacion: r.tipoRelacion || null,
+      fechaInicio: r.fechaInicio || null,
+      fechaTermino: r.fechaTermino || null,
+    });
+
+    const filas = [
+      ...personas.map((p) => {
+        const r = relPersona.get(p.id);
+        return {
+          tipo: "persona",
+          id: p.id,
+          nombre: [p.nombre, p.apellido].filter(Boolean).join(" "),
+          identificacion: p.identificacion ||
+              (p.rut ? {tipo: "RUT", numero: p.rut} : null),
+          detalle: r.cargo || null,
+          estadoSujeto: p.estado || null,
+          proyectos: proyectosPersona(p.id),
+          relacion: relacionFila(r),
+        };
+      }),
+      ...recursos.map((m) => {
+        const r = relRecurso.get(m.id);
+        return {
+          tipo: "maquinaria",
+          id: m.id,
+          nombre: m.nombre,
+          identificacion: m.patente ?
+              {tipo: "PATENTE", numero: m.patente} : null,
+          detalle: m.tipo || null,
+          estadoSujeto: m.estado || null,
+          proyectos: proyectosRecurso(m.id),
+          relacion: relacionFila(r),
+        };
+      }),
+    ].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+
+    return {
+      empresa: {
+        id: empresa.id,
+        razonSocial: empresa.razonSocial,
+        nombreFantasia: empresa.nombreFantasia || null,
+        rut: empresa.rut || null,
+        estado: empresa.estado,
+        logoUrl: empresa.logoUrl || null,
+      },
+      filas,
     };
   }
 

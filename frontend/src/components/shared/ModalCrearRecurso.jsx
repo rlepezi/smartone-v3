@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { LayoutModalDocumento } from "../expedientes/documentacion/LayoutModalDocumento";
 import { recursoService } from "../../services/recursoService";
 import { empresaService } from "../../services/empresaService";
 import { SugerenciasChips } from "./SugerenciasChips";
@@ -18,10 +18,13 @@ import { SUGERENCIAS_TIPO_MAQUINARIA } from "../../utils/sugerenciasRelacionLabo
 // La Empresa la fija el contexto y se muestra como primer campo. Patente obligatoria y no única:
 // si otra maquinaria activa visible ya la usa (409 PATENTE_DUPLICADA) se avisa y se pide
 // confirmación para continuar.
-export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
+// `inicial` (opcional): { nombre, patente } para precargar (p. ej. "Crear desde carpeta").
+// `documento` (opcional): carpeta para ver el padrón o el listado al lado del formulario.
+export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar, inicial = null, documento = null }) => {
+  const patenteRef = useRef(null);
   const [empresaNombre, setEmpresaNombre] = useState("");
   const [patenteDuplicada, setPatenteDuplicada] = useState(null); // {recursoId, nombre, patente}
-  const [formData, setFormData] = useState({ patente: "", nombre: "", tipo: "" });
+  const [formData, setFormData] = useState({ patente: inicial?.patente || "", nombre: inicial?.nombre || "", tipo: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
@@ -86,17 +89,14 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCerrar}>
-      <div
-        className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+    <>
+      <LayoutModalDocumento
+        titulo="Nueva Maquinaria"
+        onCerrar={onCerrar}
+        documento={documento}
+        nombreBuscado={formData.nombre}
+        campoFocoRef={patenteRef}
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Nueva Maquinaria</h3>
-          <button type="button" onClick={onCerrar} className="text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {serverError && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">{serverError}</div>
@@ -113,6 +113,7 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Identificación / Patente *</label>
               <input
+                ref={patenteRef}
                 type="text" name="patente" value={formData.patente} onChange={handleChange}
                 placeholder="Ej: ABCD12 o Retroexcavadora CAT"
                 className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
@@ -133,7 +134,7 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
               {errors.nombre && <p className="text-xs text-red-500 mt-1">{errors.nombre}</p>}
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo Maquinaria *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de maquinaria *</label>
               <input
                 type="text" name="tipo" value={formData.tipo} onChange={handleChange}
                 placeholder="Ej: Camioneta"
@@ -142,6 +143,7 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
                 }`}
               />
               {errors.tipo && <p className="text-xs text-red-500 mt-1">{errors.tipo}</p>}
+              <p className="text-[11px] text-slate-400 mt-1">Se usa para sugerir la clasificación al asignarla a un proyecto.</p>
               <SugerenciasChips opciones={SUGERENCIAS_TIPO_MAQUINARIA} valor={formData.tipo} onElegir={(v) => elegir("tipo", v)} />
             </div>
           </div>
@@ -157,7 +159,7 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
             </button>
           </div>
         </form>
-      </div>
+      </LayoutModalDocumento>
       {patenteDuplicada && (
         <ConfirmacionModal
           peligro
@@ -169,6 +171,6 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
           onConfirmar={() => crear(true)}
         />
       )}
-    </div>
+    </>
   );
 };

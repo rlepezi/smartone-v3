@@ -25,6 +25,8 @@ const claveRecurso = (perfilRecursoId) => perfilRecursoId || "*";
  * Recurso del tipo (`perfilRecursoId` null) o para uno puntual. El
  * mandanteId del documento se DERIVA siempre del Perfil de Participación
  * referenciado — nunca se lee del payload del cliente. Reglas:
+ * - El Requerimiento, el Perfil de Participación y el Perfil de Recurso son
+ *   del mismo Mandante.
  * - tipoEntidad "empresa": perfilRecursoId siempre null.
  * - El Perfil de Recurso debe ser del mismo Mandante, estar activo y su
  *   tipo coincidir con el tipoEntidad del Requerimiento.
@@ -128,9 +130,12 @@ class PerfilRequerimientoService {
    * Carga y valida el Requerimiento.
    * @param {string} requerimientoId ID del Requerimiento.
    * @param {boolean} exigirActivo Si debe estar activo.
+   * @param {?Object} [dado] Requerimiento que se está guardando en esta
+   *     misma operación (todavía no escrito): se usa tal cual.
    * @return {Promise<Object>} El Requerimiento.
    */
-  async _cargarRequerimiento(requerimientoId, exigirActivo) {
+  async _cargarRequerimiento(requerimientoId, exigirActivo, dado = null) {
+    if (dado && dado.id === requerimientoId) return dado;
     const requerimiento = await requerimientoRepository.getById(
         requerimientoId,
     );
@@ -210,72 +215,6 @@ class PerfilRequerimientoService {
   }
 
   /**
-   * Crea un nuevo vínculo (una combinación Perfil de Participación +
-   * Requerimiento + Perfil de Recurso o "Todos").
-   * @param {Object} payload {perfilParticipacionId, requerimientoId,
-   *     perfilRecursoId?}.
-   * @param {Object} actor Usuario autenticado que ejecuta la acción.
-   * @return {Promise<Object>} El vínculo creado.
-   */
-  async crearVinculo(payload, actor) {
-    const {perfilParticipacionId, requerimientoId} = payload;
-    const perfilRecursoId = payload.perfilRecursoId || null;
-
-    if (!perfilParticipacionId || !requerimientoId) {
-      throw new AppError(
-          400,
-          "Faltan campos obligatorios: 'perfilParticipacionId' y " +
-          "'requerimientoId' son requeridos.",
-      );
-    }
-
-    const perfil = await this._cargarPerfilParticipacion(
-        perfilParticipacionId, actor, true,
-    );
-    // mandanteId SIEMPRE se deriva del Perfil de Participación.
-    const mandanteId = perfil.mandanteId;
-    const requerimiento =
-        await this._cargarRequerimiento(requerimientoId, true);
-    await this._validarPerfilRecurso(
-        perfilRecursoId, mandanteId, requerimiento.tipoEntidad,
-    );
-
-    const delPar = await perfilRequerimientoRepository
-        .getByPerfilYRequerimiento(perfilParticipacionId, requerimientoId);
-    if (delPar.some((v) => claveRecurso(v.perfilRecursoId) ===
-        claveRecurso(perfilRecursoId))) {
-      throw new AppError(
-          409,
-          "Ya existe un vínculo con esta misma combinación. Si estaba " +
-          "inactivo, reactívelo en vez de crear uno nuevo.",
-      );
-    }
-    const activosDelPar = delPar.filter((v) => v.estado === "activo");
-    this._validarCompatibilidad(activosDelPar, perfilRecursoId);
-
-    // Los vínculos de un mismo Requerimiento comparten orden.
-    const orden = activosDelPar.length ?
-      Math.min(...activosDelPar.map((v) => v.orden || 0)) :
-      await this._siguienteOrden(
-          perfilParticipacionId, requerimiento.tipoEntidad,
-      );
-
-    const creado = await perfilRequerimientoRepository.create({
-      perfilParticipacionId,
-      requerimientoId,
-      perfilRecursoId,
-      mandanteId,
-      tipoEntidad: requerimiento.tipoEntidad,
-      estado: "activo",
-      orden,
-    });
-    await expedienteService.sincronizarRequerimientosDePerfil(
-        perfilParticipacionId, [requerimientoId], actor,
-    );
-    return creado;
-  }
-
-  /**
    * Cambia el estado (activo/inactivo) de un vínculo existente. Es el
    * único campo editable — la combinación en sí es inmutable.
    * @param {string} id ID del vínculo.
@@ -349,6 +288,45 @@ class PerfilRequerimientoService {
    *     desactivados: number}>} Resumen.
    */
   async sincronizarVinculos(cambios, actor) {
+    const plan = await this.planificarVinculos(cambios, actor);
+    await perfilRequerimientoRepository.aplicarCambios(plan);
+    await this.sincronizarExpedientes(plan.afectados, actor);
+    return plan.resumen;
+  }
+
+  /**
+   * Sincroniza los Expedientes abiertos de cada Perfil de Participación
+   * afectado por un cambio de vínculos (regla del bloque 4: los cerrados,
+   * las evaluaciones y las evidencias no se tocan).
+   * @param {Map<string, Set<string>>} afectados perfilParticipacionId ->
+   *     IDs de Requerimiento.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<void>}
+   */
+  async sincronizarExpedientes(afectados, actor) {
+    for (const [perfilParticipacionId, reqIds] of afectados) {
+      // eslint-disable-next-line no-await-in-loop
+      await expedienteService.sincronizarRequerimientosDePerfil(
+          perfilParticipacionId, [...reqIds], actor,
+      );
+    }
+  }
+
+  /**
+   * Calcula, sin escribir nada, las altas, reactivaciones y bajas de
+   * vínculos necesarias para dejar cada par en su estado deseado. Valida
+   * que Requerimiento, Perfil de Participación y Perfiles de Recurso sean
+   * del mismo Mandante.
+   * @param {Array<{perfilParticipacionId: string, requerimientoId: string,
+   *     activo: boolean, perfilRecursoIds: (null|string[])}>} cambios
+   *     Estado deseado por par.
+   * @param {Object} actor Usuario autenticado que ejecuta la acción.
+   * @param {?Object} [requerimientoDado] Requerimiento que se está
+   *     guardando en la misma operación (aún no escrito).
+   * @return {Promise<{crear: Object[], actualizar: Object[], resumen:
+   *     Object, afectados: Map<string, Set<string>>}>} Plan de escritura.
+   */
+  async planificarVinculos(cambios, actor, requerimientoDado = null) {
     if (!Array.isArray(cambios) || cambios.length === 0) {
       throw new AppError(400, "Debe indicar al menos un cambio de vínculos.");
     }
@@ -382,8 +360,15 @@ class PerfilRequerimientoService {
       );
       // eslint-disable-next-line no-await-in-loop
       const requerimiento = await this._cargarRequerimiento(
-          requerimientoId, activo,
+          requerimientoId, activo, requerimientoDado,
       );
+      if (activo && requerimiento.mandanteId !== perfil.mandanteId) {
+        throw new AppError(
+            400,
+            "El Requerimiento y el Perfil de Participación deben ser del " +
+            "mismo Mandante.",
+        );
+      }
 
       let deseados = [];
       if (activo) {
@@ -480,14 +465,7 @@ class PerfilRequerimientoService {
       }
     }
 
-    await perfilRequerimientoRepository.aplicarCambios({crear, actualizar});
-    for (const [perfilParticipacionId, reqIds] of afectados) {
-      // eslint-disable-next-line no-await-in-loop
-      await expedienteService.sincronizarRequerimientosDePerfil(
-          perfilParticipacionId, [...reqIds], actor,
-      );
-    }
-    return resumen;
+    return {crear, actualizar, resumen, afectados};
   }
 
   /**
@@ -597,13 +575,24 @@ class PerfilRequerimientoService {
       throw new AppError(404, "Perfil de Participación no encontrado.");
     }
 
-    const [requerimientos, activos] = await Promise.all([
-      requerimientoRepository.list({estado: "activo"}),
-      perfilRequerimientoRepository.getActivosByPerfil(perfilParticipacionId),
+    // Solo los Requerimientos del Mandante del Perfil.
+    const [requerimientos, delMandante] = await Promise.all([
+      requerimientoRepository.list({
+        mandanteId: perfil.mandanteId, estado: "activo",
+      }),
+      perfilRequerimientoRepository.list({
+        mandanteId: perfil.mandanteId, estado: "activo",
+      }),
     ]);
 
     const porRequerimiento = {};
-    activos.forEach((v) => {
+    // Todos los Perfiles de Participación a los que aplica cada uno.
+    const perfilesDe = {};
+    delMandante.forEach((v) => {
+      (perfilesDe[v.requerimientoId] =
+          perfilesDe[v.requerimientoId] || new Set())
+          .add(v.perfilParticipacionId);
+      if (v.perfilParticipacionId !== perfilParticipacionId) return;
       (porRequerimiento[v.requerimientoId] =
           porRequerimiento[v.requerimientoId] || []).push(v);
     });
@@ -618,6 +607,7 @@ class PerfilRequerimientoService {
         perfilRecursoIds: !vinculado || todos || r.tipoEntidad === "empresa" ?
           null : vinculos.map((v) => v.perfilRecursoId).sort(),
         perfilRequerimientoId: vinculado ? vinculos[0].id : null,
+        perfilParticipacionIds: [...(perfilesDe[r.id] || [])],
         orden: vinculado ? Math.min(...vinculos.map((v) => v.orden || 0)) :
           null,
       };

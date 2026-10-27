@@ -65,6 +65,22 @@ class PerfilRecursoRepository {
   }
 
   /**
+   * Perfiles de un Mandante y tipo, en cualquier estado (para validar la
+   * unicidad del nombre, que se compara normalizado en el servicio).
+   * @param {string} mandanteId ID del Mandante.
+   * @param {string} tipo "persona" | "recurso".
+   * @return {Promise<object[]>} Perfiles activos e inactivos.
+   */
+  async listByMandanteYTipo(mandanteId, tipo) {
+    const snapshot = await db
+        .collection(COLLECTION)
+        .where("mandanteId", "==", mandanteId)
+        .where("tipo", "==", tipo)
+        .get();
+    return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
    * Lista perfiles de recurso, opcionalmente filtrados por mandante,
    * tipo y/o estado. Los tres filtros son independientes entre
    * sí (pueden combinarse libremente) — ver firestore.indexes.json para

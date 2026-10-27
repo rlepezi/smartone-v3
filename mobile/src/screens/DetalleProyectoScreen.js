@@ -8,7 +8,7 @@ import { entityIcons } from "../theme/entityIcons";
 import { estadoExpediente } from "../theme/status";
 import { spacing, radius } from "../theme/spacing";
 import { typography } from "../theme/typography";
-import { formatDate } from "../utils/formatDate";
+import { formatFecha } from "../utils/fechas";
 import { GradientHeader } from "../components/GradientHeader";
 import { SectionCard } from "../components/SectionCard";
 import { ProgressRow } from "../components/ProgressRow";
@@ -90,8 +90,8 @@ export default function DetalleProyectoScreen({ route, navigation }) {
       >
         <InfoGrid
           items={[
-            { label: "Inicio de contrato", value: formatDate(proyecto.fechaInicio) },
-            { label: "Fin de contrato", value: formatDate(proyecto.fechaTermino) },
+            { label: "Inicio de contrato", value: formatFecha(proyecto.fechaInicio) },
+            { label: "Fin de contrato", value: formatFecha(proyecto.fechaTermino) },
           ]}
         />
 

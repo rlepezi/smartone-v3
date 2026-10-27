@@ -18,11 +18,14 @@ class EvaluacionController {
    */
   async list(req, res, next) {
     try {
-      const {expedienteId, incluirHistorial, proyectoId, empresaId, estado} =
-          req.query;
+      const {
+        expedienteId, incluirHistorial, proyectoId, empresaId, estado,
+        personaId, recursoId, empresa,
+      } = req.query;
       if (expedienteId) {
         const evaluaciones = await evaluacionService.listarPorExpediente(
             expedienteId, incluirHistorial === "true", req.user,
+            {personaId, recursoId, empresa: empresa === "true"},
         );
         return res.status(200).json({data: evaluaciones});
       }

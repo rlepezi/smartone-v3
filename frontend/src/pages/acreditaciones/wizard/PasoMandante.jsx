@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Search, Building2 } from "lucide-react";
-import { mandanteService } from "../../../services/mandanteService";
 import { getMandanteDisplayName } from "../../../utils/mandanteDisplay";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
@@ -8,30 +7,11 @@ import { EntityIconTile } from "../../../components/shared/EntityIconTile";
 
 // Paso 1 del wizard "Nueva Acreditación": el Mandante elegido acá es la ÚNICA fuente del Mandante
 // del flujo (los pasos siguientes filtran Proyectos y Perfiles por él). Mismo patrón visual que el
-// Paso Empresa. Sin opción de crear Mandante. Lo usan los roles sin Mandante fijo; para
-// mandante_admin el paso se omite (ver AcreditacionWizardPage).
-export const PasoMandante = ({ mandanteId, onSeleccionar }) => {
-  const [mandantes, setMandantes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+// Paso Empresa. Sin opción de crear Mandante. Solo se muestra cuando hay más de un Mandante entre
+// los que elegir: con Mandante fijo o con uno solo activo el paso se omite (ver
+// AcreditacionWizardPage, que entrega la lista ya cargada por useMandanteContexto).
+export const PasoMandante = ({ mandantes = [], error = null, mandanteId, onSeleccionar }) => {
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    let vigente = true;
-    mandanteService.listar("activo")
-      .then((data) => {
-        if (!vigente) return;
-        const lista = data || [];
-        setMandantes(lista);
-        // Un único Mandante activo: viene preseleccionado (el paso igual se muestra).
-        if (lista.length === 1 && !mandanteId) onSeleccionar(lista[0]);
-      })
-      .catch((err) => { if (vigente) setError(err.message || "No se pudieron cargar los mandantes."); })
-      .finally(() => { if (vigente) setLoading(false); });
-    return () => { vigente = false; };
-    // Solo al montar: la preselección no debe repetirse si el usuario cambia de Mandante.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const term = search.trim().toLowerCase();
   const filtrados = mandantes
@@ -59,9 +39,7 @@ export const PasoMandante = ({ mandanteId, onSeleccionar }) => {
 
       <ErrorBanner message={error} />
 
-      {loading ? (
-        <p className="text-xs text-slate-400 py-8 text-center">Cargando mandantes...</p>
-      ) : filtrados.length === 0 ? (
+      {filtrados.length === 0 ? (
         <p className="text-xs text-slate-400 py-8 text-center">No se encontraron mandantes activos.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

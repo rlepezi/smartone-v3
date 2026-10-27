@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Power, Truck, FileCheck2, ClipboardList, Wrench, Repeat, Building2,
 } from "lucide-react";
@@ -15,11 +15,10 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { expedienteService } from "../../services/expedienteService";
-import { requerimientoService } from "../../services/requerimientoService";
-import { evaluacionService } from "../../services/evaluacionService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { expedienteRequerimientoService } from "../../services/expedienteRequerimientoService";
+import { formatFecha } from "../../utils/fechas";
 import { createdAtMillis } from "../../utils/deltaCalculos";
-import { evaluarSujeto } from "../../utils/evaluacionSujeto";
+import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";
@@ -66,9 +65,12 @@ const proximoVencimientoDe = (evaluaciones) => {
   return futuros[0] || null;
 };
 
-// Tabla de Requerimientos nivel Maquinaria — compartida por "Documentación"
-// (todos) y "Mantenciones" (solo requiereVencimiento).
-const TablaRequerimientos = ({ items, estadoDe, evaluacionesPropias }) => (
+// Tabla de Requerimientos de la Maquinaria (sus instancias activas en sus Expedientes) —
+// compartida por "Documentación" (todas) y "Mantenciones" (solo requiereVencimiento). Cada fila
+// lleva al detalle del Expediente, con los requisitos de esta Maquinaria abiertos, para evaluar
+// o ajustar (`onAbrir`).
+const AYUDA_FILA = "Ir al expediente para evaluar o ajustar este requerimiento";
+const TablaRequerimientos = ({ items, onAbrir }) => (
   <div className="overflow-x-auto -mx-2">
     <table className="w-full text-left border-collapse text-xs">
       <thead>
@@ -80,13 +82,24 @@ const TablaRequerimientos = ({ items, estadoDe, evaluacionesPropias }) => (
       </thead>
       <tbody className="divide-y divide-slate-100">
         {items.map((r) => {
-          const estado = estadoDe(r.id);
-          const evaluacion = evaluacionesPropias.find((ev) => ev.requerimientoId === r.id);
+          const estado = r.evaluacionVigenteId ? r.resultado : null;
           return (
-            <tr key={r.id} className="hover:bg-slate-50/60 transition-colors">
+            <tr
+              key={r.id}
+              tabIndex={0}
+              role="link"
+              title={AYUDA_FILA}
+              aria-label={`${r.nombre}: ${AYUDA_FILA}`}
+              onClick={() => onAbrir(r)}
+              onKeyDown={(e) => { if (e.key === "Enter") onAbrir(r); }}
+              className="group cursor-pointer hover:bg-primary-lighter/40 focus:outline-none focus-visible:bg-primary-lighter/40 transition-colors"
+            >
               <td className="py-2.5 px-2">
                 <p className="font-bold text-carbon-dark">{r.nombre}</p>
                 {r.descripcion && <p className="text-[11px] text-slate-400">{r.descripcion}</p>}
+                <p className="text-[11px] font-semibold text-primary opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity">
+                  {AYUDA_FILA} →
+                </p>
               </td>
               <td className="py-2.5 px-2">
                 {estado ? (
@@ -96,7 +109,7 @@ const TablaRequerimientos = ({ items, estadoDe, evaluacionesPropias }) => (
                 )}
               </td>
               <td className="py-2.5 px-2 text-slate-500 font-medium">
-                {evaluacion?.fechaVencimiento ? formatFecha(evaluacion.fechaVencimiento) : <span className="text-slate-300 italic">-</span>}
+                {r.fechaVencimiento ? formatFecha(r.fechaVencimiento) : <span className="text-slate-300 italic">-</span>}
               </td>
             </tr>
           );
@@ -109,13 +122,17 @@ const TablaRequerimientos = ({ items, estadoDe, evaluacionesPropias }) => (
 export const RecursoDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Detalle del Expediente del requerimiento, con los requisitos de esta Maquinaria abiertos.
+  const abrirEnExpediente = (r) => navigate(`/expedientes/${r.expedienteId}?tab=recurso&sujeto=${id}`);
   const { profile } = useAuth();
   const puedeEscribir = ["superadmin", "mandante_admin"].includes(profile?.rol);
 
   const [recurso, setRecurso] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState("resumen");
+  // `?tab=historial` (desde la Actividad Reciente del Dashboard) abre directo esa pestaña.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => (TABS.some((t) => t.key === searchParams.get("tab")) ? searchParams.get("tab") : "resumen"));
 
   const [empresasMap, setEmpresasMap] = useState({});
   const [proyectosMap, setProyectosMap] = useState({});
@@ -129,7 +146,6 @@ export const RecursoDetailPage = () => {
   const perfilesPorId = usePerfilesRecurso();
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [requerimientosMaquinaria, setRequerimientosMaquinaria] = useState([]);
-  const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
   const [historialEmpresas, setHistorialEmpresas] = useState([]);
   const [cargandoContexto, setCargandoContexto] = useState(true);
 
@@ -168,7 +184,7 @@ export const RecursoDetailPage = () => {
       try {
         const [
           empresasData, proyectosData, participacionesData, perfilesData,
-          sujetosData, expedientesData, requerimientosData, evaluacionesData,
+          sujetosData, expedientesData, instanciasData,
           historialData,
         ] = await Promise.all([
           empresaService.listar(),
@@ -177,8 +193,8 @@ export const RecursoDetailPage = () => {
           perfilParticipacionService.listar({}),
           sujetoService.listar({ recursoId: id }),
           expedienteService.listar({}),
-          requerimientoService.listar({ estado: "activo" }),
-          evaluacionService.listarVigentes(),
+          // Instancias de Requerimiento de esta Maquinaria en sus Expedientes (activas).
+          expedienteRequerimientoService.listarPorSujeto({ recursoId: id }).catch(() => []),
           recursoService.listarRelaciones(id).catch(() => []),
         ]);
         if (cancelado) return;
@@ -206,8 +222,7 @@ export const RecursoDetailPage = () => {
         // (fuerza su Mandante): se acota acá a este Recurso.
         setSujetos((sujetosData || []).filter((a) => a.recursoId === id));
         setExpedientesTodos(expedientesData || []);
-        setRequerimientosMaquinaria((requerimientosData || []).filter((r) => r.tipoEntidad === "recurso"));
-        setEvaluacionesTodas(evaluacionesData || []);
+        setRequerimientosMaquinaria(instanciasData || []);
         setHistorialEmpresas(historialData || []);
       } catch (err) {
         console.error("Error al cargar el contexto de la maquinaria:", err);
@@ -297,17 +312,11 @@ export const RecursoDetailPage = () => {
     );
   }
 
-  // Evaluaciones propias de esta Maquinaria (vigentes): base de "Estado de
-  // Acreditación", "Próximo vencimiento" y el detalle por Requerimiento.
-  const evaluacionesPropias = evaluacionesTodas.filter((ev) => ev.recursoId === id);
-  const estadoDeRequerimiento = (requerimientoId) => {
-    const propias = evaluacionesPropias.filter((ev) => ev.requerimientoId === requerimientoId);
-    if (propias.length === 0) return null;
-    if (propias.some((ev) => ev.resultado === "no_cumple")) return "no_cumple";
-    if (propias.some((ev) => ev.resultado === "pendiente")) return "pendiente";
-    if (propias.some((ev) => ev.resultado === "cumple")) return "cumple";
-    return null;
-  };
+  // Resultados vigentes de esta Maquinaria (copiados en cada instancia activa): base de "Estado
+  // de Acreditación" y "Próximo vencimiento".
+  const evaluacionesPropias = requerimientosMaquinaria
+    .filter((i) => i.evaluacionVigenteId)
+    .map((i) => ({ resultado: i.resultado, fechaVencimiento: i.fechaVencimiento }));
 
   const categoriaDeEvaluaciones = (evaluaciones) => {
     if (evaluaciones.length === 0) return null;
@@ -413,7 +422,7 @@ export const RecursoDetailPage = () => {
           <CampoInfo etiqueta="Último Proyecto">
             {cargandoContexto ? "…" : (ultimoProyecto && proyectosMap[ultimoProyecto.proyectoId]) || null}
           </CampoInfo>
-          <CampoInfo etiqueta="Clasificación">{formatCatalogo(recurso.tipo)}</CampoInfo>
+          <CampoInfo etiqueta="Tipo de maquinaria">{formatCatalogo(recurso.tipo)}</CampoInfo>
           <CampoInfo etiqueta="Estado de Acreditación">
             {cargandoContexto ? "…" : categoriaAcreditacion
               ? <StatusBadge value={categoriaAcreditacion} map={ACREDITACION_MAP} />
@@ -682,7 +691,7 @@ export const RecursoDetailPage = () => {
               {cargandoContexto ? cargandoTexto : requerimientosMaquinaria.length === 0 ? (
                 <div className="py-6 text-center text-slate-400 text-xs">No hay Requerimientos de nivel Maquinaria en el catálogo.</div>
               ) : (
-                <TablaRequerimientos items={requerimientosMaquinaria} estadoDe={estadoDeRequerimiento} evaluacionesPropias={evaluacionesPropias} />
+                <TablaRequerimientos items={requerimientosMaquinaria} onAbrir={abrirEnExpediente} />
               )}
             </TarjetaPanel>
 
@@ -693,7 +702,7 @@ export const RecursoDetailPage = () => {
               {cargandoContexto ? cargandoTexto : requerimientosMantencion.length === 0 ? (
                 <div className="py-6 text-center text-slate-400 text-xs">No hay Requerimientos con vencimiento periódico en el catálogo.</div>
               ) : (
-                <TablaRequerimientos items={requerimientosMantencion} estadoDe={estadoDeRequerimiento} evaluacionesPropias={evaluacionesPropias} />
+                <TablaRequerimientos items={requerimientosMantencion} onAbrir={abrirEnExpediente} />
               )}
             </TarjetaPanel>
           </>
@@ -709,6 +718,7 @@ export const RecursoDetailPage = () => {
         <CambiarEmpresaRecursoModal
           recursoId={id}
           empresaActualNombre={recurso.empresaActual?.empresaNombre || null}
+          empresaActualId={recurso.empresaActual?.empresaId || null}
           onCambiado={handleEmpresaCambiada}
           onCerrar={() => setCambiarEmpresaAbierto(false)}
         />

@@ -3,7 +3,7 @@ import { claseCumplimiento } from "../../utils/cumplimientoClases";
 
 // Celda "Evaluación" de una Persona/Maquinaria: barra + % + cantidad de
 // Requerimientos. `evaluacion` = { total, pctCumple } (ver
-// utils/evaluacionSujeto.js).
+// evaluarSujeto en utils/cumplimientoCalculos.js).
 export const EvaluacionCelda = ({ evaluacion }) => {
   if (!evaluacion || evaluacion.total === 0) {
     return <span className="text-[11px] text-slate-300 italic">Sin Requerimientos</span>;
@@ -18,7 +18,7 @@ export const EvaluacionCelda = ({ evaluacion }) => {
           />
         </div>
         <span className="text-xs font-bold text-carbon-dark">
-          {evaluacion.pctCumple === null ? "-" : `${evaluacion.pctCumple}%`}
+          {evaluacion.pctCumple === null ? "—" : `${evaluacion.pctCumple}%`}
         </span>
       </div>
       <span className="text-[10px] text-slate-400 whitespace-nowrap">

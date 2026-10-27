@@ -5,6 +5,7 @@ const proyectoRepository = require("../repositories/proyectoRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {
   puedeVerEmpresa, puedeVerSujeto, filtrarRelacionesVisibles,
+  mandanteDeContexto,
 } = require("../utils/alcanceMandante");
 const AppError = require("../utils/AppError");
 
@@ -80,7 +81,9 @@ class EmpresaSujetoService {
 
   /**
    * Campos de la relación según el tipo. `estricto` (cambio de empresa)
-   * exige los campos completos; el alta inicial solo los mínimos.
+   * exige tipoRelacion; el alta inicial no exige ninguno. `cargo` y
+   * `tipoContrato` son siempre opcionales: vacíos o solo con espacios se
+   * guardan null.
    * @param {Object} payload Datos recibidos.
    * @param {boolean} estricto true para cambio de empresa.
    * @return {Object} Campos normalizados.
@@ -94,13 +97,8 @@ class EmpresaSujetoService {
         tipoContrato: t(payload.tipoContrato),
         jornada: t(payload.jornada),
       };
-      if (!campos.cargo) {
-        throw new AppError(400, "El campo 'cargo' es requerido.");
-      }
-      if (estricto && (!campos.tipoRelacion || !campos.tipoContrato)) {
-        throw new AppError(
-            400, "Los campos 'tipoRelacion' y 'tipoContrato' son requeridos.",
-        );
+      if (estricto && !campos.tipoRelacion) {
+        throw new AppError(400, "El campo 'tipoRelacion' es requerido.");
       }
       return campos;
     }
@@ -338,13 +336,17 @@ class EmpresaSujetoService {
     await this._asignaciones().finalizarDocumentos(asignaciones, actor);
 
     await bitacoraLogger.registrarEvento({
-      mandanteId: actor.mandanteId || null,
+      mandanteId: await mandanteDeContexto(actor, {empresaId, asignaciones}),
       entidad: this.entidad,
       entidadId: sujetoId,
       accion: "cambio_empresa",
       actor,
       detalle: {
         empresaAnteriorId: actual?.empresaId || null,
+        empresaAnteriorNombre: actual?.empresaId ?
+          (await empresaRepository.getById(actual.empresaId))?.razonSocial ||
+            null :
+          null,
         empresaNuevaId: empresaId,
         empresaNuevaNombre: empresa.razonSocial,
         relacionAnteriorId: actual?.id || null,
@@ -383,7 +385,9 @@ class EmpresaSujetoService {
     });
     await this._asignaciones().finalizarDocumentos(asignaciones, actor);
     await bitacoraLogger.registrarEvento({
-      mandanteId: actor.mandanteId || null,
+      mandanteId: await mandanteDeContexto(actor, {
+        empresaId: actual.empresaId, asignaciones,
+      }),
       entidad: this.entidad,
       entidadId: sujetoId,
       accion: "relacion_terminada",

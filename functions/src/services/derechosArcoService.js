@@ -4,8 +4,8 @@ const {FieldValue, Timestamp} = require("firebase-admin/firestore");
 const evidenciaRepository = require("../repositories/evidenciaRepository");
 const evidenciaRequerimientoRepository =
     require("../repositories/evidenciaRequerimientoRepository");
-const requerimientoRepository =
-    require("../repositories/requerimientoRepository");
+const expedienteRequerimientoRepository =
+    require("../repositories/expedienteRequerimientoRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
 
@@ -106,14 +106,15 @@ class DerechosArcoService {
       const vinculos =
           await evidenciaRequerimientoRepository.listByEvidencia(evidencia.id);
       let esIdentidad = false;
+      // La instancia guarda la marca congelada al crearse (no depende de
+      // ediciones posteriores del catálogo).
       for (const v of vinculos) {
-        if (!(v.requerimientoId in cacheReq)) {
-          cacheReq[v.requerimientoId] =
-              await requerimientoRepository.getById(v.requerimientoId);
+        const id = v.expedienteRequerimientoId;
+        if (!id) continue;
+        if (!(id in cacheReq)) {
+          cacheReq[id] = await expedienteRequerimientoRepository.getById(id);
         }
-        if (cacheReq[v.requerimientoId]?.esDocumentoIdentidad === true) {
-          esIdentidad = true;
-        }
+        if (cacheReq[id]?.esDocumentoIdentidad === true) esIdentidad = true;
       }
       if (esIdentidad) resultado.push(evidencia);
     }
@@ -226,6 +227,7 @@ class DerechosArcoService {
         nombre: "Persona Anonimizada",
         apellido: "",
         rut: `ANONIMIZADO-${personaId}`,
+        profesion: FieldValue.delete(),
         telefono: FieldValue.delete(),
         email: FieldValue.delete(),
         direccion: FieldValue.delete(),

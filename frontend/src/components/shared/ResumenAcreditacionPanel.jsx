@@ -1,6 +1,7 @@
 import React from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { Info, Landmark, Building2, FolderKanban, IdCard, Users, Truck } from "lucide-react";
+import { Info, Landmark, Building2, FolderKanban, FolderOpen, IdCard, Users, Truck } from "lucide-react";
+import { textoRepositorio } from "../../utils/repositorioDocumental";
 import { MandanteChip } from "./MandanteChip";
 
 // Panel lateral dinámico del wizard "Nueva Acreditación" — reemplaza el
@@ -43,6 +44,7 @@ export const ResumenAcreditacionPanel = ({
   mostrarRequerimientos = false, preview = null, cargandoPreview = false,
   mostrarExpediente = false, requisitosTotal = null, reutilizadosEmpresa = null,
   mostrarDocumentacion = false, documentacion = null, proyectoActualId = null,
+  repositorio, // { tipo, etiqueta, url } | null; undefined = no mostrar la fila
 }) => {
   const personasCount = seleccion.filter((s) => s.tipo === "persona").length;
   const recursosCount = seleccion.filter((s) => s.tipo === "recurso").length;
@@ -67,6 +69,23 @@ export const ResumenAcreditacionPanel = ({
           <Fila icon={Building2} label="Empresa" value={empresaSel?.razonSocial} />
           <Fila icon={FolderKanban} label="Proyecto" value={proyectoSel?.nombre} />
           <Fila icon={IdCard} label="Perfil de Participación" value={perfilSel?.nombre} />
+          {repositorio !== undefined && (
+            <div className="flex items-start gap-2.5">
+              <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Documentación</p>
+                {repositorio ? (
+                  <p className="text-xs font-bold text-carbon-dark truncate">
+                    {repositorio.tipo === "sharepoint" && repositorio.url
+                      ? <a href={repositorio.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">SharePoint</a>
+                      : textoRepositorio(repositorio)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-400 italic font-medium">Sin vincular</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
           <div className="flex items-center gap-2">

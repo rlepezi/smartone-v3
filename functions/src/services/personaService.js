@@ -14,7 +14,7 @@ const empresaPersonaRepository =
     require("../repositories/empresaPersonaRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {
-  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto,
+  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto, mandanteDeContexto,
 } = require("../utils/alcanceMandante");
 const {
   validarIdentificacion, claveIdentificacion,
@@ -29,6 +29,7 @@ const db = admin.firestore();
 const IDENTIFICACION_COLLECTION = "personasIdentificacion";
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
+const PROFESION_MAX = 80;
 // Código gRPC de Firestore cuando `create` encuentra el documento ya creado.
 const ALREADY_EXISTS = 6;
 
@@ -189,8 +190,8 @@ class PersonaService {
    * Persona existente, para ofrecer crearle la relación con la Empresa
    * elegida en vez de duplicarla.
    * @param {Object} payload `identificacion` (o `rut`), nombre,
-   *     apellido, empresaId y los campos de la relación (cargo obligatorio;
-   *     tipoRelacion, tipoContrato, jornada, fechaInicio opcionales).
+   *     apellido, empresaId y los campos de la relación (cargo, tipoRelacion,
+   *     tipoContrato, jornada y fechaInicio, todos opcionales).
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object>} La persona creada, con `empresaActual`.
    */
@@ -240,6 +241,7 @@ class PersonaService {
       rut: identificacion.tipo === "RUT" ? identificacion.numero : null,
       nombre: nombre.trim(),
       apellido: apellido.trim(),
+      profesion: this._normalizarProfesion(payload.profesion) ?? null,
       estado: estadoFinal,
     };
     const relacion = empresaPersonaService.prepararAlta(
@@ -268,7 +270,7 @@ class PersonaService {
     }
 
     await bitacoraLogger.registrarEvento({
-      mandanteId: actor?.mandanteId || null,
+      mandanteId: await mandanteDeContexto(actor, {empresaId}),
       entidad: "persona",
       entidadId: refPersona.id,
       accion: "creado",
@@ -279,7 +281,29 @@ class PersonaService {
   }
 
   /**
-   * Actualiza la identidad de una Persona (nombre, apellido, estado). La
+   * Profesión: texto opcional de hasta PROFESION_MAX caracteres.
+   * @param {*} valor Valor recibido.
+   * @return {(string|null|undefined)} undefined si no vino, null si viene
+   *     vacía, o el texto sin espacios sobrantes.
+   */
+  _normalizarProfesion(valor) {
+    if (valor === undefined) return undefined;
+    if (valor === null || valor === "") return null;
+    if (typeof valor !== "string") {
+      throw new AppError(400, "La profesión debe ser texto.");
+    }
+    const limpia = valor.trim();
+    if (limpia.length > PROFESION_MAX) {
+      throw new AppError(
+          400, `La profesión no puede superar ${PROFESION_MAX} caracteres.`,
+      );
+    }
+    return limpia || null;
+  }
+
+  /**
+   * Actualiza la identidad de una Persona (nombre, apellido, profesión,
+   * estado). La
    * identificación no se edita después de creada, salvo superadmin (mueve
    * el índice de unicidad en una transacción). La Empresa se cambia por
    * empresaPersonaService (cambiar empresa / terminar relación).
@@ -303,6 +327,8 @@ class PersonaService {
         updateData[key] = payload[key];
       }
     }
+    const profesion = this._normalizarProfesion(payload.profesion);
+    if (profesion !== undefined) updateData.profesion = profesion;
 
     const nuevaIdentificacion = payload.identificacion ||
         (payload.rut ? {tipo: "RUT", numero: payload.rut, pais: "Chile"} :

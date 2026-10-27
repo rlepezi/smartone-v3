@@ -1,79 +1,85 @@
-// Cálculos de cumplimiento compartidos entre Dashboard y
-// ExpedientesListPage — antes vivían inline en el useEffect de
-// DashboardPage.jsx, cerrados sobre su propio estado. Se extraen acá
-// como funciones puras para que ninguna pantalla reimplemente la misma
-// lógica con su propia data ya cargada.
+// Cálculos de cumplimiento compartidos. Desde el bloque 4 todo sale de los
+// contadores que el backend mantiene en cada Expediente sobre sus
+// instancias de Requerimiento (expedienteRequerimientos):
+//   resumen:        { activas, cumple, noCumple, noAplica, pendiente }
+//   resumenSujetos: { empresa | persona_<id> | recurso_<id>: mismo formato }
+// Una instancia activa sin evaluar cuenta como "pendiente". Ninguna pantalla
+// cruza Requerimientos con sujetos: eso lo hace solo el backend.
 
-// Único helper de redondeo de porcentajes para el donut de Cumplimiento
-// (centro + cada fila de la leyenda) — un solo total, un solo criterio de
-// redondeo, para que nunca puedan mostrar números que no calcen entre sí.
+// Único helper de redondeo de porcentajes para el donut (centro + cada fila
+// de la leyenda), para que nunca muestren números que no calcen entre sí.
 export const calcularPorcentaje = (valor, total) => {
   if (!total) return 0;
   return Math.round((valor / total) * 100);
 };
 
-// avancePct: mismo criterio que reporteService.js/EvaluarExpedientePage
-// — cumplidos / evaluables * 100, evaluables excluye "no_aplica". null
-// (no 0) cuando no hay nada evaluable todavía, para no confundir "sin
-// datos" con "0% de cumplimiento".
-export const calcularConteosEvaluacion = (evaluaciones) => {
-  const conteos = { cumple: 0, no_cumple: 0, no_aplica: 0, pendiente: 0 };
-  (evaluaciones || []).forEach((ev) => {
-    if (conteos[ev.resultado] !== undefined) conteos[ev.resultado]++;
-  });
-  const total = (evaluaciones || []).length;
-  const evaluables = conteos.cumple + conteos.no_cumple + conteos.pendiente;
-  const avancePct = evaluables > 0 ? Math.round((conteos.cumple / evaluables) * 100) : null;
-  return { conteos, total, avancePct };
+export const resumenVacio = () => ({ activas: 0, cumple: 0, noCumple: 0, noAplica: 0, pendiente: 0 });
+
+// % de cumplimiento = cumple / (activas − noAplica). null cuando el denominador es 0: la interfaz
+// muestra "—" (no 0%, que sería un incumplimiento real).
+export const porcentajeCumplimiento = (resumen) => {
+  if (!resumen) return null;
+  const denominador = (resumen.activas || 0) - (resumen.noAplica || 0);
+  if (denominador <= 0) return null;
+  return Math.round(((resumen.cumple || 0) / denominador) * 100);
 };
 
-// Resumen completo de un nivel (Empresa/Personas/Maquinarias) a partir del total de
-// Requerimientos aplicables de ese nivel y sus Evaluaciones vigentes — generaliza
-// calcularConteosEvaluacion sumándole "sinEvaluar" y "evaluados", para no duplicar el cálculo del
-// donut de Cumplimiento Documental y el detalle numérico del panel "Resumen" (ExpedienteDetailPage).
-// avancePct usa el MISMO criterio que el donut (cumple / (cumple+pendiente+no_cumple+sinEvaluar),
-// no_aplica fuera del denominador) — no el "evaluables" de calcularConteosEvaluacion, para que
-// nunca puedan mostrar números distintos en la misma pantalla.
-export const calcularResumenCumplimiento = (totalItems, vigentes) => {
-  const { conteos } = calcularConteosEvaluacion(vigentes);
-  const sinEvaluar = Math.max(0, totalItems - (vigentes || []).length);
-  const evaluados = conteos.cumple + conteos.no_cumple + conteos.no_aplica;
-  const totalDonut = conteos.cumple + conteos.pendiente + conteos.no_cumple + sinEvaluar;
-  const avancePct = totalDonut > 0 ? Math.round((conteos.cumple / totalDonut) * 100) : null;
+// Texto del % para la interfaz ("—" si no hay nada evaluable).
+export const textoPorcentaje = (pct) => (pct === null || pct === undefined ? "—" : `${pct}%`);
+
+export const sumarResumenes = (resumenes) => {
+  const total = resumenVacio();
+  (resumenes || []).forEach((r) => {
+    if (!r) return;
+    Object.keys(total).forEach((k) => { total[k] += r[k] || 0; });
+  });
+  return total;
+};
+
+// Suma de los contadores de varios Expedientes.
+export const resumenDeExpedientes = (expedientes) =>
+  sumarResumenes((expedientes || []).map((e) => e.resumen));
+
+// Instancias ya evaluadas (cumple / no cumple / no aplica).
+export const evaluadosDe = (resumen) =>
+  (resumen?.cumple || 0) + (resumen?.noCumple || 0) + (resumen?.noAplica || 0);
+
+// Clave de un sujeto en resumenSujetos.
+export const claveSujeto = ({ personaId, recursoId } = {}) => {
+  if (personaId) return `persona_${personaId}`;
+  if (recursoId) return `recurso_${recursoId}`;
+  return "empresa";
+};
+
+// Contadores de un sujeto en un Expediente (null si el sujeto no tiene instancias ahí).
+export const resumenDeSujeto = (expediente, sujeto) =>
+  expediente?.resumenSujetos?.[claveSujeto(sujeto)] || null;
+
+// Categoría de acreditación de un conjunto de instancias (peor caso primero):
+// algún "no cumple" → no_acreditada; todas resueltas (cumple / no aplica) → acreditada;
+// ninguna evaluada → sin_evaluar; el resto → pendiente.
+export const categoriaDeResumen = (resumen) => {
+  if (!resumen || !resumen.activas) return "sin_evaluar";
+  if (resumen.noCumple > 0) return "no_acreditada";
+  if ((resumen.cumple || 0) + (resumen.noAplica || 0) === resumen.activas) return "acreditada";
+  if (evaluadosDe(resumen) === 0) return "sin_evaluar";
+  return "pendiente";
+};
+
+// Evaluación de UN sujeto (Persona o Maquinaria) dentro del Expediente de su Empresa en un
+// Proyecto, desde los contadores por sujeto del Expediente.
+export const evaluarSujeto = ({ expediente, campo, sujetoId }) => {
+  const resumen = resumenDeSujeto(expediente, { [campo]: sujetoId });
   return {
-    total: totalItems,
-    evaluados,
-    cumple: conteos.cumple,
-    noCumple: conteos.no_cumple,
-    noAplica: conteos.no_aplica,
-    pendiente: conteos.pendiente,
-    sinEvaluar,
-    avancePct,
+    total: resumen?.activas || 0,
+    pctCumple: porcentajeCumplimiento(resumen),
+    categoria: categoriaDeResumen(resumen),
   };
 };
 
-// "Sin Evaluar": pares (expedienteId, requerimientoId) del snapshot
-// requerimientosAplicables de cada Expediente SIN ninguna Evaluación
-// vigente asociada. A nivel Persona/Maquinaria es una aproximación
-// agregada — cuenta como "evaluado" si al menos una Persona/Recurso ya
-// fue evaluado para ese Requerimiento, no exige cobertura de TODOS los
-// asignados (eso requeriría cargar también las personas y maquinarias asignadas).
-export const calcularSinEvaluar = (expedientes, evaluacionesVigentes) => {
-  const evaluadosSet = new Set(
-    (evaluacionesVigentes || []).map((ev) => `${ev.expedienteId}::${ev.requerimientoId}`),
-  );
-  let sinEvaluar = 0;
-  (expedientes || []).forEach((exp) => {
-    (exp.requerimientosAplicables || []).forEach((r) => {
-      if (!evaluadosSet.has(`${exp.id}::${r.requerimientoId}`)) sinEvaluar++;
-    });
-  });
-  return sinEvaluar;
-};
-
-// Conteo de Expedientes por cada estado del catálogo (ESTADOS_EXPEDIENTE
-// de expedienteService.js) — incluye los estados en 0 para que el
-// llamador decida si los oculta o no.
+// Conteo de Expedientes por cada estado del catálogo (ESTADOS_EXPEDIENTE de
+// expedienteService.js) — incluye los estados en 0 para que el llamador
+// decida si los oculta o no.
 export const calcularConteosPorEstadoExpediente = (expedientes, estadosCatalogo) => {
   const conteos = {};
   estadosCatalogo.forEach((e) => { conteos[e.value] = 0; });

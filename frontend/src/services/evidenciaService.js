@@ -16,7 +16,9 @@ export const evidenciaService = {
   // Flujo único para adjuntar un documento a un Requerimiento: sube el archivo a
   // Storage, registra la Evidencia del Expediente y la vincula al Requerimiento.
   // Lo usan el detalle del Expediente y el detalle de Proyecto.
-  async subirYVincular({ expedienteId, archivo, requerimientoId, personaId, recursoId, fechaVencimiento }) {
+  // Sube el archivo, crea la Evidencia (del sujeto de la instancia) y la enlaza a la instancia de
+  // Requerimiento (expedienteRequerimientoId).
+  async subirYVincular({ expedienteId, archivo, expedienteRequerimientoId, personaId, recursoId, fechaVencimiento }) {
     const { url, nombre, tipo } = await storageService.subirEvidencia(expedienteId, archivo);
 
     const payload = {
@@ -30,7 +32,7 @@ export const evidenciaService = {
     else if (recursoId) payload.recursoId = recursoId;
 
     const nueva = await this.crear(payload);
-    await evidenciaRequerimientoService.crear({ evidenciaId: nueva.id, requerimientoId });
+    await evidenciaRequerimientoService.crear({ evidenciaId: nueva.id, expedienteRequerimientoId });
     return nueva;
   },
 

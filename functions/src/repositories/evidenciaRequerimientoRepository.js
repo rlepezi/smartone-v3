@@ -34,23 +34,37 @@ class EvidenciaRequerimientoRepository {
   }
 
   /**
-   * Busca un vínculo existente para un par (evidenciaId, requerimientoId),
-   * sin importar su estado.
+   * Busca un vínculo existente para un par (evidencia, instancia de
+   * Requerimiento), sin importar su estado.
    * @param {string} evidenciaId ID de la Evidencia.
-   * @param {string} requerimientoId ID del Requerimiento.
+   * @param {string} expedienteRequerimientoId ID de la instancia.
    * @return {Promise<object|null>} El vínculo o null si no existe.
    */
-  async getByEvidenciaYRequerimiento(evidenciaId, requerimientoId) {
+  async getByEvidenciaEInstancia(evidenciaId, expedienteRequerimientoId) {
     const snapshot = await db
         .collection(COLLECTION)
         .where("evidenciaId", "==", evidenciaId)
-        .where("requerimientoId", "==", requerimientoId)
+        .where("expedienteRequerimientoId", "==", expedienteRequerimientoId)
         .limit(1)
         .get();
 
     if (snapshot.empty) return null;
     const doc = snapshot.docs[0];
     return {id: doc.id, ...doc.data()};
+  }
+
+  /**
+   * Lista los vínculos activos de una instancia de Requerimiento.
+   * @param {string} expedienteRequerimientoId ID de la instancia.
+   * @return {Promise<object[]>} Lista de vínculos activos.
+   */
+  async getActivosByInstancia(expedienteRequerimientoId) {
+    const snapshot = await db
+        .collection(COLLECTION)
+        .where("expedienteRequerimientoId", "==", expedienteRequerimientoId)
+        .where("estado", "==", "activo")
+        .get();
+    return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
   }
 
   /**

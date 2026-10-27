@@ -234,7 +234,10 @@ export const PasoPerfil = ({ mandanteId, perfilId, onSeleccionar, empresaSel, pr
               <div
                 key={p.id}
                 className={`rounded-xl border-2 transition-all ${
-                  seleccionado ? "border-primary bg-primary-lighter" : "border-gray-100 hover:border-gray-200 bg-white"
+                  seleccionado ? "border-primary bg-primary-lighter shadow-md shadow-primary/10"
+                    : perfilFijo ? "border-gray-100 bg-white"
+                      // Al pasar el mouse: borde primario suave, fondo tenue, sombra y leve elevación.
+                      : "border-gray-100 bg-white hover:border-primary/50 hover:bg-primary-lighter/40 hover:shadow-md hover:-translate-y-0.5 focus-within:border-primary/50"
                 }`}
               >
                 <button

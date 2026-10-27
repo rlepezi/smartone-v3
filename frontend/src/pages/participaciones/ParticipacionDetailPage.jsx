@@ -7,14 +7,13 @@ import { proyectoService } from "../../services/proyectoService";
 import { empresaService } from "../../services/empresaService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { expedienteService } from "../../services/expedienteService";
-import { evaluacionService } from "../../services/evaluacionService";
 import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { formatCatalogo } from "../../utils/formatCatalogo";
-import { calcularConteosEvaluacion, calcularSinEvaluar } from "../../utils/cumplimientoCalculos";
+import { resumenVacio } from "../../utils/cumplimientoCalculos";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { StatusBadge, MAPA_ESTADO_PARTICIPACION } from "../../components/shared/StatusBadge";
 import { ActionButton } from "../../components/shared/ActionButton";
@@ -34,7 +33,6 @@ export const ParticipacionDetailPage = () => {
   const [empresa, setEmpresa] = useState(null);
   const [perfil, setPerfil] = useState(null);
   const [expediente, setExpediente] = useState(null);
-  const [evaluaciones, setEvaluaciones] = useState([]);
   const [sujetos, setSujetos] = useState([]);
   const perfilesPorId = usePerfilesRecurso();
   const [personas, setPersonas] = useState([]);
@@ -71,10 +69,6 @@ export const ParticipacionDetailPage = () => {
         const delaParticipacion = (expedientes || []).filter((e) => e.participacionId === id);
         const vigente = delaParticipacion.find((e) => e.estado !== "cerrado") || delaParticipacion[0] || null;
         setExpediente(vigente);
-        if (vigente) {
-          const evals = await evaluacionService.listarPorExpediente(vigente.id, true).catch(() => []);
-          setEvaluaciones((evals || []).filter((e) => e.estado === "vigente"));
-        }
       } catch (err) {
         console.error("Error al cargar la participación:", err);
         setError(err.message || "No se pudo cargar la participación.");
@@ -102,10 +96,9 @@ export const ParticipacionDetailPage = () => {
     );
   }
 
-  // Mismos cálculos que el listado y el detalle del Expediente.
-  const { conteos } = calcularConteosEvaluacion(evaluaciones);
-  const sinEvaluar = expediente ? calcularSinEvaluar([expediente], evaluaciones) : 0;
-  const totalRequisitos = conteos.cumple + conteos.pendiente + conteos.no_cumple + sinEvaluar;
+  // Contadores del Expediente (mismos que el listado y el detalle del Expediente).
+  const resumen = expediente?.resumen || resumenVacio();
+  const totalRequisitos = resumen.activas;
 
   const personasAsignadas = sujetos.filter((a) => a.personaId).map((a) => {
     const p = personas.find((x) => x.id === a.personaId);
@@ -180,9 +173,9 @@ export const ParticipacionDetailPage = () => {
           {expediente ? (
             <div className="space-y-4">
               <EstadoExpedienteStepper estado={expediente.estado} />
-              <EstadoCumplimientoPanel conteos={conteos} sinEvaluar={sinEvaluar} size={110} strokeWidth={12} />
+              <EstadoCumplimientoPanel resumen={resumen} size={110} strokeWidth={12} />
               <p className="text-xs text-slate-500">
-                <span className="font-bold text-carbon-dark">{conteos.cumple}</span> de{" "}
+                <span className="font-bold text-carbon-dark">{resumen.cumple}</span> de{" "}
                 <span className="font-bold text-carbon-dark">{totalRequisitos}</span> requisitos cubiertos
               </p>
               <ActionButton as={Link} to={`/expedientes/${expediente.id}`} icon={FileCheck2}>

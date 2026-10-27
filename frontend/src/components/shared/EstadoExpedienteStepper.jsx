@@ -1,5 +1,6 @@
 import React from "react";
 import { ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
+import { formatFecha } from "../../utils/fechas";
 
 // Etapas del flujo de un Expediente (estado derivado de las Evaluaciones; ver decisions.md). Fuente
 // única para las dos variantes:
@@ -36,15 +37,17 @@ const CLASE_LINEA = { gris: "bg-slate-200", azul: "bg-blue-400", verde: "bg-emer
 
 // Estado de un Expediente como stepper. Reusable: recibe solo el `estado` real; el texto muestra
 // siempre el nombre específico del estado. `variante`: "compacta" (4 puntos) | "completa" (5 nodos
-// con sus etiquetas largas).
-export const EstadoExpedienteStepper = ({ estado, variante = "compacta" }) => {
+// con sus etiquetas largas). `fechas` (opcional): fecha en que se alcanzó cada etapa, por índice
+// (0 = Creado … 4 = Cerrado), que se muestra en el tooltip de su punto.
+export const EstadoExpedienteStepper = ({ estado, variante = "compacta", fechas = [] }) => {
   const config = CONFIG_STEPPER[estado] || CONFIG_STEPPER.creado;
   const completa = variante === "completa";
   const cantidad = completa ? ETAPAS.length : 4;
   const nombre = ESTADOS_EXPEDIENTE.find((e) => e.value === estado)?.label || estado;
   const punto = completa ? "w-3.5 h-3.5" : "w-2.5 h-2.5";
   // Con Observaciones se muestra sobre la etapa "En Revisión" (desvío ⟲), con su propio nombre.
-  const etiquetaLarga = (etapa, i) => (estado === "con_observaciones" && i === 1 ? "Con Observaciones ⟲" : etapa.larga);
+  const etiquetaLarga = (etapa, i) => (estado === "con_observaciones" && i === 1 ? "Con observaciones" : etapa.larga);
+  const tooltip = (etapa, i) => (fechas[i] ? `${etiquetaLarga(etapa, i)} · ${formatFecha(fechas[i])}` : etiquetaLarga(etapa, i));
 
   // Variante completa: una columna por etapa (punto centrado sobre su etiqueta larga).
   if (completa) {
@@ -58,11 +61,16 @@ export const EstadoExpedienteStepper = ({ estado, variante = "compacta" }) => {
                 <span className={`flex-1 h-0.5 ${i > 0 ? CLASE_LINEA[color] : "bg-transparent"}`} />
                 <span
                   className={`${punto} rounded-full shrink-0 ${CLASE_PUNTO[color]} ${config.activa === i ? `ring-4 ${CLASE_ANILLO[color]}` : ""}`}
-                  title={etiquetaLarga(etapa, i)}
+                  title={tooltip(etapa, i)}
                 />
                 <span className={`flex-1 h-0.5 ${i < ETAPAS.length - 1 ? CLASE_LINEA[config.colores[i + 1]] : "bg-transparent"}`} />
               </div>
-              <span className="text-[11px] font-semibold text-slate-500 text-center leading-tight px-1">{etiquetaLarga(etapa, i)}</span>
+              <span
+                title={tooltip(etapa, i)}
+                className={`text-[11px] font-semibold text-center leading-tight px-1 ${color === "ambar" ? "text-amber-700" : "text-slate-500"}`}
+              >
+                {etiquetaLarga(etapa, i)}
+              </span>
             </div>
           );
         })}

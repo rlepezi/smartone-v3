@@ -86,8 +86,35 @@ async function filtrarRelacionesVisibles(actor, relaciones) {
   return relaciones.filter((r) => empresas.has(r.empresaId));
 }
 
+/**
+ * Mandante de contexto para la Bitácora de una acción sobre una Empresa o
+ * sobre una Persona/Recurso de una Empresa (entidades sin mandanteId
+ * propio). En orden: el Mandante del actor; el de las asignaciones
+ * afectadas, si todas son del mismo; el único Mandante con vínculo activo
+ * con la Empresa. null si no se puede derivar sin ambigüedad (acción
+ * global de un rol transversal).
+ * @param {Object} actor Usuario autenticado.
+ * @param {{empresaId: (?string|undefined),
+ *     asignaciones: (Object[]|undefined)}} [contexto] Datos de la acción.
+ * @return {Promise<?string>} mandanteId o null.
+ */
+async function mandanteDeContexto(actor, {empresaId, asignaciones} = {}) {
+  if (actor?.mandanteId) return actor.mandanteId;
+  const deAsignaciones = [...new Set(
+      (asignaciones || []).map((a) => a.mandanteId).filter(Boolean),
+  )];
+  if (deAsignaciones.length > 0) {
+    return deAsignaciones.length === 1 ? deAsignaciones[0] : null;
+  }
+  if (!empresaId) return null;
+  const vinculos = await empresaMandanteRepository.listByEmpresa(
+      empresaId, "activo",
+  );
+  return vinculos.length === 1 ? vinculos[0].mandanteId : null;
+}
+
 module.exports = {
   ROLES_EMPRESAS_GLOBAL, ROLES_SUJETOS_GLOBAL,
   empresaIdsVisibles, puedeVerEmpresa, sujetoIdsVisibles, puedeVerSujeto,
-  filtrarRelacionesVisibles,
+  filtrarRelacionesVisibles, mandanteDeContexto,
 };

@@ -1,7 +1,7 @@
 import React from "react";
 import { Info, ArrowRight } from "lucide-react";
 import { StatusBadge, MAPA_ESTADO_PARTICIPACION } from "../shared/StatusBadge";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";

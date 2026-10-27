@@ -7,6 +7,12 @@ const expedienteRepository = require("../repositories/expedienteRepository");
 const bitacoraService = require("./bitacoraService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
+const {aMayusculas} = require("../utils/mayusculas");
+const {fechaSantiago} = require("../utils/fechaSantiago");
+
+// gRPC ALREADY_EXISTS: dos altas crearon a la vez el contador del año.
+const ALREADY_EXISTS = 6;
+const MAX_INTENTOS_CODIGO = 3;
 
 const ESTADOS_VALIDOS = [
   "planificado",
@@ -15,6 +21,9 @@ const ESTADOS_VALIDOS = [
   "finalizado",
   "archivado",
 ];
+
+// Estados del Proyecto que cierran sus Expedientes (RN-014).
+const ESTADOS_CIERRAN_EXPEDIENTES = ["finalizado", "archivado"];
 
 // Campos de texto opcionales del Proyecto y su largo máximo. Los valores de
 // los selectores (región, tipo, categoría, etc.) NO se validan contra un
@@ -264,12 +273,13 @@ class ProyectoService {
    * (entre todos los Mandantes) desde que un usuario reportó una colisión
    * real (dos Proyectos de Mandantes distintos sugiriendo/usando
    * "PRJ-2026-001") — decisión explícita, revierte el criterio anterior
-   * de acotarlo por Mandante. La unicidad real de "codigo" en BD sigue
-   * siendo por Mandante (ver proyectoRepository.getByCodigo): esto solo
-   * hace que la SUGERENCIA nunca choque con ningún Proyecto existente,
-   * sea de qué Mandante sea. Busca el máximo correlativo ya usado este
+   * de acotarlo por Mandante. Busca el máximo correlativo ya usado este
    * año en TODOS los Proyectos y le suma 1; empieza en 001 si no hay
    * ninguno.
+   * SIN USO desde el bloque 5: el código lo asigna crearProyecto con un
+   * contador por Mandante y año (proyectoRepository.createConCodigo), así
+   * que esta sugerencia ya no coincide con el código real. Se conserva el
+   * endpoint (GET /proyectos/siguiente-codigo) hasta decidir si se elimina.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
    * @param {?string} mandanteIdSolicitado mandanteId solicitado (ignorado
    *     para roles con alcance forzado, que siempre usan el propio) — ya
@@ -306,13 +316,15 @@ class ProyectoService {
    * @return {Promise<Object>} El proyecto creado.
    */
   async crearProyecto(payload, actor) {
-    const {nombre, codigo, fechaInicio, fechaTermino} = payload;
+    // El código lo asigna el backend (PRJ-AAAA-NNN, correlativo por
+    // Mandante y año): un `codigo` enviado por el cliente se ignora.
+    const {nombre, fechaInicio, fechaTermino} = payload;
 
-    if (!nombre || !codigo || !fechaInicio) {
+    if (!nombre || !fechaInicio) {
       throw new AppError(
           400,
-          "Faltan campos obligatorios: 'nombre', 'codigo' y " +
-          "'fechaInicio' son requeridos.",
+          "Faltan campos obligatorios: 'nombre' y 'fechaInicio' son " +
+          "requeridos.",
       );
     }
 
@@ -340,28 +352,29 @@ class ProyectoService {
       }
     }
 
-    const duplicado = await proyectoRepository.getByCodigo(
-        mandanteId, codigo,
-    );
-    if (duplicado) {
-      throw new AppError(
-          409,
-          `Ya existe un proyecto con el código '${codigo}' en este ` +
-          "Mandante.",
-      );
-    }
-
     const nuevoProyecto = {
       mandanteId,
-      nombre: nombre.trim(),
-      codigo: codigo.trim(),
+      nombre: aMayusculas(nombre),
       estado: "planificado",
       fechaInicio: fechaInicioDate,
       fechaTermino: fechaTerminoDate,
       ...this._normalizarCamposExtra(payload),
     };
 
-    return await proyectoRepository.create(nuevoProyecto);
+    // Año de creación en hora de Chile. Si dos altas simultáneas crean el
+    // contador del año a la vez, una falla con ALREADY_EXISTS y se reintenta
+    // (ya encuentra el contador y toma el siguiente correlativo).
+    const anio = Number(fechaSantiago().slice(0, 4));
+    for (let intento = 1; ; intento++) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        return await proyectoRepository.createConCodigo(nuevoProyecto, anio);
+      } catch (err) {
+        if (err.code !== ALREADY_EXISTS || intento >= MAX_INTENTOS_CODIGO) {
+          throw err;
+        }
+      }
+    }
   }
 
   /**
@@ -384,11 +397,10 @@ class ProyectoService {
       );
     }
 
-    // mandanteId no es editable después de creado (campo identidad, igual
-    // que el RUT de Mandante o el email de Usuario).
+    // mandanteId y codigo no son editables después de creado (el código lo
+    // asigna el backend al crear; uno enviado aquí se ignora).
     const allowedFields = [
-      "nombre", "codigo", "estado", "fechaInicio", "fechaTermino",
-      "fechaTerminoReal",
+      "nombre", "estado", "fechaInicio", "fechaTermino", "fechaTerminoReal",
     ];
     const updateData = {};
     for (const key of allowedFields) {
@@ -397,23 +409,9 @@ class ProyectoService {
       }
     }
 
-    if (updateData.nombre) updateData.nombre = updateData.nombre.trim();
+    if (updateData.nombre) updateData.nombre = aMayusculas(updateData.nombre);
 
     Object.assign(updateData, this._normalizarCamposExtra(payload));
-
-    if (updateData.codigo && updateData.codigo !== existente.codigo) {
-      const duplicado = await proyectoRepository.getByCodigo(
-          existente.mandanteId, updateData.codigo,
-      );
-      if (duplicado && duplicado.id !== id) {
-        throw new AppError(
-            409,
-            `Ya existe un proyecto con el código '${updateData.codigo}' ` +
-            "en este Mandante.",
-        );
-      }
-      updateData.codigo = updateData.codigo.trim();
-    }
 
     if (updateData.estado && updateData.estado !== existente.estado) {
       this._validarTransicionEstado(existente.estado, updateData.estado);
@@ -540,7 +538,58 @@ class ProyectoService {
       });
     }
 
+    // RN-014: al finalizar o archivar el Proyecto se cierran sus
+    // Expedientes abiertos (motivo "fin_proyecto", origen automático). Si
+    // alguno falla, se reintenta con POST /proyectos/:id/cerrar-expedientes.
+    if (huboTransicionEstado &&
+        ESTADOS_CIERRAN_EXPEDIENTES.includes(updateData.estado)) {
+      const cierreExpedientes = await this._expedienteService()
+          .cerrarPorProyecto(id, actor);
+      return {...actualizado, cierreExpedientes};
+    }
+
     return actualizado;
+  }
+
+  /**
+   * Servicio de Expediente (require diferido: evita el ciclo de módulos).
+   * @return {Object} expedienteService.
+   */
+  _expedienteService() {
+    return require("./expedienteService");
+  }
+
+  /**
+   * Expedientes no cerrados del Proyecto (aviso previo a finalizarlo o
+   * archivarlo: "Se cerrarán N expedientes").
+   * @param {string} id ID del Proyecto.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<{cantidad: number}>} Expedientes abiertos.
+   */
+  async contarExpedientesAbiertos(id, actor) {
+    await this.getProyectoById(id, actor);
+    return {
+      cantidad: await this._expedienteService().contarAbiertosDeProyecto(id),
+    };
+  }
+
+  /**
+   * Reintenta el cierre de los Expedientes de un Proyecto ya finalizado o
+   * archivado (idempotente: los ya cerrados se saltan).
+   * @param {string} id ID del Proyecto.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} {cerrados, fallidos}.
+   */
+  async cerrarExpedientes(id, actor) {
+    const proyecto = await this.getProyectoById(id, actor);
+    if (!ESTADOS_CIERRAN_EXPEDIENTES.includes(proyecto.estado)) {
+      throw new AppError(
+          409,
+          "Solo se cierran los Expedientes de un Proyecto finalizado o " +
+          "archivado.",
+      );
+    }
+    return this._expedienteService().cerrarPorProyecto(id, actor);
   }
 
   /**

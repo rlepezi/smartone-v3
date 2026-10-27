@@ -20,7 +20,6 @@ const {MENSAJE_FUERA_DE_ALCANCE} = require("./empresaSujetoServiceBase");
 const participacionRecursoService = require("./participacionRecursoService");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const expedienteService = require("./expedienteService");
-const evaluacionRepository = require("../repositories/evaluacionRepository");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
 const {aplicaRequerimientoASujeto} =
@@ -30,6 +29,8 @@ const requerimientoCalculoService = require("./requerimientoCalculoService");
 const reutilizacionDocumentalService =
     require("./reutilizacionDocumentalService");
 const usuarioRepository = require("../repositories/usuarioRepository");
+const expedienteEstadoRepository =
+    require("../repositories/expedienteEstadoRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
 
@@ -162,19 +163,21 @@ class AcreditacionService {
    * exige confirmación explícita (409 CONFIRMACION_REQUERIDA con la lista
    * de afectados: nombre, Empresa actual y Proyecto). Un rol de Mandante no
    * puede mover a quien tiene asignaciones vigentes de otro Mandante (403,
-   * sin revelar datos).
+   * sin revelar datos). Con `nuevoExpediente`, también exige confirmar que
+   * se creará un Expediente nuevo de la Empresa en el Proyecto destino.
    * @param {{esPersona: boolean, entidadId: string,
-   *     participacion: Object, confirmado: (boolean|undefined)}} datos
-   *     Datos del movimiento.
+   *     participacion: Object, confirmado: (boolean|undefined),
+   *     nuevoExpediente: (Object|undefined)}} datos Datos del movimiento.
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<void>}
    */
-  async _confirmarMovimiento({esPersona, entidadId, participacion, confirmado},
-      actor) {
+  async _confirmarMovimiento({
+    esPersona, entidadId, participacion, confirmado, nuevoExpediente,
+  }, actor) {
     const activos = await this._servicio(esPersona).repo
         .getActivosBySujeto(entidadId);
     const {aFinalizar} = this._seleccionarAFinalizar(activos, participacion);
-    if (aFinalizar.length === 0) return;
+    if (aFinalizar.length === 0 && !nuevoExpediente) return;
     if (ROLES_ALCANCE_FORZADO.includes(actor.rol) &&
         aFinalizar.some((a) => a.mandanteId !== actor.mandanteId)) {
       throw new AppError(403, MENSAJE_FUERA_DE_ALCANCE,
@@ -203,9 +206,14 @@ class AcreditacionService {
     })));
     throw new AppError(
         409,
-        "Esta operación finalizará asignaciones vigentes. Revise la lista y " +
-        "confirme para continuar.",
-        {codigo: "CONFIRMACION_REQUERIDA", detalle: {afectados}},
+        afectados.length > 0 ?
+          "Esta operación finalizará asignaciones vigentes. Revise la lista " +
+          "y confirme para continuar." :
+          "Esta operación creará un Expediente nuevo. Confirme para continuar.",
+        {
+          codigo: "CONFIRMACION_REQUERIDA",
+          detalle: {afectados, nuevoExpediente: nuevoExpediente || null},
+        },
     );
   }
 
@@ -240,7 +248,7 @@ class AcreditacionService {
   async reemplazar(payload, actor) {
     const {
       entidadTipo, entidadId, proyectoDestinoId, perfilParticipacionId,
-      fechaInicio, fechaFin, confirmado,
+      fechaInicio, fechaFin, confirmado, avisarExpedienteNuevo,
     } = payload;
     const perfilRecursoIds = perfilesDelPayload(payload);
 
@@ -299,7 +307,7 @@ class AcreditacionService {
     return this._reemplazarPersonaOMaquinaria({
       entidadTipo, entidadId, proyecto, mandanteId, perfilParticipacionId,
       perfilRecursoIds, fechaInicioDate, fechaFinDate, creadoPorNombre,
-      confirmado,
+      confirmado, avisarExpedienteNuevo,
     }, actor);
   }
 
@@ -342,6 +350,8 @@ class AcreditacionService {
       perfilRecursoIds,
       fechaInicio,
       confirmado: payload.confirmado,
+      // Avisa antes de crear un Expediente nuevo de la Empresa en el destino.
+      avisarExpedienteNuevo: true,
     }, actor);
   }
 
@@ -380,6 +390,8 @@ class AcreditacionService {
       perfilRecursoIds,
       fechaInicio,
       confirmado: payload.confirmado,
+      // Avisa antes de crear un Expediente nuevo de la Empresa en el destino.
+      avisarExpedienteNuevo: true,
     }, actor);
   }
 
@@ -551,32 +563,20 @@ class AcreditacionService {
       );
     }
 
-    const requerimientosAplicables =
-        await requerimientoCalculoService.calcularRequerimientosAplicables(
-            perfilParticipacionId,
-        );
-    const requerimientosEmpresa = requerimientosAplicables.filter(
-        (r) => r.tipoEntidad === "empresa",
-    );
-    const reutilizables =
-        await reutilizacionDocumentalService.buscarReutilizablesEmpresa(
-            empresaId, requerimientosEmpresa, fechaInicioDate,
-        );
-
     const participacionRef =
         db.collection(participacionRepository.COLLECTION).doc();
     const expedienteRef =
         db.collection(expedienteRepository.COLLECTION).doc();
-    const evaluacionRefs = reutilizables.map(
-        () => db.collection(evaluacionRepository.COLLECTION).doc(),
-    );
 
     let participacionAnteriorId = null;
     let expedienteAnteriorId = null;
+    let expedienteAnterior = null;
 
     // Transacción: cierra la Participación activa anterior de la Empresa
     // (si existe, en cualquier Proyecto) + su Expediente en curso, y crea
-    // la nueva Participación + Expediente + Evaluaciones reutilizadas.
+    // la nueva Participación + la cabecera del Expediente nuevo (sus
+    // instancias de Requerimiento, con la reutilización documental, se
+    // generan justo después: ver generarInstancias).
     // Mismo patrón que empresaPersonaService.cambiarEmpresa: la consulta
     // de "activa a cerrar" se hace vía transaction.get para que el cierre
     // sea atómico con la creación.
@@ -612,11 +612,25 @@ class AcreditacionService {
         );
         if (enCursoDoc) {
           expedienteAnteriorId = enCursoDoc.id;
+          expedienteAnterior = {id: enCursoDoc.id, ...enCursoDoc.data()};
+          // Cierre administrativo con su historial, en esta transacción.
           transaction.update(enCursoDoc.ref, {
             estado: "cerrado",
             fechaCierre: FieldValue.serverTimestamp(),
+            motivoCierre: "cierre_administrativo",
+            detalleCierre: "Reemplazo de acreditación",
             updatedAt: FieldValue.serverTimestamp(),
           });
+          transaction.set(expedienteEstadoRepository.nuevaRef(),
+              expedienteEstadoRepository.datos({
+                expediente: expedienteAnterior,
+                estadoNuevo: "cerrado",
+                origen: "automatico",
+                motivo: "cierre_administrativo",
+                detalle: "Reemplazo de acreditación",
+                actorUid: actor.uid,
+                actorNombre: creadoPorNombre,
+              }));
         }
       }
 
@@ -632,25 +646,36 @@ class AcreditacionService {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      transaction.set(expedienteRef, {
+      transaction.set(expedienteRef, expedienteService.datosCabecera({
         participacionId: participacionRef.id,
         proyectoId: proyectoDestinoId,
         empresaId,
         mandanteId,
         perfilParticipacionId,
-        estado: "creado",
-        requerimientosAplicables,
-        fechaCierre: null,
+        creadoPorId: actor.uid || null,
         creadoPorNombre,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      reutilizacionDocumentalService.registrarReutilizadas(
-          transaction, evaluacionRefs, reutilizables,
-          {expedienteId: expedienteRef.id, mandanteId, actor, creadoPorNombre},
-      );
+      }));
     });
+
+    const {total, reutilizados} = await this._generarExpediente(
+        expedienteRef.id, actor, "empresa",
+    );
+
+    if (expedienteAnterior) {
+      await bitacoraLogger.registrarEvento({
+        mandanteId: expedienteAnterior.mandanteId,
+        entidad: "expediente",
+        entidadId: expedienteAnterior.id,
+        accion: "transicion_estado",
+        actor,
+        detalle: {
+          estadoAnterior: expedienteAnterior.estado, estadoNuevo: "cerrado",
+          automatico: true, origen: "automatico",
+          motivo: "cierre_administrativo",
+          detalle: "Reemplazo de acreditación",
+        },
+      });
+    }
 
     await bitacoraLogger.registrarEvento({
       mandanteId,
@@ -666,8 +691,8 @@ class AcreditacionService {
         participacionNuevaId: participacionRef.id,
         expedienteAnteriorId,
         expedienteNuevoId: expedienteRef.id,
-        requerimientosTotal: requerimientosAplicables.length,
-        requerimientosReutilizados: reutilizables.length,
+        requerimientosTotal: total,
+        requerimientosReutilizados: reutilizados,
       },
     });
 
@@ -676,9 +701,45 @@ class AcreditacionService {
       participacionNuevaId: participacionRef.id,
       expedienteAnteriorId,
       expedienteNuevoId: expedienteRef.id,
-      requerimientosTotal: requerimientosAplicables.length,
-      requerimientosReutilizados: reutilizables.length,
+      requerimientosTotal: total,
+      requerimientosReutilizados: reutilizados,
     };
+  }
+
+  /**
+   * Genera las instancias de un Expediente recién creado por un reemplazo
+   * (si falla a medias queda "en_proceso" y se puede reintentar) y devuelve
+   * cuántas aplican a un sujeto y cuántas nacieron cumplidas por
+   * reutilización documental.
+   * @param {string} expedienteId ID del Expediente.
+   * @param {Object} actor Usuario.
+   * @param {string} claveSujeto Clave del sujeto en resumenSujetos
+   *     ("empresa", "persona_<id>", "recurso_<id>").
+   * @return {Promise<{total: number, reutilizados: number}>} Conteos.
+   */
+  async _generarExpediente(expedienteId, actor, claveSujeto) {
+    try {
+      await expedienteService.generarInstancias(expedienteId, actor);
+    } catch (err) {
+      console.error(
+          `Generación incompleta del Expediente ${expedienteId}:`,
+          err.message,
+      );
+    }
+    return this._conteosDeSujeto(expedienteId, claveSujeto);
+  }
+
+  /**
+   * Instancias activas de un sujeto en un Expediente y cuántas están
+   * cumplidas (recién asignado, solo pueden venir de reutilización).
+   * @param {string} expedienteId ID del Expediente.
+   * @param {string} claveSujeto Clave en resumenSujetos.
+   * @return {Promise<{total: number, reutilizados: number}>} Conteos.
+   */
+  async _conteosDeSujeto(expedienteId, claveSujeto) {
+    const expediente = await expedienteRepository.getById(expedienteId);
+    const resumen = expediente?.resumenSujetos?.[claveSujeto] || {};
+    return {total: resumen.activas || 0, reutilizados: resumen.cumple || 0};
   }
 
   /**
@@ -698,7 +759,7 @@ class AcreditacionService {
   async _reemplazarPersonaOMaquinaria({
     entidadTipo, entidadId, proyecto, mandanteId, perfilParticipacionId,
     perfilRecursoIds: perfilesPedidos, fechaInicioDate, fechaFinDate,
-    creadoPorNombre, confirmado,
+    creadoPorNombre, confirmado, avisarExpedienteNuevo,
   }, actor) {
     const proyectoDestinoId = proyecto.id;
     const esPersona = entidadTipo === "persona";
@@ -732,7 +793,6 @@ class AcreditacionService {
     }
 
     let expedienteDestino = null;
-    let requerimientosAplicablesDestino;
     let perfilParticipacionDestinoId;
     const crearParticipacionNueva = !participacionExistente;
 
@@ -744,11 +804,6 @@ class AcreditacionService {
       );
       expedienteDestino =
           expedientes.find((e) => e.estado !== "cerrado") || null;
-      requerimientosAplicablesDestino = expedienteDestino ?
-          expedienteDestino.requerimientosAplicables :
-          await requerimientoCalculoService.calcularRequerimientosAplicables(
-              perfilParticipacionDestinoId,
-          );
     } else {
       if (!perfilParticipacionId) {
         throw new AppError(
@@ -777,41 +832,7 @@ class AcreditacionService {
         );
       }
       perfilParticipacionDestinoId = perfilParticipacionId;
-      requerimientosAplicablesDestino =
-          await requerimientoCalculoService.calcularRequerimientosAplicables(
-              perfilParticipacionId,
-          );
     }
-
-    // Reutilización nivel "empresa": solo tiene sentido si el Expediente
-    // destino es nuevo — si ya existía (la Empresa ya participaba en el
-    // Proyecto destino), sus Evaluaciones de empresa ya están resueltas y
-    // no dependen de esta Persona/Recurso puntual.
-    let reutilizablesEmpresa = [];
-    if (!expedienteDestino) {
-      const requerimientosEmpresa = requerimientosAplicablesDestino.filter(
-          (r) => aplicaRequerimientoASujeto(r, {tipoEntidad: "empresa"}),
-      );
-      reutilizablesEmpresa =
-          await reutilizacionDocumentalService.buscarReutilizablesEmpresa(
-              empresaId, requerimientosEmpresa, fechaInicioDate,
-          );
-    }
-
-    // Requerimientos del sujeto: regla única con sus Perfiles de Recurso.
-    const sujeto = {
-      tipoEntidad: esPersona ? "persona" : "recurso", perfilRecursoIds,
-    };
-    const requerimientosEntidad = requerimientosAplicablesDestino.filter(
-        (r) => aplicaRequerimientoASujeto(r, sujeto),
-    );
-    const reutilizablesEntidad = esPersona ?
-        await reutilizacionDocumentalService.buscarReutilizablesPersona(
-            entidadId, requerimientosEntidad, fechaInicioDate,
-        ) :
-        await reutilizacionDocumentalService.buscarReutilizablesRecurso(
-            entidadId, requerimientosEntidad, fechaInicioDate,
-        );
 
     const participacionRef = crearParticipacionNueva ?
         db.collection(participacionRepository.COLLECTION).doc() :
@@ -820,12 +841,6 @@ class AcreditacionService {
         db.collection(expedienteRepository.COLLECTION)
             .doc(expedienteDestino.id) :
         db.collection(expedienteRepository.COLLECTION).doc();
-    const evaluacionRefsEmpresa = reutilizablesEmpresa.map(
-        () => db.collection(evaluacionRepository.COLLECTION).doc(),
-    );
-    const evaluacionRefsEntidad = reutilizablesEntidad.map(
-        () => db.collection(evaluacionRepository.COLLECTION).doc(),
-    );
 
     const participacionDestino = crearParticipacionNueva ?
       {
@@ -834,17 +849,33 @@ class AcreditacionService {
       } :
       participacionExistente;
 
+    // Sin Expediente abierto de la Empresa en el destino se creará uno
+    // (y la Participación, si no existía): se avisa antes de crearlo.
+    const nuevoExpediente = avisarExpedienteNuevo && !expedienteDestino ?
+      {
+        empresaId,
+        empresaNombre:
+            (await empresaRepository.getById(empresaId))?.razonSocial || null,
+        proyectoId: proyectoDestinoId,
+        proyectoNombre: proyecto.nombre || null,
+        creaParticipacion: crearParticipacionNueva,
+      } :
+      null;
+
     // Antes de escribir nada: lista de afectados y confirmación explícita.
     await this._confirmarMovimiento({
       esPersona, entidadId, participacion: participacionDestino, confirmado,
+      nuevoExpediente,
     }, actor);
 
     let movimiento;
 
     // Transacción: finaliza lo activo del sujeto (vía `_moverSujeto`,
     // compartido con `asignarEntidadAProyecto`) y crea sus documentos
-    // nuevos, junto con la Participación/Expediente de la Empresa en el
-    // Proyecto destino cuando corresponde, y las Evaluaciones reutilizadas.
+    // nuevos, junto con la Participación y la cabecera del Expediente de la
+    // Empresa en el Proyecto destino cuando corresponde. Las instancias de
+    // Requerimiento (con reutilización documental) se generan o sincronizan
+    // después de la transacción.
     await db.runTransaction(async (transaction) => {
       movimiento = await this._moverSujeto(transaction, {
         esPersona, entidadId, participacion: participacionDestino,
@@ -866,30 +897,31 @@ class AcreditacionService {
       }
 
       if (!expedienteDestino) {
-        transaction.set(expedienteRef, {
+        transaction.set(expedienteRef, expedienteService.datosCabecera({
           participacionId: participacionDestino.id,
           proyectoId: proyectoDestinoId,
           empresaId,
           mandanteId,
           perfilParticipacionId: perfilParticipacionDestinoId,
-          estado: "creado",
-          requerimientosAplicables: requerimientosAplicablesDestino,
-          fechaCierre: null,
+          creadoPorId: actor.uid || null,
           creadoPorNombre,
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        }));
       }
-
-      reutilizacionDocumentalService.registrarReutilizadas(
-          transaction, evaluacionRefsEmpresa, reutilizablesEmpresa,
-          {expedienteId: expedienteRef.id, mandanteId, actor, creadoPorNombre},
-      );
-      reutilizacionDocumentalService.registrarReutilizadas(
-          transaction, evaluacionRefsEntidad, reutilizablesEntidad,
-          {expedienteId: expedienteRef.id, mandanteId, actor, creadoPorNombre},
-      );
     });
+
+    const claveDelSujeto =
+        `${esPersona ? "persona" : "recurso"}_${entidadId}`;
+    let conteos;
+    if (expedienteDestino) {
+      await expedienteService.recalcularPorProyectoEmpresa(
+          proyectoDestinoId, empresaId, actor,
+      );
+      conteos = await this._conteosDeSujeto(expedienteRef.id, claveDelSujeto);
+    } else {
+      conteos = await this._generarExpediente(
+          expedienteRef.id, actor, claveDelSujeto,
+      );
+    }
 
     const anterioresIds = movimiento.finalizados.map((d) => d.id);
     const nuevosIds = movimiento.altas.map(({ref}) => ref.id);
@@ -915,15 +947,13 @@ class AcreditacionService {
         participacionEsNueva: crearParticipacionNueva,
         expedienteId: expedienteRef.id,
         expedienteEsNuevo: !expedienteDestino,
-        requerimientosTotal: requerimientosEntidad.length,
-        requerimientosReutilizados: reutilizablesEntidad.length,
+        requerimientosTotal: conteos.total,
+        requerimientosReutilizados: conteos.reutilizados,
       },
     });
 
-    // Estado derivado (creado/en_revision/...): puede haber Evaluaciones
-    // reutilizadas y sujetos nuevos que cambian los pares a evaluar. El
-    // origen también cambia (perdió un sujeto).
-    await expedienteService.recalcularEstado(expedienteRef.id, actor);
+    // El origen también cambia (perdió un sujeto): sus instancias de ese
+    // sujeto se retiran y su estado se recalcula.
     const origenes = new Set(movimiento.finalizados.map(
         (d) => `${d.proyectoId}|${d.empresaId}`,
     ));
@@ -942,8 +972,8 @@ class AcreditacionService {
       participacionEsNueva: crearParticipacionNueva,
       expedienteId: expedienteRef.id,
       expedienteEsNuevo: !expedienteDestino,
-      requerimientosTotal: requerimientosEntidad.length,
-      requerimientosReutilizados: reutilizablesEntidad.length,
+      requerimientosTotal: conteos.total,
+      requerimientosReutilizados: conteos.reutilizados,
     };
   }
 
@@ -1362,11 +1392,14 @@ class AcreditacionService {
       ))?.empresaId || null;
     }
 
-    const requerimientosAplicables =
+    const aplicables =
         await requerimientoCalculoService.calcularRequerimientosAplicables(
             perfilParticipacionId,
         );
-    const porNivel = this._agruparPorTipo(requerimientosAplicables);
+    const porNivel = this._agruparPorTipo(aplicables);
+    const mandanteDestinoId = await this._mandanteDePerfil(
+        perfilParticipacionId,
+    );
     if (entidadTipo !== "empresa") {
       const esPersona = entidadTipo === "persona";
       const perfilRecursoIds = perfilesDelPayload(filtros) ||
@@ -1382,16 +1415,17 @@ class AcreditacionService {
 
     const reutilizablesEmpresa =
         await reutilizacionDocumentalService.buscarReutilizablesEmpresa(
-            empresaId, porNivel.empresa, fechaInicioDate,
+            empresaId, porNivel.empresa, fechaInicioDate, mandanteDestinoId,
         );
     const reutilizablesPersona = entidadTipo === "persona" ?
         await reutilizacionDocumentalService.buscarReutilizablesPersona(
-            entidadId, porNivel.persona, fechaInicioDate,
+            entidadId, porNivel.persona, fechaInicioDate, mandanteDestinoId,
         ) :
         [];
     const reutilizablesMaquinaria = entidadTipo === "maquinaria" ?
         await reutilizacionDocumentalService.buscarReutilizablesRecurso(
             entidadId, porNivel.maquinaria, fechaInicioDate,
+            mandanteDestinoId,
         ) :
         [];
 
@@ -1411,6 +1445,19 @@ class AcreditacionService {
           reutilizablesEmpresa.length + reutilizablesPersona.length +
           reutilizablesMaquinaria.length,
     };
+  }
+
+  /**
+   * Mandante del Perfil de Participación destino: la reutilización
+   * documental solo considera Evaluaciones de ese Mandante.
+   * @param {string} perfilParticipacionId ID del Perfil de Participación.
+   * @return {Promise<?string>} mandanteId o null.
+   */
+  async _mandanteDePerfil(perfilParticipacionId) {
+    const perfil = await perfilParticipacionRepository.getById(
+        perfilParticipacionId,
+    );
+    return perfil?.mandanteId || null;
   }
 
   /**
@@ -1488,15 +1535,18 @@ class AcreditacionService {
     const fechaInicioDate = this._parseFecha(fechaInicio, "fechaInicio");
     const lista = Array.isArray(seleccion) ? seleccion : [];
 
-    const requerimientosAplicables =
+    const aplicables =
         await requerimientoCalculoService.calcularRequerimientosAplicables(
             perfilParticipacionId,
         );
-    const porNivel = this._agruparPorTipo(requerimientosAplicables);
+    const porNivel = this._agruparPorTipo(aplicables);
+    const mandanteDestinoId = await this._mandanteDePerfil(
+        perfilParticipacionId,
+    );
 
     const reutilizablesEmpresa =
         await reutilizacionDocumentalService.buscarReutilizablesEmpresa(
-            empresaId, porNivel.empresa, fechaInicioDate,
+            empresaId, porNivel.empresa, fechaInicioDate, mandanteDestinoId,
         );
 
     const detallePorEntidad = [];
@@ -1509,7 +1559,7 @@ class AcreditacionService {
       const sujeto = {
         tipoEntidad, perfilRecursoIds: perfilesDelPayload(item) || [],
       };
-      return requerimientosAplicables.filter(
+      return aplicables.filter(
           (r) => aplicaRequerimientoASujeto(r, sujeto),
       );
     };
@@ -1521,7 +1571,7 @@ class AcreditacionService {
         totalPersonas += propios.length;
         const reutilizables =
             await reutilizacionDocumentalService.buscarReutilizablesPersona(
-                item.id, propios, fechaInicioDate,
+                item.id, propios, fechaInicioDate, mandanteDestinoId,
             );
         reutilizadosPersonas += reutilizables.length;
         detallePorEntidad.push({
@@ -1540,7 +1590,7 @@ class AcreditacionService {
         totalMaquinarias += propios.length;
         const reutilizables =
             await reutilizacionDocumentalService.buscarReutilizablesRecurso(
-                item.id, propios, fechaInicioDate,
+                item.id, propios, fechaInicioDate, mandanteDestinoId,
             );
         reutilizadosMaquinarias += reutilizables.length;
         detallePorEntidad.push({

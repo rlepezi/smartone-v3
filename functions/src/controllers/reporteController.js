@@ -1,4 +1,5 @@
 const reporteService = require("../services/reporteService");
+const reportePanelService = require("../services/reportePanelService");
 
 /**
  * Controlador HTTP para el módulo Reportes. 100% de lectura — no hay
@@ -20,6 +21,29 @@ class ReporteController {
         diasVencimiento: diasVencimiento ? Number(diasVencimiento) : undefined,
       });
       res.status(200).json({data: reporte});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Panel de Reportes: todas las secciones con los filtros de la página.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async panel(req, res, next) {
+    try {
+      const {
+        mandanteId, desde, hasta, proyectoId, perfilParticipacionId,
+        empresaId,
+      } = req.query;
+      const panel = await reportePanelService.obtenerPanel(req.user, {
+        mandanteId, desde, hasta, proyectoId, perfilParticipacionId,
+        empresaId,
+      });
+      res.status(200).json({data: panel});
     } catch (error) {
       next(error);
     }

@@ -7,8 +7,8 @@ import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
 import { SUGERENCIAS_TIPO_RELACION_RECURSO } from "../../utils/sugerenciasRelacionLaboral";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 // Modal "Cambiar Empresa" para Recurso (maquinaria) — compartido entre
 // RecursoDetailPage.jsx y RecursoFormPage.jsx, antes vivía embebido solo
@@ -18,7 +18,7 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 // formulario son genuinamente distintos, no una copia casi idéntica.
 // Usa recursoService.cambiarEmpresa (empresaRecursos, RN-122): si la relación anterior tiene
 // asignaciones activas, muestra la lista para confirmar (ConfirmacionModal) antes de reenviar.
-export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onCambiado, onCerrar }) => {
+export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, empresaActualId = null, onCambiado, onCerrar }) => {
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
   const [formData, setFormData] = useState({ empresaId: "", tipoRelacion: "", fechaInicio: hoyISO() });
   const [errors, setErrors] = useState({});
@@ -31,6 +31,12 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
       .then((data) => setEmpresasOpciones(data || []))
       .catch((err) => console.error("Error al cargar empresas:", err));
   }, []);
+
+  // La Empresa actual se muestra bloqueada: cambiar de Empresa es pasar a OTRA (si no existe,
+  // primero hay que crearla en Empresas).
+  const esEmpresaActual = (e) => (empresaActualId ? e.id === empresaActualId
+    : Boolean(empresaActualNombre) && e.razonSocial === empresaActualNombre);
+  const hayOtraEmpresa = empresasOpciones.some((e) => !esEmpresaActual(e));
 
   const elegir = (name, value) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -117,10 +123,19 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
                 { value: "", label: "Seleccione una Empresa..." },
                 ...empresasOpciones.map((e) => ({
                   value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
+                  ...(esEmpresaActual(e) ? { deshabilitada: true, nota: "Empresa actual" } : {}),
                 })),
               ]}
             />
             {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+            <p className={`text-[11px] mt-1 ${hayOtraEmpresa ? "text-slate-400" : "font-semibold text-amber-700"}`}>
+              {hayOtraEmpresa
+                ? "La empresa actual no se puede elegir. Si la nueva empresa no está en la lista, primero créala."
+                : "No hay otra empresa disponible: debes crear una empresa nueva para poder cambiar de empresa."}{" "}
+              <a href="/empresas/nuevo" target="_blank" rel="noopener noreferrer" className="font-bold text-primary hover:underline">
+                Crear empresa
+              </a>
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -137,8 +152,8 @@ export const CambiarEmpresaRecursoModal = ({ recursoId, empresaActualNombre, onC
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-              <input
-                type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
+              <DateInput
+                name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
                 className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
                   errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
                 }`}

@@ -79,6 +79,18 @@ class EmpresaMandanteRepository {
   }
 
   /**
+   * Todos los vínculos ACTIVOS, como pares {empresaId, mandanteId} (listado
+   * de Empresas). Una sola igualdad: no requiere índice compuesto.
+   * @return {Promise<Array<{empresaId: string, mandanteId: string}>>} Pares.
+   */
+  async listActivos() {
+    const snap = await db.collection(COLLECTION)
+        .where("estado", "==", "activo")
+        .select("empresaId", "mandanteId").get();
+    return snap.docs.map((d) => d.data());
+  }
+
+  /**
    * Datos para dejar el vínculo ACTIVO (alta o reactivación).
    * @param {string} empresaId ID de la Empresa.
    * @param {string} mandanteId ID del Mandante.

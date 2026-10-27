@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate } from "react-router-dom";
 import {
-  Users, Power, Pencil, Eye, ClipboardList, FolderKanban, FileCheck2,
+  Users, Power, Pencil, Eye, FolderKanban,
   CheckCircle2, Clock, XCircle, Building2,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
@@ -16,7 +16,6 @@ import { sujetoService, nombresPerfiles } from "../../services/participacionSuje
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { proyectoService } from "../../services/proyectoService";
 import { mandanteService } from "../../services/mandanteService";
-import { formatCatalogo } from "../../utils/formatCatalogo";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
 import { PageHeader } from "../../components/shared/PageHeader";
@@ -29,33 +28,10 @@ import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { EvaluacionCelda } from "../../components/shared/EvaluacionCelda";
 import { CambiarEmpresaModal } from "../../components/personas/CambiarEmpresaModal";
 import { CambiarProyectoModal } from "../../components/shared/CambiarProyectoModal";
-import { evaluarSujeto } from "../../utils/evaluacionSujeto";
+import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
 import { CLASE_LINEA } from "../../utils/lineasAlineadas";
 import { Pagination } from "../../components/shared/Pagination";
-import { QuickViewPanel } from "../../components/shared/QuickViewPanel";
 import { MandanteChip } from "../../components/shared/MandanteChip";
-
-// No existe un endpoint tipo reporteService para Persona — se deriva acá
-// mismo, sobre sus propias Evaluaciones vigentes de nivel Persona. Regla
-// de prioridad (peor caso primero): un solo "no_cumple" ya la marca "No
-// Acreditada" aunque el resto sean "cumple".
-const ACREDITACION_PERSONA_MAP = {
-  acreditada: { label: "Acreditada", className: "bg-sage-lighter text-sage-darker border-sage-light" },
-  pendiente: { label: "Pendiente", className: "bg-amber-50 text-amber-700 border-amber-200" },
-  no_acreditada: { label: "No Acreditada", className: "bg-red-50 text-red-700 border-red-200" },
-};
-
-const RolBadge = ({ rol }) => (
-  <span className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold border bg-primary-lighter text-primary border-primary/20 whitespace-nowrap">
-    {formatCatalogo(rol)}
-  </span>
-);
-
-const PerfilBadge = ({ nombre }) => (
-  <span className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold border bg-violet-50 text-violet-700 border-violet-200 whitespace-nowrap">
-    {nombre}
-  </span>
-);
 
 export const PersonasListPage = () => {
   const navigate = useNavigate();
@@ -64,10 +40,12 @@ export const PersonasListPage = () => {
 
   const [personas, setPersonas] = useState([]);
   const [empresasMap, setEmpresasMap] = useState({});
+  // Mandantes asociados a cada Empresa (empresaMandantes activos): para mostrar el Mandante de una
+  // Persona que todavía no está asignada a ningún Proyecto.
+  const [mandantesDeEmpresa, setMandantesDeEmpresa] = useState({});
   const [perfilesMap, setPerfilesMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filtroEstado, setFiltroEstado] = useState("");
   const [filtroAcreditacion, setFiltroAcreditacion] = useState("");
   const [filtroProyecto, setFiltroProyecto] = useState("");
   const [filtroMandante, setFiltroMandante] = useState("");
@@ -76,7 +54,6 @@ export const PersonasListPage = () => {
   const [toggleandoId, setToggleandoId] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [personaSeleccionada, setPersonaSeleccionada] = useState(null);
   const [personaCambiandoEmpresa, setPersonaCambiandoEmpresa] = useState(null);
   const [personaCambiandoProyecto, setPersonaCambiandoProyecto] = useState(null);
 
@@ -89,9 +66,6 @@ export const PersonasListPage = () => {
   const [mandantesCache, setMandantesCache] = useState({});
   const mandantesEnCursoRef = useRef(new Set());
 
-  const [resumenesMap, setResumenesMap] = useState({});
-  const resumenesEnCursoRef = useRef(new Set());
-
   // Datos para los KPI y columnas nuevas — ninguno se pedía antes en esta
   // pantalla. Participaciones/Expedientes/Evaluaciones ya se usan en
   // otras pantallas (Dashboard/Proyectos/Empresas); acá se cruzan por
@@ -102,16 +76,6 @@ export const PersonasListPage = () => {
   const [expedientesTodos, setExpedientesTodos] = useState([]);
   const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
   const [cargandoEvaluaciones, setCargandoEvaluaciones] = useState(true);
-
-  const obtenerResumen = (personaId) => {
-    if (personaId in resumenesMap || resumenesEnCursoRef.current.has(personaId)) return;
-    resumenesEnCursoRef.current.add(personaId);
-    personaService
-      .obtenerResumen(personaId)
-      .then((data) => setResumenesMap((prev) => ({ ...prev, [personaId]: data })))
-      .catch(() => setResumenesMap((prev) => ({ ...prev, [personaId]: null })))
-      .finally(() => resumenesEnCursoRef.current.delete(personaId));
-  };
 
   // Participaciones activas, Expedientes, Evaluaciones vigentes y personas asignadas
   // activas: base de las líneas por Participación y de los filtros.
@@ -136,7 +100,6 @@ export const PersonasListPage = () => {
   };
 
   const recargarTrasCambio = () => {
-    setResumenesMap({});
     cargarPersonas();
     cargarRelacionados();
   };
@@ -145,7 +108,7 @@ export const PersonasListPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await personaService.listar(filtroEstado || undefined);
+      const data = await personaService.listar();
       setPersonas(data || []);
     } catch (err) {
       console.error("Error al cargar personas:", err);
@@ -157,16 +120,20 @@ export const PersonasListPage = () => {
 
   useEffect(() => {
     cargarPersonas();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroEstado]);
+  }, []);
 
   useEffect(() => {
     empresaService
       .listar()
       .then((data) => {
         const map = {};
-        (data || []).forEach((e) => { map[e.id] = e.razonSocial; });
+        const mandantes = {};
+        (data || []).forEach((e) => {
+          map[e.id] = e.razonSocial;
+          mandantes[e.id] = e.mandanteIds || [];
+        });
         setEmpresasMap(map);
+        setMandantesDeEmpresa(mandantes);
       })
       .catch((err) => console.error("Error al cargar empresas:", err));
 
@@ -194,8 +161,11 @@ export const PersonasListPage = () => {
       .catch((err) => console.error("Error al cargar proyectos:", err));
   }, []);
 
-  // Mandantes de los Proyectos (nombre + logo), uno por id distinto.
-  const idsMandanteKey = [...new Set(Object.values(proyectosMap).map((p) => p.mandanteId).filter(Boolean))].join(",");
+  // Mandantes de los Proyectos y de las Empresas (nombre + logo), uno por id distinto.
+  const idsMandanteKey = [...new Set([
+    ...Object.values(proyectosMap).map((p) => p.mandanteId),
+    ...Object.values(mandantesDeEmpresa).flat(),
+  ].filter(Boolean))].join(",");
   useEffect(() => {
     if (!idsMandanteKey) return;
     const faltantes = idsMandanteKey.split(",").filter(
@@ -221,12 +191,6 @@ export const PersonasListPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsMandanteKey]);
 
-  // El resumen por Persona solo lo usa el panel de vista rápida: se pide al abrirlo.
-  useEffect(() => {
-    if (personaSeleccionada) obtenerResumen(personaSeleccionada.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [personaSeleccionada]);
-
   const handleToggleEstado = async (item) => {
     setToggleandoId(item.id);
     try {
@@ -246,13 +210,13 @@ export const PersonasListPage = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [filtroEstado, filtroAcreditacion, filtroProyecto, filtroMandante, filtroEmpresa, searchTerm]);
+  }, [filtroAcreditacion, filtroProyecto, filtroMandante, filtroEmpresa, searchTerm]);
 
   // Evaluaciones propias de esta Persona (nivel Persona, personaId
-  // coincide) — base de la categoría de acreditación, "Evaluaciones" del
-  // panel lateral y "Última Actividad".
+  // coincide) — base de la categoría de acreditación.
   const evaluacionesDe = (personaId) => evaluacionesTodas.filter((ev) => ev.personaId === personaId);
 
+  // Peor caso primero: un solo "no_cumple" ya la marca "No Acreditada".
   const categoriaAcreditacionDe = (personaId) => {
     const propias = evaluacionesDe(personaId);
     if (propias.length === 0) return null;
@@ -260,15 +224,6 @@ export const PersonasListPage = () => {
     if (propias.some((ev) => ev.resultado === "pendiente")) return "pendiente";
     if (propias.some((ev) => ev.resultado === "cumple")) return "acreditada";
     return null;
-  };
-
-  const expedientesDe = (persona) => {
-    const proyectosAsignados = new Set(
-      (resumenesMap[persona.id]?.participacionesActivas || []).map((a) => a.proyectoId),
-    );
-    return expedientesTodos.filter(
-      (e) => e.empresaId === persona.empresaActual?.empresaId && proyectosAsignados.has(e.proyectoId),
-    );
   };
 
   // Una línea por participación activa de la Persona, con SU Mandante, Perfil,
@@ -304,7 +259,10 @@ export const PersonasListPage = () => {
     if (!filtroProyecto && !filtroMandante && !filtroAcreditacion) return true;
     const partes = participacionesDe(persona);
     if (partes.length === 0) {
-      return !filtroProyecto && !filtroMandante && filtroAcreditacion === "sin_evaluar";
+      // Sin asignación: su Mandante es el de su Empresa actual (empresaMandantes).
+      const delMandante = !filtroMandante ||
+        (mandantesDeEmpresa[persona.empresaActual?.empresaId] || []).includes(filtroMandante);
+      return !filtroProyecto && delMandante && (!filtroAcreditacion || filtroAcreditacion === "sin_evaluar");
     }
     return partes.some((pt) =>
       (!filtroProyecto || pt.proyectoId === filtroProyecto) &&
@@ -426,25 +384,12 @@ export const PersonasListPage = () => {
         searchPlaceholder="Buscar por nombre, RUT o empresa..."
         filters={[
           {
-            label: "Estado",
-            value: filtroEstado,
-            onChange: setFiltroEstado,
+            label: "Mandante",
+            value: filtroMandante,
+            onChange: setFiltroMandante,
             options: [
-              { value: "", label: "Todos los estados" },
-              { value: "activo", label: "Activas" },
-              { value: "inactivo", label: "Inactivas" },
-            ],
-          },
-          {
-            label: "Estado de Acreditación",
-            value: filtroAcreditacion,
-            onChange: setFiltroAcreditacion,
-            options: [
-              { value: "", label: "Todos" },
-              { value: "acreditada", label: "Acreditada" },
-              { value: "pendiente", label: "Pendiente" },
-              { value: "no_acreditada", label: "No Acreditada" },
-              { value: "sin_evaluar", label: "Sin Evaluar" },
+              { value: "", label: "Todos los mandantes" },
+              ...Object.entries(mandantesCache).map(([mid, info]) => ({ value: mid, label: info.nombre })),
             ],
           },
           {
@@ -457,21 +402,24 @@ export const PersonasListPage = () => {
             ],
           },
           {
-            label: "Mandante",
-            value: filtroMandante,
-            onChange: setFiltroMandante,
-            options: [
-              { value: "", label: "Todos los mandantes" },
-              ...Object.entries(mandantesCache).map(([mid, info]) => ({ value: mid, label: info.nombre })),
-            ],
-          },
-          {
             label: "Empresa",
             value: filtroEmpresa,
             onChange: setFiltroEmpresa,
             options: [
               { value: "", label: "Todas las empresas" },
               ...Object.entries(empresasMap).map(([eid, nombre]) => ({ value: eid, label: nombre })),
+            ],
+          },
+          {
+            label: "Estado de Acreditación",
+            value: filtroAcreditacion,
+            onChange: setFiltroAcreditacion,
+            options: [
+              { value: "", label: "Todos" },
+              { value: "acreditada", label: "Acreditada" },
+              { value: "pendiente", label: "Pendiente" },
+              { value: "no_acreditada", label: "No Acreditada" },
+              { value: "sin_evaluar", label: "Sin Evaluar" },
             ],
           },
         ]}
@@ -497,7 +445,7 @@ export const PersonasListPage = () => {
           return (
             <tr
               key={item.id}
-              onClick={() => setPersonaSeleccionada(item)}
+              onClick={() => navigate(`/personas/${item.id}`)}
               className="hover:bg-slate-50/60 transition-colors cursor-pointer"
             >
               <td className="py-4 px-6">
@@ -510,7 +458,14 @@ export const PersonasListPage = () => {
                 {formatRutDisplay(item.rut)}
               </td>
               <td className="py-2 px-6 text-slate-600 font-medium">
-                {lineas((pt) => (
+                {!cargandoDesglose && partes.length === 0 && (mandantesDeEmpresa[item.empresaActual?.empresaId] || []).length > 0 ? (
+                  // Sin asignación activa: los Mandantes de su Empresa actual.
+                  mandantesDeEmpresa[item.empresaActual.empresaId].map((mid) => (
+                    <div key={mid} className={CLASE_LINEA}>
+                      <MandanteChip nombre={mandantesCache[mid]?.nombre || "…"} logoUrl={mandantesCache[mid]?.logoUrl} />
+                    </div>
+                  ))
+                ) : lineas((pt) => (
                   <MandanteChip
                     nombre={pt.mandante?.nombre || (pt.mandanteId ? "…" : "Sin mandante")}
                     logoUrl={pt.mandante?.logoUrl}
@@ -565,89 +520,12 @@ export const PersonasListPage = () => {
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
       />
 
-      <QuickViewPanel
-        open={!!personaSeleccionada}
-        onClose={() => setPersonaSeleccionada(null)}
-        icon={Users}
-        title={personaSeleccionada ? `${personaSeleccionada.nombre} ${personaSeleccionada.apellido}` : ""}
-        badge={personaSeleccionada && categoriaAcreditacionDe(personaSeleccionada.id) ? {
-          value: categoriaAcreditacionDe(personaSeleccionada.id), map: ACREDITACION_PERSONA_MAP,
-        } : null}
-        infoGeneral={personaSeleccionada ? [
-          { label: "RUT", value: formatRutDisplay(personaSeleccionada.rut) },
-          { label: "Empresa", value: personaSeleccionada.empresaActual?.empresaNombre || "-" },
-          { label: "Estado", value: personaSeleccionada.estado === "activo" ? "Activo" : "Inactivo" },
-        ] : []}
-        metricas={personaSeleccionada ? [
-          {
-            icon: FolderKanban,
-            label: "Proyectos Asignados",
-            value: resumenesMap[personaSeleccionada.id]?.participacionesActivas?.length ?? "…",
-          },
-          {
-            icon: FileCheck2,
-            label: "Expedientes",
-            value: resumenesMap[personaSeleccionada.id] ? expedientesDe(personaSeleccionada).length : "…",
-          },
-          {
-            icon: ClipboardList,
-            label: "Evaluaciones",
-            value: cargandoEvaluaciones ? "…" : evaluacionesDe(personaSeleccionada.id).length,
-          },
-        ] : []}
-        extra={
-          personaSeleccionada ? (
-            <div className="space-y-3">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Participaciones activas</p>
-              {cargandoSujetos ? (
-                <p className="text-xs text-slate-400">Cargando...</p>
-              ) : participacionesDe(personaSeleccionada).length === 0 ? (
-                <p className="text-xs text-slate-400 italic">Sin asignación activa</p>
-              ) : (
-                participacionesDe(personaSeleccionada).map((pt) => (
-                  <div key={pt.key} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs font-bold text-carbon-dark">{pt.proyectoNombre}</p>
-                      <MandanteChip nombre={pt.mandante?.nombre || (pt.mandanteId ? "…" : "Sin mandante")} logoUrl={pt.mandante?.logoUrl} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Perfil Asignado</p>
-                        {pt.perfilNombre ? <PerfilBadge nombre={pt.perfilNombre} /> : <span className="text-slate-400 italic">-</span>}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Función Actual</p>
-                        <RolBadge rol={pt.rol} />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Acreditación</p>
-                        {cargandoEvaluaciones ? (
-                          <span className="text-slate-400">…</span>
-                        ) : pt.evaluacion.categoria === "sin_evaluar" ? (
-                          <span className="text-[11px] text-slate-400 italic">Sin Evaluar</span>
-                        ) : (
-                          <StatusBadge value={pt.evaluacion.categoria} map={ACREDITACION_PERSONA_MAP} />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Evaluación</p>
-                        {cargandoEvaluaciones ? <span className="text-slate-400">…</span> : <EvaluacionCelda evaluacion={pt.evaluacion} />}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : null
-        }
-        accionLabel="Ver Detalle Completo"
-        accionTo={personaSeleccionada ? `/personas/${personaSeleccionada.id}` : undefined}
-      />
 
       {personaCambiandoEmpresa && (
         <CambiarEmpresaModal
           personaId={personaCambiandoEmpresa.id}
           empresaActualNombre={personaCambiandoEmpresa.empresaActual?.empresaNombre || ""}
+          empresaActualId={personaCambiandoEmpresa.empresaActual?.empresaId || null}
           onCambiado={() => { setPersonaCambiandoEmpresa(null); recargarTrasCambio(); }}
           onCerrar={() => setPersonaCambiandoEmpresa(null)}
         />

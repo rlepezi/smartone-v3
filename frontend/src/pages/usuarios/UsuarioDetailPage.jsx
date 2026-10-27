@@ -8,7 +8,9 @@ import { useAuth } from "../../contexts/AuthContext";
 import { usuarioService, ROLES_USUARIO } from "../../services/usuarioService";
 import { mandanteService } from "../../services/mandanteService";
 import { bitacoraService } from "../../services/bitacoraService";
-import { formatFecha, formatFechaHora, formatTiempoRelativo } from "../../utils/fechaFormatters";
+import {
+  formatFecha, formatFechaHora, formatTiempoRelativo, aFechaISO, hoyISO, sumarDiasISO,
+} from "../../utils/fechas";
 import { describirEvento } from "../../utils/bitacoraFormatters";
 import { can, esUnoMismo } from "../../utils/permissions";
 import { DetalleEntidadLayout } from "../../components/shared/DetalleEntidadLayout";
@@ -16,6 +18,7 @@ import { KpiCard, KpiValor, TarjetaPanel, CampoInfo } from "../../components/sha
 import { StatusBadge, MAPA_ACTIVO_DESACTIVADO } from "../../components/shared/StatusBadge";
 import { ActionButton } from "../../components/shared/ActionButton";
 import { SerieDiariaChart } from "../../components/shared/SerieDiariaChart";
+import { DateInput } from "../../components/ui/DateInput";
 
 // Fecha desde la que existe telemetría de accesos/sesiones (Fase B de
 // "Usuarios — actividad, métricas y gestión de accesos"): las sesiones NO
@@ -66,20 +69,6 @@ const RUTA_ENTIDAD = {
   empresa: "/empresas",
   proyecto: "/proyectos",
   usuario: "/usuarios",
-};
-
-const toISODateLocal = (date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
-const sumarDias = (fechaISO, dias) => {
-  const [y, m, d] = fechaISO.split("-").map(Number);
-  const fecha = new Date(y, m - 1, d);
-  fecha.setDate(fecha.getDate() + dias);
-  return toISODateLocal(fecha);
 };
 
 const formatDuracion = (segundos) => {
@@ -166,18 +155,12 @@ export const UsuarioDetailPage = () => {
 
   // --- Período (Tab Resumen) ---
   const [periodo, setPeriodo] = useState("7d");
-  const [customDesde, setCustomDesde] = useState(toISODateLocal(sumarDiasDate(-6)));
-  const [customHasta, setCustomHasta] = useState(toISODateLocal(new Date()));
+  const [customDesde, setCustomDesde] = useState(() => sumarDiasISO(hoyISO(), -6));
+  const [customHasta, setCustomHasta] = useState(() => hoyISO());
 
-  function sumarDiasDate(dias) {
-    const fecha = new Date();
-    fecha.setDate(fecha.getDate() + dias);
-    return fecha;
-  }
-
-  const hastaISO = toISODateLocal(new Date());
+  const hastaISO = hoyISO();
   const periodoDef = PERIODOS.find((p) => p.key === periodo);
-  const desde = periodo === "custom" ? customDesde : sumarDias(hastaISO, -(periodoDef.dias - 1));
+  const desde = periodo === "custom" ? customDesde : sumarDiasISO(hastaISO, -(periodoDef.dias - 1));
   const hasta = periodo === "custom" ? customHasta : hastaISO;
 
   const [metricas, setMetricas] = useState(undefined);
@@ -413,15 +396,13 @@ export const UsuarioDetailPage = () => {
               ))}
               {periodo === "custom" && (
                 <div className="flex items-center gap-2 ml-1">
-                  <input
-                    type="date"
+                  <DateInput
                     value={customDesde}
                     onChange={(e) => setCustomDesde(e.target.value)}
                     className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs"
                   />
                   <span className="text-xs text-slate-400">a</span>
-                  <input
-                    type="date"
+                  <DateInput
                     value={customHasta}
                     onChange={(e) => setCustomHasta(e.target.value)}
                     className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs"
@@ -769,10 +750,8 @@ const diasEnRango = (desde, hasta) => {
 const agruparPorDia = (items) => {
   const mapa = new Map();
   items.forEach((ev) => {
-    const fecha = ev.createdAt?._seconds
-      ? new Date(ev.createdAt._seconds * 1000)
-      : new Date(ev.createdAt);
-    const clave = toISODateLocal(fecha);
+    // Día del evento en Chile.
+    const clave = aFechaISO(ev.createdAt);
     if (!mapa.has(clave)) mapa.set(clave, []);
     mapa.get(clave).push(ev);
   });

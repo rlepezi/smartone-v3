@@ -17,11 +17,19 @@ const ROLES_LECTURA = [
 // Escritura: solo superadmin y CUALQUIER mandante_admin (no hay "dueño").
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 const ROLES_GESTION_MANDANTES = ["superadmin", "admin_comercial"];
+// Personas y Maquinarias de la Empresa: sin admin_comercial (no tiene
+// acceso a Personas ni Recursos; responde 403).
+const ROLES_SUJETOS = [
+  "superadmin", "mandante_admin", "mandante_lector", "evaluador",
+];
 
 router.get("/", requireRole(ROLES_LECTURA), empresaController.list);
 router.get("/:id", requireRole(ROLES_LECTURA), empresaController.getById);
 router.get(
     "/:id/resumen", requireRole(ROLES_LECTURA), empresaController.resumen,
+);
+router.get(
+    "/:id/recursos", requireRole(ROLES_SUJETOS), empresaController.recursos,
 );
 router.get(
     "/:id/eventos-recientes",

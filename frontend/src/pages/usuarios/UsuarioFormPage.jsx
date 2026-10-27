@@ -4,7 +4,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { UserCog, ArrowLeft, AlertCircle, CheckCircle2, Copy, Check } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { usuarioService, ROLES_USUARIO } from "../../services/usuarioService";
-import { mandanteService } from "../../services/mandanteService";
+import { CampoMandante } from "../../components/shared/CampoMandante";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 
@@ -13,8 +14,10 @@ export const UsuarioFormPage = () => {
   const { id } = useParams();
   const { profile } = useAuth();
   const actorRol = profile?.rol;
-  const actorMandanteId = profile?.mandanteId || null;
   const esMandanteAdmin = actorRol === "mandante_admin";
+  // Mandante del usuario nuevo (roles de Mandante): fijo, único o elegido. En edición se sigue
+  // eligiendo en el selector, que toma de acá la lista de Mandantes activos.
+  const contextoMandante = useMandanteContexto();
   const esAdminComercial = actorRol === "admin_comercial";
   const esEdicion = Boolean(id);
   const puedeEscribir = ROLES_ESCRITURA.includes(actorRol);
@@ -31,34 +34,15 @@ export const UsuarioFormPage = () => {
     apellido: "",
     email: "",
     rol: rolesDisponibles[0]?.value || "",
-    mandanteId: esMandanteAdmin ? actorMandanteId || "" : "",
+    mandanteId: "",
   });
 
-  const [mandantesActivos, setMandantesActivos] = useState([]);
-  const [actorMandanteNombre, setActorMandanteNombre] = useState("");
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
   const [serverError, setServerError] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [copiado, setCopiado] = useState(false);
-
-  useEffect(() => {
-    if (!esMandanteAdmin) {
-      mandanteService
-        .listar("activo")
-        .then((data) => setMandantesActivos(data || []))
-        .catch((err) => console.error("Error al cargar mandantes:", err));
-    }
-  }, [esMandanteAdmin]);
-
-  useEffect(() => {
-    if (!esMandanteAdmin || !actorMandanteId) return;
-    mandanteService
-      .obtenerPorId(actorMandanteId)
-      .then((data) => setActorMandanteNombre(getMandanteDisplayName(data) || actorMandanteId))
-      .catch(() => setActorMandanteNombre(actorMandanteId));
-  }, [esMandanteAdmin, actorMandanteId]);
 
   useEffect(() => {
     if (!esEdicion) return;
@@ -80,6 +64,10 @@ export const UsuarioFormPage = () => {
 
   const rolSeleccionado = ROLES_USUARIO.find((r) => r.value === formData.rol);
   const requiereMandante = rolSeleccionado?.requiereMandante || false;
+  // En alta (y siempre para mandante_admin) el Mandante lo da el contexto; al editar, el selector.
+  const mandanteElegido = esEdicion && !esMandanteAdmin ? formData.mandanteId : contextoMandante.mandanteId;
+  const faltaMandante = requiereMandante && !esEdicion &&
+    (!contextoMandante.modo || contextoMandante.modo === "ninguno");
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -101,7 +89,7 @@ export const UsuarioFormPage = () => {
       }
     }
     if (!formData.rol) newErrors.rol = "El rol es obligatorio.";
-    if (requiereMandante && !esMandanteAdmin && !formData.mandanteId) {
+    if (requiereMandante && !mandanteElegido) {
       newErrors.mandanteId = "Debe seleccionar un Mandante.";
     }
     setErrors(newErrors);
@@ -119,9 +107,7 @@ export const UsuarioFormPage = () => {
       apellido: formData.apellido.trim(),
       email: formData.email.trim(),
       rol: formData.rol,
-      mandanteId: requiereMandante
-        ? (esMandanteAdmin ? actorMandanteId : formData.mandanteId)
-        : null,
+      mandanteId: requiereMandante ? mandanteElegido : null,
     };
 
     try {
@@ -325,13 +311,24 @@ export const UsuarioFormPage = () => {
               {errors.rol && <p className="text-xs text-red-500 mt-1">{errors.rol}</p>}
             </div>
 
-            {requiereMandante && (
+            {requiereMandante && !esEdicion && (
+              <div className={contextoMandante.modo === "seleccionable" ? "" : "md:col-span-2"}>
+                <CampoMandante
+                  contexto={contextoMandante}
+                  error={errors.mandanteId}
+                  conFoco={false}
+                  onChange={() => setErrors((prev) => ({ ...prev, mandanteId: null }))}
+                />
+              </div>
+            )}
+
+            {requiereMandante && esEdicion && (
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mandante *</label>
                 {esMandanteAdmin ? (
                   <input
                     type="text"
-                    value={actorMandanteNombre || ""}
+                    value={getMandanteDisplayName(contextoMandante.mandante) || ""}
                     disabled
                     className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed"
                   />
@@ -346,7 +343,11 @@ export const UsuarioFormPage = () => {
                     }`}
                   >
                     <option value="">Seleccione un Mandante...</option>
-                    {mandantesActivos.map((m) => (
+                    {/* Si el Mandante guardado ya no está activo, igual se muestra. */}
+                    {formData.mandanteId && !contextoMandante.mandantes.some((m) => m.id === formData.mandanteId) && (
+                      <option value={formData.mandanteId}>{formData.mandanteId}</option>
+                    )}
+                    {contextoMandante.mandantes.map((m) => (
                       <option key={m.id} value={m.id}>{getMandanteDisplayName(m)}</option>
                     ))}
                   </select>
@@ -369,7 +370,7 @@ export const UsuarioFormPage = () => {
           {puedeEscribir && (
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || faltaMandante}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {loading ? "Guardando..." : "Guardar Usuario"}

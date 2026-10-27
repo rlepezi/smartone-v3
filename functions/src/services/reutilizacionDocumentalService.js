@@ -88,22 +88,37 @@ class ReutilizacionDocumentalService {
    *     "empresa" aplicables al nuevo Expediente.
    * @param {Date} fechaInicioNueva Fecha de inicio de la nueva
    *     participación.
+   * @param {string} mandanteId Mandante del Expediente destino: solo se
+   *     reutilizan Evaluaciones de ese Mandante.
    * @return {Promise<Object[]>} Evaluaciones originales reutilizables.
    */
   async buscarReutilizablesEmpresa(
-      empresaId, requerimientosEmpresa, fechaInicioNueva,
+      empresaId, requerimientosEmpresa, fechaInicioNueva, mandanteId,
   ) {
-    if (requerimientosEmpresa.length === 0) return [];
-    const expedientes = await expedienteRepository.getByEmpresa(empresaId);
+    if (requerimientosEmpresa.length === 0 || !mandanteId) return [];
+    const expedientes = (await expedienteRepository.getByEmpresa(empresaId))
+        .filter((e) => e.mandanteId === mandanteId);
     const expedienteIds = expedientes.map((e) => e.id);
     const evaluaciones =
         await evaluacionRepository.getByExpedientesIds(expedienteIds);
-    const soloEmpresa = evaluaciones.filter(
+    const soloEmpresa = this._delMandante(evaluaciones, mandanteId).filter(
         (e) => !e.personaId && !e.recursoId,
     );
     return this.filtrarReutilizables(
         soloEmpresa, requerimientosEmpresa, fechaInicioNueva,
     );
+  }
+
+  /**
+   * Deja solo las Evaluaciones del Mandante indicado: nunca se reutiliza
+   * una Evaluación de otro Mandante (los Requerimientos son por Mandante;
+   * este filtro lo garantiza aunque coincidiera el requerimientoId).
+   * @param {Object[]} evaluaciones Evaluaciones candidatas.
+   * @param {string} mandanteId Mandante del Expediente destino.
+   * @return {Object[]} Evaluaciones de ese Mandante.
+   */
+  _delMandante(evaluaciones, mandanteId) {
+    return evaluaciones.filter((e) => e.mandanteId === mandanteId);
   }
 
   /**
@@ -113,16 +128,18 @@ class ReutilizacionDocumentalService {
    * @param {Object[]} requerimientos Requerimientos de nivel "persona"
    *     aplicables al Expediente destino.
    * @param {Date} fechaInicioNueva Fecha de inicio de la nueva asignación.
+   * @param {string} mandanteId Mandante del Expediente destino.
    * @return {Promise<Object[]>} Evaluaciones originales reutilizables.
    */
   async buscarReutilizablesPersona(
-      personaId, requerimientos, fechaInicioNueva,
+      personaId, requerimientos, fechaInicioNueva, mandanteId,
   ) {
-    if (requerimientos.length === 0) return [];
+    if (requerimientos.length === 0 || !mandanteId) return [];
     const evaluaciones =
         await evaluacionRepository.getVigentesByPersona(personaId);
     return this.filtrarReutilizables(
-        evaluaciones, requerimientos, fechaInicioNueva,
+        this._delMandante(evaluaciones, mandanteId), requerimientos,
+        fechaInicioNueva,
     );
   }
 
@@ -133,57 +150,60 @@ class ReutilizacionDocumentalService {
    * @param {Object[]} requerimientos Requerimientos de tipo "recurso"
    *     aplicables al Expediente destino.
    * @param {Date} fechaInicioNueva Fecha de inicio de la nueva asignación.
+   * @param {string} mandanteId Mandante del Expediente destino.
    * @return {Promise<Object[]>} Evaluaciones originales reutilizables.
    */
   async buscarReutilizablesRecurso(
-      recursoId, requerimientos, fechaInicioNueva,
+      recursoId, requerimientos, fechaInicioNueva, mandanteId,
   ) {
-    if (requerimientos.length === 0) return [];
+    if (requerimientos.length === 0 || !mandanteId) return [];
     const evaluaciones =
         await evaluacionRepository.getVigentesByRecurso(recursoId);
     return this.filtrarReutilizables(
-        evaluaciones, requerimientos, fechaInicioNueva,
+        this._delMandante(evaluaciones, mandanteId), requerimientos,
+        fechaInicioNueva,
     );
   }
 
   /**
-   * Encola, dentro de una transacción ya abierta, la creación de una
-   * Evaluación "reutilizada" por cada Evaluación original reutilizable,
-   * apuntando al nuevo Expediente. `modalidad: "reutilizada"` es un valor
-   * nuevo junto al ya existente `"manual"` (evaluacionService.js) — deja
-   * trazabilidad de que no fue evaluada manualmente esta vez.
-   * @param {FirebaseFirestore.Transaction} transaction Transacción activa.
-   * @param {FirebaseFirestore.DocumentReference[]} refs Referencias
-   *     pre-generadas, una por cada entrada de `reutilizables`.
-   * @param {Object[]} reutilizables Evaluaciones originales a reutilizar.
-   * @param {{expedienteId: string, mandanteId: ?string, actor: Object,
-   *     creadoPorNombre: string}} contexto Datos del nuevo Expediente y
-   *     del actor que ejecuta la operación.
-   * @return {void}
+   * Datos de una Evaluación "reutilizada": copia de la Evaluación original
+   * (solo la evaluación, sin enlazar su evidencia) apuntando a la instancia
+   * del nuevo Expediente. `modalidad: "reutilizada"` y
+   * `evaluacionOrigenId` dejan la trazabilidad de que no se evaluó
+   * manualmente esta vez. Quien la escribe (lote o transacción) actualiza
+   * en la misma escritura la instancia y los contadores del Expediente.
+   * @param {Object} original Evaluación original reutilizable.
+   * @param {{expedienteId: string, expedienteRequerimientoId: string,
+   *     mandanteId: ?string, actor: Object, creadoPorNombre: string}}
+   *     contexto Instancia destino y actor.
+   * @return {Object} Datos de la Evaluación a crear.
    */
-  registrarReutilizadas(transaction, refs, reutilizables, {
-    expedienteId, mandanteId, actor, creadoPorNombre,
+  datosReutilizada(original, {
+    expedienteId, expedienteRequerimientoId, mandanteId, actor,
+    creadoPorNombre,
   }) {
-    reutilizables.forEach((original, i) => {
-      transaction.set(refs[i], {
-        expedienteId,
-        requerimientoId: original.requerimientoId,
-        mandanteId,
-        personaId: original.personaId || null,
-        recursoId: original.recursoId || null,
-        fechaVencimiento: original.fechaVencimiento || null,
-        resultado: "cumple",
-        modalidad: "reutilizada",
-        metodoVerificacion: original.metodoVerificacion || null,
-        observaciones:
-            `Reutilizada automáticamente desde la Evaluación ${original.id} ` +
-            `(Expediente ${original.expedienteId}).`,
-        evaluadorId: actor.uid,
-        evaluadorNombre: creadoPorNombre,
-        estado: "vigente",
-        createdAt: FieldValue.serverTimestamp(),
-      });
-    });
+    return {
+      expedienteId,
+      expedienteRequerimientoId,
+      evaluacionOrigenId: original.id,
+      requerimientoId: original.requerimientoId,
+      empresaId: original.empresaId || null,
+      mandanteId,
+      personaId: original.personaId || null,
+      recursoId: original.recursoId || null,
+      fechaVencimiento: original.fechaVencimiento || null,
+      resultado: "cumple",
+      modalidad: "reutilizada",
+      metodoVerificacion: original.metodoVerificacion || null,
+      observaciones:
+          `Reutilizada automáticamente desde la Evaluación ${original.id} ` +
+          `(Expediente ${original.expedienteId}).`,
+      evaluadorId: actor.uid,
+      evaluadorNombre: creadoPorNombre,
+      estado: "vigente",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
   }
 }
 

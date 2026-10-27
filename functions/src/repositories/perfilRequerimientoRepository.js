@@ -85,6 +85,29 @@ class PerfilRequerimientoRepository {
     if (crear.length || actualizar.length) await batch.commit();
     return creados;
   }
+
+  /**
+   * Escribe altas y actualizaciones de vínculos DENTRO de una transacción
+   * ajena (el guardado atómico de un Requerimiento con su aplicabilidad).
+   * @param {FirebaseFirestore.Transaction} tx Transacción en curso.
+   * @param {{crear: Object[], actualizar: {id: string, data: Object}[]}}
+   *     cambios Documentos a crear y actualizaciones por ID.
+   * @return {void}
+   */
+  escribirCambiosEn(tx, {crear = [], actualizar = []}) {
+    const now = FieldValue.serverTimestamp();
+    crear.forEach((data) => {
+      tx.set(
+          db.collection(COLLECTION).doc(),
+          {...data, createdAt: now, updatedAt: now},
+      );
+    });
+    actualizar.forEach(({id, data}) => {
+      tx.update(
+          db.collection(COLLECTION).doc(id), {...data, updatedAt: now},
+      );
+    });
+  }
   /**
    * Obtiene un vínculo por su ID.
    * @param {string} id ID del documento.

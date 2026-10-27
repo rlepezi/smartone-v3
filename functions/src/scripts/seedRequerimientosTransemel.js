@@ -47,19 +47,16 @@ if (!admin.apps.length) {
 }
 
 const requerimientoService = require("../services/requerimientoService");
-const perfilRequerimientoService =
-    require("../services/perfilRequerimientoService");
 
 const mandanteRepository = require("../repositories/mandanteRepository");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
+const {normalizarNombre} = require("../utils/nombreRequerimiento");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
 const requerimientoRepository =
     require("../repositories/requerimientoRepository");
-const perfilRequerimientoRepository =
-    require("../repositories/perfilRequerimientoRepository");
 
 const ACTOR_FALSO = {
   rol: "superadmin",
@@ -430,70 +427,47 @@ function datosRequerimientos() {
 }
 
 /**
- * Paso 1: crea (o reutiliza) los 38 Requerimientos de Transemel.
- * @return {Promise<Object[]>} [{requerimiento, perfilRecurso}] con el
- *     Requerimiento creado o ya existente.
+ * Crea (o reutiliza) los 38 Requerimientos de Transemel, cada uno junto
+ * con su vínculo al Perfil "Temporal" — para "Todos" o para el Perfil de
+ * Recurso indicado — en una sola transacción
+ * (requerimientoService.crearRequerimiento).
+ * @param {Object} perfil Perfil de Participación "Temporal" ya resuelto.
+ * @param {string} mandanteId ID del Mandante Transemel.
+ * @return {Promise<void>}
  */
-async function seedRequerimientos() {
-  log("\n[1/2] Requerimientos de Transemel");
+async function seedRequerimientos(perfil, mandanteId) {
+  log(`\n[1/1] Requerimientos de Transemel ("${perfil.nombre}")`);
   const datos = datosRequerimientos();
+  const existentes = await requerimientoRepository.list({mandanteId});
+  const idsPerfilRecurso = {};
 
-  const resultado = [];
   for (const d of datos) {
-    const item = await seedItem(
-        "Requerimiento", `${d.nombreCorto} (${d.tipoEntidad})`,
-        () => requerimientoRepository.getByNombreYTipo(
-            d.nombre, d.tipoEntidad,
-        ),
+    let perfilRecursoIds = null;
+    if (d.perfilRecurso) {
+      const clave = `${d.tipoEntidad}|${d.perfilRecurso}`;
+      if (!(clave in idsPerfilRecurso)) {
+        idsPerfilRecurso[clave] = await resolverPerfilRecurso(
+            mandanteId, d.tipoEntidad, d.perfilRecurso,
+        );
+      }
+      perfilRecursoIds = [idsPerfilRecurso[clave]];
+    }
+    await seedItem(
+        "Requerimiento",
+        `${d.nombreCorto} (${d.tipoEntidad}, ${d.perfilRecurso || "Todos"})`,
+        async () => existentes.find((r) =>
+          r.tipoEntidad === d.tipoEntidad &&
+          normalizarNombre(r.nombre) === normalizarNombre(d.nombre)) || null,
         () => requerimientoService.crearRequerimiento({
+          mandanteId,
           nombre: d.nombre,
           nombreCorto: d.nombreCorto,
           descripcion: d.descripcion || null,
           tipoEntidad: d.tipoEntidad,
           requiereVencimiento: Boolean(d.requiereVencimiento),
-          estado: "activo",
-        }),
-    );
-    if (item) {
-      resultado.push({requerimiento: item, perfilRecurso: d.perfilRecurso});
-    }
-  }
-  return resultado;
-}
-
-/**
- * Paso 2: vincula cada Requerimiento al Perfil "Temporal" de Transemel,
- * para "Todos" o para el Perfil de Recurso indicado.
- * @param {Object[]} items [{requerimiento, perfilRecurso}].
- * @param {Object} perfil Perfil de Participación "Temporal" ya resuelto.
- * @param {string} mandanteId ID del Mandante Transemel.
- * @return {Promise<void>}
- */
-async function seedVinculos(items, perfil, mandanteId) {
-  log(`\n[2/2] Vínculos Perfil-Requerimiento ("${perfil.nombre}")`);
-  const idsPerfilRecurso = {};
-  for (const {requerimiento, perfilRecurso} of items) {
-    let perfilRecursoId = null;
-    if (perfilRecurso) {
-      const clave = `${requerimiento.tipoEntidad}|${perfilRecurso}`;
-      if (!(clave in idsPerfilRecurso)) {
-        idsPerfilRecurso[clave] = await resolverPerfilRecurso(
-            mandanteId, requerimiento.tipoEntidad, perfilRecurso,
-        );
-      }
-      perfilRecursoId = idsPerfilRecurso[clave];
-    }
-    await seedItem(
-        "PerfilRequerimiento",
-        `${perfil.nombre} ↔ ${requerimiento.nombreCorto} ` +
-        `(${perfilRecurso || "Todos"})`,
-        () => perfilRequerimientoRepository.getByCombinacion(
-            perfil.id, requerimiento.id, perfilRecursoId,
-        ),
-        () => perfilRequerimientoService.crearVinculo({
-          perfilParticipacionId: perfil.id,
-          requerimientoId: requerimiento.id,
-          perfilRecursoId,
+          aplicabilidad: {
+            perfilParticipacionIds: [perfil.id], perfilRecursoIds,
+          },
         }, ACTOR_FALSO),
     );
   }
@@ -545,8 +519,7 @@ async function main() {
   const mandante = await resolverMandanteTransemel();
   const perfil = await resolverPerfilTemporal(mandante.id);
 
-  const items = await seedRequerimientos();
-  await seedVinculos(items, perfil, mandante.id);
+  await seedRequerimientos(perfil, mandante.id);
 
   imprimirResumen();
 }

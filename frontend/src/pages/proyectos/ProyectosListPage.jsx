@@ -7,13 +7,14 @@ import {
   ChevronRight, ChevronDown, Users, Truck, Building2,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-import { proyectoService, ESTADOS_PROYECTO } from "../../services/proyectoService";
+import { proyectoService, ESTADOS_PROYECTO, textoCierreExpedientes } from "../../services/proyectoService";
+import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
 import { mandanteService } from "../../services/mandanteService";
 import { sujetoService } from "../../services/participacionSujetoService";
 import { participacionService } from "../../services/participacionService";
 import { reporteService } from "../../services/reporteService";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { FilterBar } from "../../components/shared/FilterBar";
@@ -95,6 +96,8 @@ export const ProyectosListPage = () => {
   const [filtroProyecto, setFiltroProyecto] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [archivandoId, setArchivandoId] = useState(null);
+  // Confirmación de archivar: { id, cantidad } (cantidad = Expedientes que se cerrarán).
+  const [confirmarArchivo, setConfirmarArchivo] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [vista, setVista] = useState("lista");
@@ -234,9 +237,16 @@ export const ProyectosListPage = () => {
   }, [mostrarColumnaMandante, idsDistintosKey]);
 
   const handleArchivar = async (id) => {
-    if (!window.confirm("¿Archivar este proyecto? Esta acción no se puede deshacer.")) {
-      return;
+    try {
+      const cantidad = await proyectoService.expedientesAbiertos(id);
+      setConfirmarArchivo({ id, cantidad });
+    } catch (err) {
+      setError(err.message || "No se pudo consultar los expedientes del proyecto.");
     }
+  };
+
+  const archivar = async (id) => {
+    setConfirmarArchivo(null);
     setArchivandoId(id);
     try {
       await proyectoService.archivar(id);
@@ -361,6 +371,16 @@ export const ProyectosListPage = () => {
 
   return (
     <div className="space-y-6">
+      {confirmarArchivo && (
+        <ConfirmacionModal
+          peligro
+          titulo="¿Archivar este proyecto?"
+          mensaje={`Esta acción no se puede deshacer. ${textoCierreExpedientes(confirmarArchivo.cantidad)}`}
+          textoConfirmar="Archivar"
+          onCancelar={() => setConfirmarArchivo(null)}
+          onConfirmar={() => archivar(confirmarArchivo.id)}
+        />
+      )}
       {esRolMandanteUnico && (
         <MandanteChip nombre={miMandanteNombre || "Tu Mandante"} logoUrl={miMandanteLogoUrl} size="lg" />
       )}
@@ -427,15 +447,6 @@ export const ProyectosListPage = () => {
             onSearchChange={setSearchTerm}
             searchPlaceholder="Buscar por nombre o código..."
             filters={[
-              {
-                label: "Estado",
-                value: filtroEstado,
-                onChange: setFiltroEstado,
-                options: [
-                  { value: "", label: "Todos los estados" },
-                  ...ESTADOS_PROYECTO.map((e) => ({ value: e.value, label: e.label })),
-                ],
-              },
               ...(mostrarColumnaMandante ? [{
                 label: "Mandante",
                 value: filtroMandante,
@@ -455,6 +466,15 @@ export const ProyectosListPage = () => {
                   ...proyectos
                     .filter((p) => !filtroMandante || p.mandanteId === filtroMandante)
                     .map((p) => ({ value: p.id, label: p.nombre })),
+                ],
+              },
+              {
+                label: "Estado",
+                value: filtroEstado,
+                onChange: setFiltroEstado,
+                options: [
+                  { value: "", label: "Todos los estados" },
+                  ...ESTADOS_PROYECTO.map((e) => ({ value: e.value, label: e.label })),
                 ],
               },
             ]}

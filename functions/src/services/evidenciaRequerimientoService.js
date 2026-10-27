@@ -2,6 +2,8 @@ const evidenciaRequerimientoRepository =
     require("../repositories/evidenciaRequerimientoRepository");
 const evidenciaRepository = require("../repositories/evidenciaRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
+const expedienteRequerimientoRepository =
+    require("../repositories/expedienteRequerimientoRepository");
 const AppError = require("../utils/AppError");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
@@ -65,20 +67,23 @@ class EvidenciaRequerimientoService {
   }
 
   /**
-   * Crea un nuevo vínculo entre una Evidencia y un Requerimiento aplicable
-   * al Expediente de esa Evidencia.
-   * @param {Object} payload Datos del nuevo vínculo.
+   * Crea un nuevo vínculo entre una Evidencia y una instancia de
+   * Requerimiento (expedienteRequerimientoId) de su mismo Expediente y del
+   * mismo sujeto: la evidencia de una Persona nunca respalda la exigencia
+   * de otra. Se rechaza sobre un Expediente cerrado o en generación, o una
+   * instancia retirada.
+   * @param {Object} payload evidenciaId y expedienteRequerimientoId.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
    * @return {Promise<Object>} El vínculo creado.
    */
   async crearVinculo(payload, actor) {
-    const {evidenciaId, requerimientoId} = payload;
+    const {evidenciaId, expedienteRequerimientoId} = payload;
 
-    if (!evidenciaId || !requerimientoId) {
+    if (!evidenciaId || !expedienteRequerimientoId) {
       throw new AppError(
           400,
           "Faltan campos obligatorios: 'evidenciaId' y " +
-          "'requerimientoId' son requeridos.",
+          "'expedienteRequerimientoId' son requeridos.",
       );
     }
 
@@ -99,23 +104,39 @@ class EvidenciaRequerimientoService {
       );
     }
 
-    const expedienteId = evidencia.expedienteId;
-    const expediente = await expedienteRepository.getById(expedienteId);
-    if (!expediente) {
-      throw new AppError(400, "El Expediente asociado no existe.");
-    }
-
-    const aplicable = (expediente.requerimientosAplicables || [])
-        .some((r) => r.requerimientoId === requerimientoId);
-    if (!aplicable) {
+    const instancia = await expedienteRequerimientoRepository.getById(
+        expedienteRequerimientoId,
+    );
+    if (!instancia || instancia.expedienteId !== evidencia.expedienteId) {
       throw new AppError(
           400,
-          "El Requerimiento indicado no aplica a este Expediente.",
+          "El Requerimiento indicado no pertenece al Expediente de la " +
+          "Evidencia.",
+      );
+    }
+    const mismoSujeto =
+        (evidencia.personaId || null) === (instancia.personaId || null) &&
+        (evidencia.recursoId || null) === (instancia.recursoId || null);
+    if (!mismoSujeto) {
+      throw new AppError(
+          400,
+          "La Evidencia es de otro sujeto: no puede respaldar este " +
+          "Requerimiento.",
       );
     }
 
+    const expediente = await expedienteRepository.getById(
+        instancia.expedienteId,
+    );
+    if (!expediente) {
+      throw new AppError(400, "El Expediente asociado no existe.");
+    }
+    require("./evaluacionService").exigirInstanciaEvaluable(
+        expediente, instancia,
+    );
+
     const existente = await evidenciaRequerimientoRepository
-        .getByEvidenciaYRequerimiento(evidenciaId, requerimientoId);
+        .getByEvidenciaEInstancia(evidenciaId, expedienteRequerimientoId);
     if (existente) {
       throw new AppError(
           409,
@@ -123,15 +144,13 @@ class EvidenciaRequerimientoService {
       );
     }
 
-    const nuevoVinculo = {
+    return await evidenciaRequerimientoRepository.create({
       evidenciaId,
-      requerimientoId,
-      expedienteId,
+      expedienteRequerimientoId,
+      expedienteId: instancia.expedienteId,
       mandanteId: evidencia.mandanteId,
       estado: "activo",
-    };
-
-    return await evidenciaRequerimientoRepository.create(nuevoVinculo);
+    });
   }
 
   /**

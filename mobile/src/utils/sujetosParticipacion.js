@@ -1,7 +1,6 @@
 // Agrupa documentos de participacionPersonas / participacionRecursos en
 // "sujetos": uno por Persona o Maquinaria dentro de cada Participación, con
-// el conjunto de sus perfilRecursoId (forma que espera
-// utils/aplicabilidadRequerimiento.js). Mismo criterio que el frontend web.
+// el conjunto de sus perfilRecursoId. Mismo criterio que el frontend web.
 export const agruparSujetos = (docsPersonas = [], docsRecursos = []) => {
   const porClave = new Map();
   const agregar = (doc, tipoEntidad) => {

@@ -1,6 +1,7 @@
 import React from "react";
 import { AlertTriangle, History } from "lucide-react";
-import { formatFecha } from "../../../utils/fechaFormatters";
+import { formatFecha } from "../../../utils/fechas";
+import { DateInput } from "../../../components/ui/DateInput";
 
 // Paso 4 del wizard: fechas de la nueva participación/asignación, más el
 // contexto de lo que se va a cerrar (Participación/Asignación activa más
@@ -53,8 +54,7 @@ export const PasoParticipacionFechas = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl">
         <div>
           <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-          <input
-            type="date"
+          <DateInput
             value={fechaInicio}
             onChange={(e) => onFechaInicioChange(e.target.value)}
             className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
@@ -62,8 +62,7 @@ export const PasoParticipacionFechas = ({
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Término (opcional)</label>
-          <input
-            type="date"
+          <DateInput
             value={fechaFin}
             min={fechaInicio || undefined}
             onChange={(e) => onFechaFinChange(e.target.value)}

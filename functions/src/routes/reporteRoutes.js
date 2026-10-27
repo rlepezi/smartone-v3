@@ -13,6 +13,8 @@ const ROLES_LECTURA = [
 ];
 
 router.get("/resumen", requireRole(ROLES_LECTURA), reporteController.resumen);
+// Panel de la página de Reportes (todas las secciones en una respuesta).
+router.get("/panel", requireRole(ROLES_LECTURA), reporteController.panel);
 router.get("/detalle", requireRole(ROLES_LECTURA), reporteController.detalle);
 router.get(
     "/proyectos/:proyectoId/participantes",

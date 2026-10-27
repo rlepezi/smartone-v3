@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate, useParams } from "react-router-dom";
 import { IdCard, ArrowLeft, AlertCircle } from "lucide-react";
@@ -6,6 +6,8 @@ import { useAuth } from "../../contexts/AuthContext";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { mandanteService } from "../../services/mandanteService";
 import { MandanteChip } from "../../components/shared/MandanteChip";
+import { CampoMandante } from "../../components/shared/CampoMandante";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
 
@@ -13,9 +15,11 @@ export const PerfilParticipacionFormPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const { profile } = useAuth();
-  const actorMandanteId = profile?.mandanteId || null;
-  const esMandanteAdmin = profile?.rol === "mandante_admin";
   const esEdicion = Boolean(id);
+  // Mandante del perfil nuevo: fijo, único o elegido (solo en alta).
+  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
+  const sinSelectorMandante = contextoMandante.modo !== "seleccionable";
+  const nombreRef = useRef(null);
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
   const volverA = esEdicion ? `/perfiles-participacion/${id}` : "/perfiles-participacion";
 
@@ -23,38 +27,15 @@ export const PerfilParticipacionFormPage = () => {
     nombre: "",
     descripcion: "",
     notaAyuda: "",
-    mandanteId: esMandanteAdmin ? actorMandanteId || "" : "",
+    mandanteId: "",
   });
 
   const [mandanteNombre, setMandanteNombre] = useState("");
   const [mandanteLogoUrl, setMandanteLogoUrl] = useState(null);
-  const [actorMandanteNombre, setActorMandanteNombre] = useState("");
-  const [actorMandanteLogoUrl, setActorMandanteLogoUrl] = useState(null);
-  const [mandantesActivos, setMandantesActivos] = useState([]);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
   const [serverError, setServerError] = useState(null);
-
-  useEffect(() => {
-    if (!esMandanteAdmin && !esEdicion) {
-      mandanteService
-        .listar("activo")
-        .then((data) => setMandantesActivos(data || []))
-        .catch((err) => console.error("Error al cargar mandantes:", err));
-    }
-  }, [esMandanteAdmin, esEdicion]);
-
-  useEffect(() => {
-    if (!esMandanteAdmin || esEdicion || !actorMandanteId) return;
-    mandanteService
-      .obtenerPorId(actorMandanteId)
-      .then((data) => {
-        setActorMandanteNombre(getMandanteDisplayName(data) || actorMandanteId);
-        setActorMandanteLogoUrl(data?.logoUrl || null);
-      })
-      .catch(() => setActorMandanteNombre(actorMandanteId));
-  }, [esMandanteAdmin, esEdicion, actorMandanteId]);
 
   useEffect(() => {
     if (!esEdicion) return;
@@ -90,7 +71,7 @@ export const PerfilParticipacionFormPage = () => {
   const validateForm = () => {
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
-    if (!esEdicion && !esMandanteAdmin && !formData.mandanteId) {
+    if (!esEdicion && !contextoMandante.mandanteId) {
       newErrors.mandanteId = "Debe seleccionar un Mandante.";
     }
     setErrors(newErrors);
@@ -107,7 +88,7 @@ export const PerfilParticipacionFormPage = () => {
       nombre: formData.nombre.trim(),
       descripcion: formData.descripcion.trim() || null,
       notaAyuda: formData.notaAyuda.trim() || null,
-      mandanteId: esMandanteAdmin ? actorMandanteId : formData.mandanteId,
+      mandanteId: contextoMandante.mandanteId,
     };
 
     try {
@@ -175,43 +156,30 @@ export const PerfilParticipacionFormPage = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mandante *</label>
-              {esEdicion ? (
-                <>
-                  <div className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed flex items-center">
-                    <MandanteChip nombre={mandanteNombre} logoUrl={mandanteLogoUrl} />
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">El Mandante no puede modificarse después de creado.</p>
-                </>
-              ) : esMandanteAdmin ? (
+            {esEdicion ? (
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Mandante *</label>
                 <div className="w-full px-3.5 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-sm text-gray-500 cursor-not-allowed flex items-center">
-                  <MandanteChip nombre={actorMandanteNombre || ""} logoUrl={actorMandanteLogoUrl} />
+                  <MandanteChip nombre={mandanteNombre} logoUrl={mandanteLogoUrl} />
                 </div>
-              ) : (
-                <>
-                  <select
-                    name="mandanteId"
-                    value={formData.mandanteId}
-                    onChange={handleChange}
-                    autoFocus
-                    className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
-                      errors.mandanteId ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                    }`}
-                  >
-                    <option value="">Seleccione un Mandante...</option>
-                    {mandantesActivos.map((m) => (
-                      <option key={m.id} value={m.id}>{getMandanteDisplayName(m)}</option>
-                    ))}
-                  </select>
-                  {errors.mandanteId && <p className="text-xs text-red-500 mt-1">{errors.mandanteId}</p>}
-                </>
-              )}
-            </div>
+                <p className="text-[11px] text-slate-400 mt-1">El Mandante no puede modificarse después de creado.</p>
+              </div>
+            ) : (
+              <div className={sinSelectorMandante ? "md:col-span-2" : ""}>
+                <CampoMandante
+                  contexto={contextoMandante}
+                  error={errors.mandanteId}
+                  focoRef={nombreRef}
+                  onChange={() => setErrors((prev) => ({ ...prev, mandanteId: null }))}
+                />
+              </div>
+            )}
 
-            <div>
+            {/* Sin selector de Mandante, el nombre ocupa la fila completa (no queda un hueco). */}
+            <div className={!esEdicion && sinSelectorMandante ? "md:col-span-2" : ""}>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Nombre *</label>
               <input
+                ref={nombreRef}
                 type="text"
                 name="nombre"
                 value={formData.nombre}
@@ -267,7 +235,7 @@ export const PerfilParticipacionFormPage = () => {
           {puedeEscribir && (
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (!esEdicion && !contextoMandante.modo) || contextoMandante.modo === "ninguno"}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {loading ? "Guardando..." : "Guardar Perfil"}

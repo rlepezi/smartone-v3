@@ -12,15 +12,19 @@ import { CambiarEmpresaRecursoModal } from "../recursos/CambiarEmpresaRecursoMod
 import { CambiarProyectoModal } from "../shared/CambiarProyectoModal";
 import { MandanteChip } from "../shared/MandanteChip";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
+import { CampoMandante } from "../shared/CampoMandante";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { OpcionesRadio } from "../shared/OpcionesRadio";
+import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SUGERENCIAS_TIPO_RELACION_RECURSO } from "../../utils/sugerenciasRelacionLaboral";
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
 const OTRO_SENTINEL = "__otro__";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 
 // Formulario de datos identitarios (crear / editar). Se usa en dos lugares:
 //   - RecursoFormPage: solo para CREAR (pantalla propia).
@@ -53,6 +57,13 @@ export const RecursoEdicionForm = ({
   const [tiposDisponibles, setTiposDisponibles] = useState([]);
   const [tipoPersonalizado, setTipoPersonalizado] = useState("");
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
+  // Mandante en contexto (alta): con uno solo, o con el propio del rol, viene asignado igual que en
+  // Nueva Empresa; con varios se elige. Acota las Empresas a las asociadas a ese Mandante.
+  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
+  const mandanteFiltro = contextoMandante.mandanteId;
+  const empresasDelMandante = mandanteFiltro
+    ? empresasOpciones.filter((e) => (e.mandanteIds || []).includes(mandanteFiltro))
+    : empresasOpciones;
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
@@ -182,7 +193,7 @@ export const RecursoEdicionForm = ({
   const validateForm = () => {
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
-    if (!formData.tipo) newErrors.tipo = "El tipo es obligatorio.";
+    if (!formData.tipo) newErrors.tipo = "El tipo de maquinaria es obligatorio.";
     if (usaTipoPersonalizado && !tipoPersonalizado.trim()) {
       newErrors.tipoPersonalizado = "Debe especificar el tipo.";
     }
@@ -301,6 +312,13 @@ export const RecursoEdicionForm = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
+                <CampoMandante
+                  contexto={contextoMandante}
+                  conFoco={false}
+                  onChange={() => elegirCampo("empresaId", "")}
+                />
+              </div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
                 <SelectConBusqueda
                   bloque
@@ -313,12 +331,15 @@ export const RecursoEdicionForm = ({
                   placeholder="Buscar por nombre o RUT..."
                   options={[
                     { value: "", label: "Seleccione una Empresa..." },
-                    ...empresasOpciones.map((e) => ({
+                    ...empresasDelMandante.map((e) => ({
                       value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
                     })),
                   ]}
                 />
                 {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+                {mandanteFiltro && empresasOpciones.length > 0 && empresasDelMandante.length === 0 && (
+                  <p className="text-[11px] font-semibold text-amber-700 mt-1">No hay Empresas asociadas a este Mandante.</p>
+                )}
               </div>
 
               <div>
@@ -340,8 +361,7 @@ export const RecursoEdicionForm = ({
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-                <input
-                  type="date"
+                <DateInput
                   name="fechaInicio"
                   value={formData.fechaInicio}
                   onChange={handleChange}
@@ -380,7 +400,7 @@ export const RecursoEdicionForm = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de maquinaria *</label>
               <select
                 name="tipo"
                 value={formData.tipo}
@@ -405,6 +425,7 @@ export const RecursoEdicionForm = ({
                 <option value={OTRO_SENTINEL}>+ Otro (especificar)</option>
               </select>
               {errors.tipo && <p className="text-xs text-red-500 mt-1">{errors.tipo}</p>}
+              <p className="text-[11px] text-slate-400 mt-1">Se usa para sugerir la clasificación al asignarla a un proyecto.</p>
               {usaTipoPersonalizado && (
                 <div className="mt-2">
                   <input
@@ -430,16 +451,14 @@ export const RecursoEdicionForm = ({
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Estado</label>
-              <select
+              <OpcionesRadio
                 name="estado"
                 value={formData.estado}
                 onChange={handleChange}
                 disabled={!puedeEscribir}
-                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-              >
-                <option value="activo">Activo</option>
-                <option value="inactivo">Inactivo</option>
-              </select>
+                opciones={OPCIONES_ACTIVO_INACTIVO}
+                ariaLabel="Estado"
+              />
             </div>
 
             {esEdicion && !enDetalle && mandanteActual && (

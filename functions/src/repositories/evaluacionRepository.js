@@ -2,6 +2,12 @@ const admin = require("firebase-admin");
 
 const db = admin.firestore();
 const COLLECTION = "evaluaciones";
+// Campos que usa el panel de Reportes.
+const CAMPOS_REPORTE = [
+  "expedienteId", "expedienteRequerimientoId", "requerimientoId",
+  "empresaId", "personaId", "recursoId", "resultado", "modalidad", "estado",
+  "createdAt",
+];
 
 /**
  * Acceso a datos de Firestore para el recurso Evaluación. Colección
@@ -26,13 +32,15 @@ class EvaluacionRepository {
    * compuesto — el filtro por estado y el orden por fecha se resuelven
    * en memoria en el service.
    * @param {string} expedienteId ID del Expediente.
+   * @param {?{campo: string, valor: string}} [sujeto] Opcional: solo las
+   *     de un sujeto (personaId / recursoId / empresaId).
    * @return {Promise<object[]>} Lista de evaluaciones del Expediente.
    */
-  async getByExpediente(expedienteId) {
-    const snapshot = await db
-        .collection(COLLECTION)
-        .where("expedienteId", "==", expedienteId)
-        .get();
+  async getByExpediente(expedienteId, sujeto = null) {
+    let query = db.collection(COLLECTION)
+        .where("expedienteId", "==", expedienteId);
+    if (sujeto) query = query.where(sujeto.campo, "==", sujeto.valor);
+    const snapshot = await query.get();
 
     return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
   }
@@ -129,6 +137,50 @@ class EvaluacionRepository {
 
     const snapshot = await query.get();
     return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
+   * Evaluaciones creadas en un rango, opcionalmente de un Mandante (panel de
+   * Reportes): una sola consulta, con índice (mandanteId, createdAt desc).
+   * Solo trae los campos que usan los cálculos.
+   * @param {{mandanteId: (string|undefined), desde: (Date|undefined),
+   *     antesDe: (Date|undefined)}} filtros `desde` (>=) y `antesDe` (<).
+   * @return {Promise<object[]>} Evaluaciones.
+   */
+  async listEnRango({mandanteId, desde, antesDe} = {}) {
+    let query = db.collection(COLLECTION);
+    if (mandanteId) query = query.where("mandanteId", "==", mandanteId);
+    if (desde) query = query.where("createdAt", ">=", desde);
+    if (antesDe) query = query.where("createdAt", "<", antesDe);
+    const snapshot = await query.orderBy("createdAt", "desc")
+        .select(...CAMPOS_REPORTE)
+        .get();
+    return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  }
+
+  /**
+   * Evaluaciones de un conjunto de instancias creadas antes de una fecha
+   * (para saber si una instancia ya tenía revisiones antes del período).
+   * Lotes de 30 (límite de `in`), con índice (expedienteRequerimientoId,
+   * createdAt).
+   * @param {string[]} instanciaIds IDs de expedienteRequerimientos.
+   * @param {Date} antesDe Límite (<).
+   * @return {Promise<object[]>} Evaluaciones.
+   */
+  async listDeInstanciasAntesDe(instanciaIds, antesDe) {
+    const unicos = [...new Set((instanciaIds || []).filter(Boolean))];
+    const lotes = [];
+    for (let i = 0; i < unicos.length; i += 30) {
+      lotes.push(unicos.slice(i, i + 30));
+    }
+    const snapshots = await Promise.all(lotes.map((lote) => db
+        .collection(COLLECTION)
+        .where("expedienteRequerimientoId", "in", lote)
+        .where("createdAt", "<", antesDe)
+        .select(...CAMPOS_REPORTE)
+        .get()));
+    return snapshots.flatMap((snapshot) =>
+      snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()})));
   }
 }
 

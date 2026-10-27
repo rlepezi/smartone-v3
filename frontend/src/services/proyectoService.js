@@ -10,6 +10,11 @@ export const ESTADOS_PROYECTO = [
   { value: "archivado", label: "Archivado" },
 ];
 
+// "Se cerrarán N expedientes" (RN-014): aviso al finalizar o archivar un Proyecto.
+export const textoCierreExpedientes = (cantidad) => (cantidad > 0
+  ? `Se cerrarán ${cantidad} ${cantidad === 1 ? "expediente" : "expedientes"} de este proyecto (con su participación y sus personas y maquinarias asignadas).`
+  : "El proyecto no tiene expedientes abiertos.");
+
 export const proyectoService = {
   // `empresaId`: cada Proyecto trae además `participacionEmpresa` (relación vigente de esa Empresa).
   async listar({ mandanteId, estado, empresaId } = {}) {
@@ -43,6 +48,12 @@ export const proyectoService = {
     return res.data;
   },
 
+  // Cantidad de Expedientes no cerrados: se cierran al finalizar o archivar el Proyecto.
+  async expedientesAbiertos(id) {
+    const res = await apiClient(`/proyectos/${id}/expedientes-abiertos`);
+    return res.data?.cantidad ?? 0;
+  },
+
   async archivar(id) {
     const res = await apiClient(`/proyectos/${id}`, {
       method: "DELETE",
@@ -58,12 +69,6 @@ export const proyectoService = {
   async obtenerEventos(id, { limit } = {}) {
     const query = limit ? `?limit=${limit}` : "";
     const res = await apiClient(`/proyectos/${id}/eventos-recientes${query}`);
-    return res.data;
-  },
-
-  async obtenerSiguienteCodigo(mandanteId) {
-    const query = mandanteId ? `?mandanteId=${mandanteId}` : "";
-    const res = await apiClient(`/proyectos/siguiente-codigo${query}`);
     return res.data;
   },
 };

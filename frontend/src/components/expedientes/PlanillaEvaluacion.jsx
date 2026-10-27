@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { OrigenEvaluacion } from "./OrigenEvaluacion";
+import { PropuestaIAPendiente } from "./PropuestaIAPendiente";
+import { revisionExpedienteService } from "../../services/revisionExpedienteService";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -18,22 +21,26 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { participacionService } from "../../services/participacionService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { evidenciaService } from "../../services/evidenciaService";
+import { CLASE_RESALTADO, enfocarElemento } from "../../pages/acreditaciones/asistenteNavegacion";
 import { evidenciaRequerimientoService } from "../../services/evidenciaRequerimientoService";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
-import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 import { formatCatalogo } from "../../utils/formatCatalogo";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha, aFechaISO, hoyISO } from "../../utils/fechas";
 import { formatRutDisplay } from "../../utils/rutFormatters";
-import { calcularConteosEvaluacion } from "../../utils/cumplimientoCalculos";
+import {
+  porcentajeCumplimiento, resumenDeSujeto, resumenVacio, textoPorcentaje,
+} from "../../utils/cumplimientoCalculos";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";
 import { StatusBadge, MAPA_EVALUACION } from "../../components/shared/StatusBadge";
+import { textoVencimiento, CLASE_VENCIMIENTO } from "../../utils/vencimientos";
 import { EstadoCumplimientoPanel } from "../../components/shared/EstadoCumplimientoPanel";
 import { ResumenCumplimientoLista } from "../../components/shared/ResumenCumplimientoLista";
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
+import { DateInput } from "../ui/DateInput";
 
 const OPCIONES_RESULTADO = [
   { value: "cumple", label: "SI" },
@@ -45,7 +52,7 @@ const OPCIONES_RESULTADO = [
 // items-stretch, una lista larga de Personas/Maquinarias (30, 50...) estira las 3 columnas a su
 // propio alto — la tarjeta que manda es "Cumplimiento Documental" (contenido fijo: donut+switch,
 // nunca crece con la cantidad de datos), las otras dos quedan acotadas a lo mismo y scrollean
-// internamente si no alcanza (mismo valor en SelectorRecursoAsignado.jsx, que vive en otro archivo).
+// internamente si no alcanza.
 const ALTURA_MAX_FILA_CUMPLIMIENTO = "max-h-96";
 
 // "Sin Evaluar" (Requerimiento aún sin ninguna Evaluación vigente) no es un resultado de
@@ -57,12 +64,21 @@ const InsigniaSinEvaluar = () => (
   </span>
 );
 
+// Filtros de la tabla de requisitos (cada chip muestra su cantidad):
+//  - Todos: todos los requisitos del sujeto.
+//  - Cumplen: evaluados "Cumple" (aunque su documento esté vencido).
+//  - Pendientes: sin evaluar o evaluados como pendientes — mismo criterio que el resumen.
+//  - No Cumplen: evaluados "No Cumple".
+//  - Vencidos: "Cumple" con fecha de vencimiento ya pasada (solo si el requisito pide fecha).
+//  - Con problemas: todo lo que requiere acción — Pendientes, No Cumplen y Vencidos.
+// "No Aplica" no tiene chip propio: se ve en Todos.
 const CHIPS_FILTRO = [
   { value: "", label: "Todos" },
   { value: "cumple", label: "Cumplen" },
   { value: "pendiente", label: "Pendientes" },
   { value: "no_cumple", label: "No Cumplen" },
-  { value: "sin_evaluar", label: "Sin Evaluar" },
+  { value: "vencidos", label: "Vencidos" },
+  { value: "con_problemas", label: "Con problemas" },
 ];
 
 // Planilla de evaluación de UN sujeto (Empresa, Persona o Maquinaria) dentro de un
@@ -74,7 +90,10 @@ const CHIPS_FILTRO = [
 // "persona"/"recurso" sin id todavía (pestaña activa pero nadie seleccionado/asignado aún), o
 // "ninguno" (estado inicial del Detalle de Expediente, sin ningún tab elegido todavía: no hay
 // sujeto ni tabla de Requisitos, solo el donut genérico y el Resumen con los 3 niveles a la vez).
-// `conteosGenerales`/`sinEvaluarGeneral` y `resumenNiveles` son overrides "genéricos" del donut y
+// Los requisitos son las INSTANCIAS de Requerimiento del sujeto (expedienteRequerimientos): se cargan
+// solo las del sujeto elegido (empresa al abrir; cada persona o maquinaria al seleccionarla), nunca
+// todas las del Expediente; los contadores de cada sujeto vienen en la cabecera del Expediente.
+// `resumenGeneral` y `resumenNiveles` son overrides "genéricos" del donut y
 // del Resumen: si se pasan, esas dos tarjetas dejan de depender del sujeto seleccionado (el
 // Detalle de Expediente los usa para mostrar el total del Expediente y el avance por nivel, sin
 // que cambien al cambiar de pestaña) — sin ellos, ambas tarjetas siguen mostrando lo del sujeto.
@@ -97,17 +116,26 @@ const CHIPS_FILTRO = [
 // Requerimientos" del Detalle de Expediente), el padre incrementa este número para forzar un
 // refresco silencioso acá también. Sin esta prop, el comportamiento es el de siempre (solo carga
 // al montar o al guardar/adjuntar desde la propia Planilla).
+// `vencimientosPorInstancia`: { instanciaId: { clasificacion, dias } } del endpoint de
+// vencimientos del Expediente; cada requisito afectado muestra su badge junto al estado y el
+// filtro "Vencidos" lo usa. `soloInstanciaId`: la tabla muestra solo esa instancia ("Renovar").
+// `itemInicial`: instancia a la que ir al abrir (enlace directo ?item=, p. ej. desde Reportes): se
+// hace scroll, se resalta unos segundos y recibe el foco.
+// `filtroInicial`: filtro de resultado con el que parte la tabla (ej. "con_problemas" desde la
+// alerta de un Expediente en ejecución).
 export const PlanillaEvaluacion = ({
   expedienteId, personaId, recursoId, onVolver, onGuardado, embebido = false,
   mostrarDatosEvaluacion = !embebido, mostrarResumen = false, panelExtra = null,
-  nivel = null, tabsNivel = null, conteosGenerales = null, sinEvaluarGeneral = 0,
+  nivel = null, tabsNivel = null, resumenGeneral = null,
   resumenNiveles = null, personaConocida = null, recursoConocido = null, sujetoConocido = null,
   tituloCumplimiento = "Cumplimiento Documental", navegacionSujeto = null,
-  accionRequisitos = null, recargarSenal = 0,
+  accionRequisitos = null, recargarSenal = 0, filtroInicial = "",
+  vencimientosPorInstancia = null, soloInstanciaId = null, itemInicial = null,
 }) => {
   const { profile } = useAuth();
   const puedeEvaluar = ["superadmin", "evaluador"].includes(profile?.rol);
   const puedeAdjuntarEvidencia = ["superadmin", "mandante_admin"].includes(profile?.rol);
+  const puedeReintentarGeneracion = ["superadmin", "mandante_admin"].includes(profile?.rol);
 
   // Modo: normalmente se infiere de qué parámetro de ruta vino (personaId/recursoId), como en
   // EvaluarExpedientePage/RequerimientosProyecto. El Detalle de Expediente en cambio puede tener
@@ -126,21 +154,31 @@ export const PlanillaEvaluacion = ({
   const [perfilesSujeto, setPerfilesSujeto] = useState([]);
   const perfilesPorId = usePerfilesRecurso();
   const [recurso, setRecurso] = useState(null);
-  const [vigentes, setVigentes] = useState([]);
+  // Instancias de Requerimiento y evaluaciones del sujeto actual, etiquetadas con la clave del
+  // sujeto al que pertenecen (así nunca se muestran las de otro mientras carga el nuevo).
+  const [datosSujeto, setDatosSujeto] = useState({ clave: null, instancias: [], evaluaciones: [] });
+  const [reintentando, setReintentando] = useState(false);
   const [vinculos, setVinculos] = useState([]);
   const [evidencias, setEvidencias] = useState([]);
 
   const [respuestas, setRespuestas] = useState({});
 
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!itemInicial || loading) return undefined;
+    return enfocarElemento(`planilla-item-${itemInicial}`);
+  }, [itemInicial, loading]);
   const [error, setError] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  // Tras un intento de guardar, los campos obligatorios que falten muestran su error en el campo.
+  const [intentoGuardar, setIntentoGuardar] = useState(false);
   const [resultadoGuardado, setResultadoGuardado] = useState(null);
 
   // Búsqueda y filtro por resultado de la tabla (solo afecta qué filas se muestran, no las
   // respuestas en memoria ni el guardado).
   const [busqueda, setBusqueda] = useState("");
-  const [filtroResultado, setFiltroResultado] = useState("");
+  const [filtroResultado, setFiltroResultado] = useState(filtroInicial);
 
   // Adjuntar Evidencia: a diferencia del listado general de Expedientes (que mezcla varios
   // responsables), acá la planilla ya está acotada a UN sujeto — no hace falta elegir a quién
@@ -166,14 +204,13 @@ export const PlanillaEvaluacion = ({
       setExpediente(expedienteData);
 
       const [
-        proyectoData, empresaData, perfilData, participacionData, vigentesData,
+        proyectoData, empresaData, perfilData, participacionData,
         vinculosData, evidenciasData,
       ] = await Promise.all([
         proyectoService.obtenerPorId(expedienteData.proyectoId).catch(() => null),
         empresaService.obtenerPorId(expedienteData.empresaId).catch(() => null),
         perfilParticipacionService.obtenerPorId(expedienteData.perfilParticipacionId).catch(() => null),
         participacionService.obtenerPorId(expedienteData.participacionId).catch(() => null),
-        evaluacionService.listarPorExpediente(expedienteData.id, false).catch(() => []),
         evidenciaRequerimientoService.listarPorExpediente(expedienteData.id).catch(() => []),
         evidenciaService.listar({ expedienteId: expedienteData.id }).catch(() => []),
       ]);
@@ -182,7 +219,6 @@ export const PlanillaEvaluacion = ({
       setEmpresa(empresaData);
       setPerfil(perfilData);
       setParticipacion(participacionData);
-      setVigentes(vigentesData || []);
       setVinculos(vinculosData || []);
       setEvidencias(evidenciasData || []);
     } catch (err) {
@@ -235,39 +271,60 @@ export const PlanillaEvaluacion = ({
     return () => { vigente = false; };
   }, [modo, personaId, recursoId, personaConocida, recursoConocido, sujetoConocido, expediente]);
 
-  const soloLectura = !puedeEvaluar || expediente?.estado === "cerrado";
-  const puedeAdjuntar = puedeAdjuntarEvidencia && expediente?.estado !== "cerrado";
+  // Sujeto actual como filtro de las consultas, y su clave (también la de resumenSujetos).
+  const filtroSujeto = modo === "empresa" ? { empresa: true }
+    : modo === "persona" && personaId ? { personaId }
+      : modo === "recurso" && recursoId ? { recursoId } : null;
+  const claveActual = filtroSujeto ? (personaId && modo === "persona" ? `persona_${personaId}`
+    : recursoId && modo === "recurso" ? `recurso_${recursoId}` : "empresa") : null;
 
-  const items = useMemo(() => {
-    if (!expediente) return [];
-    // Regla única de aplicabilidad (utils/aplicabilidadRequerimiento.js).
-    const sujeto = { tipoEntidad: modo, perfilRecursoIds: perfilesSujeto };
-    return (expediente.requerimientosAplicables || []).filter(
-      (r) => aplicaRequerimientoASujeto(r, sujeto),
-    );
-  }, [expediente, modo, perfilesSujeto]);
+  // Instancias + evaluaciones (vigentes) SOLO del sujeto actual.
+  // Propuestas de Revisiones IA sin resolver: se muestran junto al estado (no son evaluaciones).
+  const cargarSujeto = (filtro, clave) => Promise.all([
+    expedienteService.listarRequerimientos(expedienteId, filtro),
+    evaluacionService.listarPorExpediente(expedienteId, false, filtro),
+    revisionExpedienteService.propuestas(expedienteId).catch(() => []),
+  ]).then(([instancias, evaluaciones, propuestas]) => {
+    setDatosSujeto({
+      clave, instancias: instancias || [], evaluaciones: evaluaciones || [],
+      propuestas: new Map((propuestas || []).map((p) => [p.expedienteRequerimientoId, p])),
+    });
+  }).catch((err) => {
+    console.error("Error al cargar los requisitos del sujeto:", err);
+    setError(err.message || "No se pudieron cargar los requisitos.");
+  });
 
-  // Precarga de "respuestas" (el formulario en memoria) a partir de las evaluaciones vigentes ya
-  // cargadas — puro cálculo en cliente, sin red, así que corre instantáneo cada vez que cambia el
-  // sujeto (items/vigentes ya están en memoria desde cargarBase).
+  useEffect(() => {
+    if (!expediente || !filtroSujeto) return;
+    cargarSujeto(filtroSujeto, claveActual);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expedienteId, claveActual, expediente?.id, recargarSenal]);
+
+  const enGeneracion = expediente?.estadoGeneracion === "en_proceso";
+  const soloLectura = !puedeEvaluar || expediente?.estado === "cerrado" || enGeneracion;
+  const puedeAdjuntar = puedeAdjuntarEvidencia && expediente?.estado !== "cerrado" && !enGeneracion;
+
+  const items = useMemo(
+    () => (datosSujeto.clave === claveActual ? datosSujeto.instancias : []),
+    [datosSujeto, claveActual],
+  );
+  const vigentes = datosSujeto.clave === claveActual ? datosSujeto.evaluaciones : [];
+
+  // Precarga de "respuestas" (el formulario en memoria, por instancia) a partir de la evaluación
+  // vigente de cada instancia — puro cálculo en cliente, sin red.
   useEffect(() => {
     const respuestasIniciales = {};
     items.forEach((r) => {
-      const vigente = vigentes.find((v) =>
-        v.requerimientoId === r.requerimientoId &&
-        (v.personaId || null) === (modo === "persona" ? personaId : null) &&
-        (v.recursoId || null) === (modo === "recurso" ? recursoId : null),
-      );
-      respuestasIniciales[r.requerimientoId] = {
+      const vigente = r.evaluacionVigenteId
+        ? datosSujeto.evaluaciones.find((v) => v.id === r.evaluacionVigenteId) : null;
+      respuestasIniciales[r.id] = {
         resultado: vigente?.resultado || null,
         observaciones: vigente?.observaciones || "",
-        metodoVerificacion: vigente?.metodoVerificacion && vigente.metodoVerificacion !== "documental"
-          ? vigente.metodoVerificacion : "",
-        fechaVencimiento: vigente?.fechaVencimiento ? formatFechaInput(vigente.fechaVencimiento) : "",
+        fechaVencimiento: vigente?.fechaVencimiento ? aFechaISO(vigente.fechaVencimiento) : "",
       };
     });
     setRespuestas(respuestasIniciales);
-  }, [items, vigentes, modo, personaId, recursoId]);
+  }, [items, datosSujeto]);
 
   const handleResultadoChange = (requerimientoId, resultado) => {
     setRespuestas((prev) => ({
@@ -283,13 +340,6 @@ export const PlanillaEvaluacion = ({
     }));
   };
 
-  const handleMetodoChange = (requerimientoId, metodoVerificacion) => {
-    setRespuestas((prev) => ({
-      ...prev,
-      [requerimientoId]: { ...prev[requerimientoId], metodoVerificacion },
-    }));
-  };
-
   const handleFechaVencimientoChange = (requerimientoId, fechaVencimiento) => {
     setRespuestas((prev) => ({
       ...prev,
@@ -297,28 +347,35 @@ export const PlanillaEvaluacion = ({
     }));
   };
 
-  const evidenciaDe = (requerimientoId) => {
-    // Se revisan TODOS los vínculos del Requerimiento (no solo el primero): puede haber una
-    // evidencia por cada Persona/Maquinaria para el mismo Requerimiento.
+  // Evidencia enlazada a ESTA instancia (el enlace ya identifica al sujeto: nunca aparece la de
+  // otra Persona en la misma exigencia).
+  const evidenciaDe = (instanciaId) => {
     const ids = vinculos
-      .filter((v) => v.requerimientoId === requerimientoId && v.estado === "activo")
+      .filter((v) => v.expedienteRequerimientoId === instanciaId && v.estado === "activo")
       .map((v) => v.evidenciaId);
-    return evidencias.find((e) => {
-      if (!ids.includes(e.id)) return false;
-      if (modo === "persona") return e.personaId === personaId;
-      if (modo === "recurso") return e.recursoId === recursoId;
-      return !e.personaId && !e.recursoId;
-    }) || null;
+    return evidencias.find((e) => ids.includes(e.id) && e.estado !== "inactivo") || null;
   };
 
-  const vigenteDe = (requerimientoId) =>
-    vigentes.find((v) =>
-      v.requerimientoId === requerimientoId &&
-      (v.personaId || null) === (modo === "persona" ? personaId : null) &&
-      (v.recursoId || null) === (modo === "recurso" ? recursoId : null),
-    ) || null;
+  const instanciaDe = (instanciaId) => items.find((r) => r.id === instanciaId) || null;
+  // "Cumple" con su fecha de vencimiento ya pasada (misma regla que resumen.vencidos).
+  const estaVencida = (instanciaId) => {
+    if (vencimientosPorInstancia) return vencimientosPorInstancia[instanciaId]?.clasificacion === "vencido";
+    const vigente = vigenteDe(instanciaId);
+    return resultadoDe(instanciaId) === "cumple" && Boolean(instanciaDe(instanciaId)?.requiereVencimiento) &&
+      Boolean(vigente?.fechaVencimiento) &&
+      aFechaISO(vigente.fechaVencimiento) < hoyISO();
+  };
 
-  const resultadoDe = (requerimientoId) => vigenteDe(requerimientoId)?.resultado || "sin_evaluar";
+  const vigenteDe = (instanciaId) => {
+    const instancia = instanciaDe(instanciaId);
+    return instancia?.evaluacionVigenteId
+      ? vigentes.find((v) => v.id === instancia.evaluacionVigenteId) || null : null;
+  };
+
+  const resultadoDe = (instanciaId) => {
+    const instancia = instanciaDe(instanciaId);
+    return instancia?.evaluacionVigenteId ? instancia.resultado : "sin_evaluar";
+  };
 
   // Una fila "modificada" es aquella cuyo resultado, observaciones o fecha
   // de vencimiento difieren de la evaluación vigente de ESTE individuo (o,
@@ -331,37 +388,37 @@ export const PlanillaEvaluacion = ({
     const observacionesActual = (actual.observaciones || "").trim();
     const observacionesVigente = (vigente.observaciones || "").trim();
     const fechaVencimientoVigente = vigente.fechaVencimiento
-      ? formatFechaInput(vigente.fechaVencimiento) : "";
-    // Sin documento adjunto, el método de verificación también cuenta como cambio.
-    const metodoVigente = vigente.metodoVerificacion && vigente.metodoVerificacion !== "documental"
-      ? vigente.metodoVerificacion : "";
-    const cambioMetodo = !evidenciaDe(requerimientoId) && (actual.metodoVerificacion || "") !== metodoVigente;
+      ? aFechaISO(vigente.fechaVencimiento) : "";
     return (
       actual.resultado !== vigente.resultado ||
       observacionesActual !== observacionesVigente ||
-      (actual.fechaVencimiento || "") !== fechaVencimientoVigente ||
-      cambioMetodo
+      (instanciaDe(requerimientoId)?.requiereVencimiento &&
+        (actual.fechaVencimiento || "") !== fechaVencimientoVigente)
     );
   };
 
   const esResuelto = (resultado) => ["cumple", "no_cumple", "no_aplica"].includes(resultado);
 
-  // Evaluar NO exige documentos: sin evidencia adjunta hay que indicar cómo se verificó
-  // (presencial/otro) y dejar una justificación en Observaciones. Devuelve el motivo si falta algo.
-  const motivoInvalido = (requerimientoId) => {
-    const respuesta = respuestas[requerimientoId];
-    if (!esResuelto(respuesta?.resultado) || evidenciaDe(requerimientoId)) return null;
-    if (!respuesta.metodoVerificacion) {
-      return "Sin documento adjunto: indica el método de verificación (Presencial u Otro).";
+  // La evidencia es opcional. Solo un "Cumple" sin documento exige una justificación; un "Cumple"
+  // de un requisito con vencimiento exige la fecha. Devuelve el motivo si falta algo.
+  const motivoInvalido = (instanciaId) => {
+    const respuesta = respuestas[instanciaId];
+    if (respuesta?.resultado !== "cumple") return null;
+    if (instanciaDe(instanciaId)?.requiereVencimiento && !respuesta.fechaVencimiento) {
+      return "Indica la fecha de vencimiento (obligatoria para Cumple).";
     }
+    if (evidenciaDe(instanciaId)) return null;
     if (!(respuesta.observaciones || "").trim()) {
-      return "Sin documento adjunto: la justificación (Observaciones) es obligatoria.";
+      return "Sin documento: la justificación (Observaciones) es obligatoria.";
     }
     return null;
   };
+  const pideJustificacion = (instanciaId) =>
+    respuestas[instanciaId]?.resultado === "cumple" && !evidenciaDe(instanciaId);
 
   const handleGuardar = async () => {
-    const modificadosTodos = items.filter((r) => esModificada(r.requerimientoId));
+    setIntentoGuardar(true);
+    const modificadosTodos = items.filter((r) => esModificada(r.id));
 
     if (modificadosTodos.length === 0) {
       setResultadoGuardado({ guardadas: 0, fallidas: [], sinCambios: true });
@@ -370,9 +427,11 @@ export const PlanillaEvaluacion = ({
 
     // Las filas incompletas se reportan sin llamar a la API; el resto se guarda igual.
     const invalidas = modificadosTodos
-      .map((r) => ({ r, motivo: motivoInvalido(r.requerimientoId) }))
+      .map((r) => ({ r, motivo: motivoInvalido(r.id) }))
       .filter((x) => x.motivo);
-    const modificados = modificadosTodos.filter((r) => !motivoInvalido(r.requerimientoId));
+    const modificados = modificadosTodos.filter((r) => !motivoInvalido(r.id));
+    // Los errores en el campo solo se mantienen mientras quede alguna fila incompleta.
+    setIntentoGuardar(invalidas.length > 0);
 
     setGuardando(true);
     setResultadoGuardado(null);
@@ -380,18 +439,12 @@ export const PlanillaEvaluacion = ({
 
     const resultados = await Promise.allSettled(
       modificados.map((r) => {
-        const respuesta = respuestas[r.requerimientoId];
+        const respuesta = respuestas[r.id];
         const payload = {
-          expedienteId: expediente.id,
-          requerimientoId: r.requerimientoId,
+          expedienteRequerimientoId: r.id,
           resultado: respuesta.resultado,
           observaciones: respuesta.observaciones?.trim() || null,
         };
-        if (esResuelto(respuesta.resultado) && !evidenciaDe(r.requerimientoId)) {
-          payload.metodoVerificacion = respuesta.metodoVerificacion;
-        }
-        if (modo === "persona") payload.personaId = personaId;
-        if (modo === "recurso") payload.recursoId = recursoId;
         if (r.requiereVencimiento && respuesta.fechaVencimiento) {
           payload.fechaVencimiento = respuesta.fechaVencimiento;
         }
@@ -414,8 +467,22 @@ export const PlanillaEvaluacion = ({
 
     setResultadoGuardado({ guardadas, fallidas, sinCambios: false });
     setGuardando(false);
-    if (modificados.length > 0) await cargarBase(true);
+    if (modificados.length > 0) await Promise.all([cargarBase(true), cargarSujeto(filtroSujeto, claveActual)]);
     if (guardadas > 0) onGuardado?.();
+  };
+
+  const reintentarGeneracion = async () => {
+    setReintentando(true);
+    setError(null);
+    try {
+      await expedienteService.reintentarGeneracion(expedienteId);
+      await cargarBase(true);
+      onGuardado?.();
+    } catch (err) {
+      setError(err.message || "No se pudo completar la generación.");
+    } finally {
+      setReintentando(false);
+    }
   };
 
   const abrirAdjuntar = (requerimientoId) => {
@@ -436,12 +503,12 @@ export const PlanillaEvaluacion = ({
       await evidenciaService.subirYVincular({
         expedienteId: expediente.id,
         archivo: archivoAdjunto,
-        requerimientoId: requerimientoAdjuntando,
+        expedienteRequerimientoId: requerimientoAdjuntando,
         personaId: modo === "persona" ? personaId : null,
         recursoId: modo === "recurso" ? recursoId : null,
         fechaVencimiento: fechaVencimientoAdjunto || null,
       });
-      await cargarBase(true);
+      await Promise.all([cargarBase(true), cargarSujeto(filtroSujeto, claveActual)]);
       setRequerimientoAdjuntando(null);
     } catch (err) {
       console.error("Error al adjuntar evidencia:", err);
@@ -467,6 +534,20 @@ export const PlanillaEvaluacion = ({
     );
   }
 
+  const avisoGeneracion = enGeneracion ? (
+    <div className="flex items-center justify-between gap-3 flex-wrap p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+      <span>
+        Este Expediente aún está generando sus Requerimientos: no se puede evaluar ni adjuntar
+        documentos hasta que termine.
+      </span>
+      {puedeReintentarGeneracion && (
+        <ActionButton variant="primary" busy={reintentando} busyLabel="Generando..." onClick={reintentarGeneracion}>
+          Reintentar generación
+        </ActionButton>
+      )}
+    </div>
+  ) : null;
+
   // Sin sujeto concreto sobre el cual calcular nada: el estado inicial ("ninguno", sin tab
   // elegido) o una pestaña Personas/Maquinarias activa pero sin nadie asignado todavía. Se
   // muestra el switch de nivel (para poder elegir un tab) y el panel adicional (que trae su
@@ -480,6 +561,7 @@ export const PlanillaEvaluacion = ({
     return (
       <div className={embebido ? "space-y-4" : "max-w-5xl mx-auto space-y-6"}>
         <ErrorBanner message={error} />
+        {avisoGeneracion}
         {mostrarResumen && (
           // items-stretch (no items-start): las columnas de esta fila siempre quedan a la misma
           // altura — la más alta entre ellas — sin medir nada en JS; cada tarjeta centra su
@@ -491,8 +573,7 @@ export const PlanillaEvaluacion = ({
               </h3>
               <div className="flex-1 min-h-0 flex items-center justify-center py-2">
                 <EstadoCumplimientoPanel
-                  conteos={conteosGenerales || { cumple: 0, no_cumple: 0, pendiente: 0, no_aplica: 0 }}
-                  sinEvaluar={conteosGenerales ? sinEvaluarGeneral : 0}
+                  resumen={resumenGeneral || resumenVacio()}
                   size={130}
                   strokeWidth={13}
                 />
@@ -515,12 +596,13 @@ export const PlanillaEvaluacion = ({
     );
   }
 
-  // vigentes de ESTE sujeto puntual (persona/recurso/empresa) para SUS requisitos aplicables —
-  // a diferencia de una simple coincidencia por requerimientoId, que mezclaría datos de otras
-  // Personas/Maquinarias cuando un mismo Requerimiento aplica a varias.
-  const vigentesDeEsteSujeto = items.map((r) => vigenteDe(r.requerimientoId)).filter(Boolean);
-  const { conteos, avancePct } = calcularConteosEvaluacion(vigentesDeEsteSujeto);
-  const sinEvaluarCount = Math.max(0, items.length - vigentesDeEsteSujeto.length);
+  // Contadores de ESTE sujeto (cabecera del Expediente, mantenidos por el backend).
+  const resumenSujeto = resumenDeSujeto(expediente, {
+    personaId: modo === "persona" ? personaId : null,
+    recursoId: modo === "recurso" ? recursoId : null,
+  }) || resumenVacio();
+  const avancePct = porcentajeCumplimiento(resumenSujeto);
+  const cumplidos = items.filter((r) => r.evaluacionVigenteId && r.resultado === "cumple").length;
 
   const tituloNivel = modo === "empresa" ? "Empresa" : modo === "persona" ? "Persona" : "Maquinaria";
   const nombreSujeto = modo === "persona"
@@ -529,11 +611,24 @@ export const PlanillaEvaluacion = ({
   const tituloResumen = modo === "empresa" ? "Resumen por Empresa" : `Resumen de ${nombreSujeto}`;
   const tituloRequisitos = modo === "empresa" ? "Requisitos - Empresa" : `Requisitos - ${nombreSujeto}`;
 
+  // ¿El requisito entra en el filtro? (ver CHIPS_FILTRO)
+  const cumpleFiltro = (r, filtro) => {
+    const resultado = resultadoDe(r.id);
+    const pendiente = resultado === "pendiente" || resultado === "sin_evaluar";
+    if (!filtro) return true;
+    if (filtro === "pendiente") return pendiente;
+    if (filtro === "vencidos") return estaVencida(r.id);
+    if (filtro === "con_problemas") return pendiente || resultado === "no_cumple" || estaVencida(r.id);
+    return resultado === filtro;
+  };
+  const cantidadPorFiltro = Object.fromEntries(
+    CHIPS_FILTRO.map((chip) => [chip.value, items.filter((r) => cumpleFiltro(r, chip.value)).length]),
+  );
   const itemsFiltradosTabla = items.filter((r) => {
+    if (soloInstanciaId) return r.id === soloInstanciaId;
     const term = busqueda.trim().toLowerCase();
     if (term && !r.nombre.toLowerCase().includes(term)) return false;
-    if (filtroResultado && resultadoDe(r.requerimientoId) !== filtroResultado) return false;
-    return true;
+    return cumpleFiltro(r, filtroResultado);
   });
 
   return (
@@ -574,9 +669,10 @@ export const PlanillaEvaluacion = ({
       )}
 
       <ErrorBanner message={error} />
+      {avisoGeneracion}
 
       {/* Cumplimiento Documental (donut) + selector de recurso (si corresponde) + Resumen.
-          El donut es "genérico" solo si se pasa `conteosGenerales` (estado inicial sin tab del
+          El donut es "genérico" solo si se pasa `resumenGeneral` (estado inicial sin tab del
           Detalle de Expediente, total del Expediente completo); con un tab/sujeto elegido usa sus
           propios conteos, calculados más abajo. items-stretch: las columnas de la fila siempre
           quedan a la misma altura (la más alta), sin medir nada en JS — cada tarjeta centra su
@@ -592,8 +688,7 @@ export const PlanillaEvaluacion = ({
             </h3>
             <div className="flex-1 min-h-0 flex items-center justify-center py-2">
               <EstadoCumplimientoPanel
-                conteos={conteosGenerales || conteos}
-                sinEvaluar={conteosGenerales ? sinEvaluarGeneral : sinEvaluarCount}
+                resumen={resumenGeneral || resumenSujeto}
                 size={130}
                 strokeWidth={13}
               />
@@ -613,7 +708,7 @@ export const PlanillaEvaluacion = ({
               </h3>
             )}
             <div className="flex-1 min-h-0 pt-4 overflow-y-auto">
-              {resumenNiveles || <ResumenCumplimientoLista conteos={conteos} sinEvaluar={sinEvaluarCount} />}
+              {resumenNiveles || <ResumenCumplimientoLista resumen={resumenSujeto} />}
             </div>
           </div>
         </div>
@@ -700,7 +795,7 @@ export const PlanillaEvaluacion = ({
           <div>
             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Avance Evaluación</p>
             <p className={`font-bold ${avancePct === null ? "text-slate-400" : "text-carbon-dark"}`}>
-              {avancePct === null ? "Sin datos" : `${avancePct}%`}
+              {textoPorcentaje(avancePct)}
             </p>
           </div>
         </div>
@@ -771,7 +866,7 @@ export const PlanillaEvaluacion = ({
               )}
               {accionRequisitos}
               <span className="text-xs font-bold text-slate-500">
-                {conteos.cumple}/{items.length} completados <span className="text-primary">{items.length > 0 ? Math.round((conteos.cumple / items.length) * 100) : 0}%</span>
+                {cumplidos}/{items.length} completados <span className="text-primary">{textoPorcentaje(avancePct)}</span>
               </span>
             </div>
           </div>
@@ -795,7 +890,7 @@ export const PlanillaEvaluacion = ({
                       filtroResultado === chip.value ? "bg-primary text-white border-primary" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    {chip.label}
+                    {chip.label} ({cantidadPorFiltro[chip.value] ?? 0})
                   </button>
                 ))}
               </div>
@@ -826,19 +921,20 @@ export const PlanillaEvaluacion = ({
                   <th className="py-2 px-2 text-center w-14">NO</th>
                   <th className="py-2 px-2 text-center w-14">N/A</th>
                   <th className="py-2 pl-3">Observaciones</th>
-                  <th className="py-2 px-2 w-28">Cumplimiento</th>
                   <th className="py-2 pl-2 w-10" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {itemsFiltradosTabla.map((r) => {
                   const index = items.indexOf(r);
-                  const respuesta = respuestas[r.requerimientoId] || { resultado: null, observaciones: "", fechaVencimiento: "" };
-                  const evidencia = evidenciaDe(r.requerimientoId);
-                  const resultado = resultadoDe(r.requerimientoId);
-                  const pctFila = resultado === "cumple" ? 100 : 0;
+                  const respuesta = respuestas[r.id] || { resultado: null, observaciones: "", fechaVencimiento: "" };
+                  const evidencia = evidenciaDe(r.id);
+                  const resultado = resultadoDe(r.id);
+                  // "Cumple" sin documento: la justificación es obligatoria.
+                  const conJustificacion = pideJustificacion(r.id);
+                  const faltaJustificacion = conJustificacion && intentoGuardar && !(respuesta.observaciones || "").trim();
                   return (
-                    <tr key={r.requerimientoId} className="align-top">
+                    <tr key={r.id} data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO}`}>
                       <td className="py-3 pr-3 text-slate-400 font-semibold">{index + 1}</td>
                       <td className="py-3 pr-3 max-w-xs">
                         <div className="flex items-start gap-1.5">
@@ -855,76 +951,80 @@ export const PlanillaEvaluacion = ({
                             </a>
                           )}
                         </div>
+                        {!r.requiereVencimiento && respuesta.fechaVencimiento && (
+                          // El Requerimiento dejó de pedir vencimiento: la fecha registrada se conserva,
+                          // pero ya no es obligatoria y las nuevas evaluaciones no la piden.
+                          <div className="mt-2 space-y-0.5">
+                            <p className="text-[10px] font-semibold text-slate-400">
+                              Fecha vencimiento registrada: <span className="text-slate-600">{formatFecha(respuesta.fechaVencimiento)}</span>
+                            </p>
+                            <p className="text-[10px] font-semibold text-amber-700">Este requerimiento ya no solicita fecha de vencimiento.</p>
+                          </div>
+                        )}
                         {r.requiereVencimiento && (
                           <div className="mt-2">
-                            <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Fecha vencimiento</label>
-                            <input
-                              type="date"
+                            <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">
+                              Fecha vencimiento{respuesta.resultado === "cumple" ? " *" : ""}
+                            </label>
+                            <DateInput
                               value={respuesta.fechaVencimiento}
                               disabled={soloLectura}
-                              onChange={(e) => handleFechaVencimientoChange(r.requerimientoId, e.target.value)}
-                              className="px-2 py-1 rounded-lg border border-slate-200 text-[11px] disabled:bg-slate-50 disabled:text-slate-400"
+                              onChange={(e) => handleFechaVencimientoChange(r.id, e.target.value)}
+                              className={`px-2 py-1 rounded-lg border text-[11px] disabled:bg-slate-50 disabled:text-slate-400 ${
+                                respuesta.resultado === "cumple" && !respuesta.fechaVencimiento ? "border-amber-300 bg-amber-50/40" : "border-slate-200"
+                              }`}
                             />
                           </div>
                         )}
                       </td>
                       <td className="py-3 px-2">
-                        {resultado === "sin_evaluar" ? <InsigniaSinEvaluar /> : <StatusBadge value={resultado} map={MAPA_EVALUACION} />}
+                        <span className="inline-flex items-center gap-1">
+                          {resultado === "sin_evaluar" ? <InsigniaSinEvaluar /> : <StatusBadge value={resultado} map={MAPA_EVALUACION} />}
+                          <OrigenEvaluacion evaluacion={vigenteDe(r.id)} />
+                        </span>
+                        <PropuestaIAPendiente propuesta={datosSujeto.propuestas?.get(r.id)} expedienteId={expedienteId} />
+                        {vencimientosPorInstancia?.[r.id] && (
+                          <span className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${CLASE_VENCIMIENTO[vencimientosPorInstancia[r.id].clasificacion] || ""}`}>
+                            {textoVencimiento(vencimientosPorInstancia[r.id].dias)}
+                          </span>
+                        )}
                       </td>
                       {OPCIONES_RESULTADO.map((opt) => (
                         <td key={opt.value} className="py-3 px-2 text-center">
                           <input
                             type="radio"
-                            name={`resultado-${r.requerimientoId}`}
+                            name={`resultado-${r.id}`}
                             checked={respuesta.resultado === opt.value}
                             disabled={soloLectura}
-                            onChange={() => handleResultadoChange(r.requerimientoId, opt.value)}
+                            onChange={() => handleResultadoChange(r.id, opt.value)}
                             className="w-4 h-4 accent-primary disabled:cursor-not-allowed"
                           />
                         </td>
                       ))}
                       <td className="py-3 pl-3 min-w-[220px]">
+                        {conJustificacion && (
+                          <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Justificación *</label>
+                        )}
                         <textarea
                           value={respuesta.observaciones}
                           disabled={soloLectura}
-                          onChange={(e) => handleObservacionesChange(r.requerimientoId, e.target.value)}
-                          placeholder={esResuelto(respuesta.resultado) && !evidencia
+                          onChange={(e) => handleObservacionesChange(r.id, e.target.value)}
+                          placeholder={conJustificacion
                             ? "Justificación obligatoria (ej. verificado en terreno el …)"
                             : "Si tienes algún comentario, escríbelo aquí"}
                           rows={2}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs resize-y disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
+                          aria-invalid={faltaJustificacion}
+                          className={`w-full px-2.5 py-1.5 rounded-lg border text-xs resize-y disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
+                            faltaJustificacion ? "border-red-400 bg-red-50/30" : "border-slate-200"
+                          }`}
                         />
-                        {/* Método de verificación: solo si la fila ya tiene un resultado y NO hay documento
-                            adjunto — con documento es "documental" y no hay nada que elegir. */}
-                        {esResuelto(respuesta.resultado) && (
-                          evidencia ? (
-                            <p className="mt-1 text-[10px] font-semibold text-slate-400">Verificación documental</p>
-                          ) : (
-                            <select
-                              value={respuesta.metodoVerificacion || ""}
-                              disabled={soloLectura}
-                              onChange={(e) => handleMetodoChange(r.requerimientoId, e.target.value)}
-                              className={`mt-1.5 w-full px-2 py-1 rounded-lg border text-[11px] disabled:bg-slate-50 disabled:text-slate-400 ${
-                                respuesta.metodoVerificacion ? "border-slate-200" : "border-amber-300 bg-amber-50/40"
-                              }`}
-                            >
-                              <option value="">Método de verificación…</option>
-                              <option value="presencial">Presencial (en terreno)</option>
-                              <option value="otro">Otro</option>
-                            </select>
-                          )
+                        {faltaJustificacion && (
+                          <p className="mt-0.5 text-[10px] font-semibold text-red-500">La justificación es obligatoria.</p>
                         )}
-                      </td>
-                      <td className="py-3 px-2">
-                        {resultado === "no_aplica" ? (
-                          <span className="text-slate-400">N/A</span>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                              <div className="h-full bg-sage-dark rounded-full" style={{ width: `${pctFila}%` }} />
-                            </div>
-                            <span className="font-bold text-slate-500 w-8 text-right">{pctFila}%</span>
-                          </div>
+                        {/* Con documento la verificación es documental. Solo un "Cumple" SIN documento pide
+                            cómo se verificó y una justificación; los demás resultados no la exigen. */}
+                        {esResuelto(respuesta.resultado) && evidencia && (
+                          <p className="mt-1 text-[10px] font-semibold text-slate-400">Verificación documental</p>
                         )}
                       </td>
                       <td className="py-3 pl-2 text-right">
@@ -932,7 +1032,7 @@ export const PlanillaEvaluacion = ({
                           <button
                             type="button"
                             title="Adjuntar Evidencia"
-                            onClick={() => abrirAdjuntar(r.requerimientoId)}
+                            onClick={() => abrirAdjuntar(r.id)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-50"
                           >
                             <UploadCloud className="w-4 h-4" />
@@ -967,7 +1067,7 @@ export const PlanillaEvaluacion = ({
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[11px] text-slate-500">
-                {items.find((r) => r.requerimientoId === requerimientoAdjuntando)?.nombre}
+                {items.find((r) => r.id === requerimientoAdjuntando)?.nombre}
                 {nombreSujeto ? ` · ${nombreSujeto}` : ""}
               </p>
               <ErrorBanner message={errorAdjunto} />
@@ -982,8 +1082,7 @@ export const PlanillaEvaluacion = ({
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-slate-500 mb-1">Fecha de Vencimiento (opcional)</label>
-                <input
-                  type="date"
+                <DateInput
                   value={fechaVencimientoAdjunto}
                   onChange={(e) => setFechaVencimientoAdjunto(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
@@ -1002,12 +1101,3 @@ export const PlanillaEvaluacion = ({
     </div>
   );
 };
-
-// Formatea un Timestamp/Date/string a "YYYY-MM-DD" para precargar un
-// <input type="date">.
-function formatFechaInput(valor) {
-  if (!valor) return "";
-  const date = valor._seconds ? new Date(valor._seconds * 1000) : new Date(valor);
-  if (isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-}

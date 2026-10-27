@@ -2,6 +2,7 @@ const {onRequest} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
 const {RESEND_API_KEY} = require("./src/services/emailService");
+const {AI_CONFIG_ENCRYPTION_KEY} = require("./src/utils/secretosIA");
 const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
@@ -69,6 +70,7 @@ const perfilParticipacionRoutes =
 const perfilRecursoRoutes = require("./src/routes/perfilRecursoRoutes");
 const participacionRoutes = require("./src/routes/participacionRoutes");
 const expedienteRoutes = require("./src/routes/expedienteRoutes");
+const vencimientoRoutes = require("./src/routes/vencimientoRoutes");
 const requerimientoRoutes = require("./src/routes/requerimientoRoutes");
 const perfilRequerimientoRoutes =
     require("./src/routes/perfilRequerimientoRoutes");
@@ -76,11 +78,20 @@ const evidenciaRoutes = require("./src/routes/evidenciaRoutes");
 const evidenciaRequerimientoRoutes =
     require("./src/routes/evidenciaRequerimientoRoutes");
 const evaluacionRoutes = require("./src/routes/evaluacionRoutes");
+const expedienteRequerimientoRoutes =
+    require("./src/routes/expedienteRequerimientoRoutes");
 const {
   participacionPersonaRoutes, participacionRecursoRoutes,
 } = require("./src/routes/participacionSujetoRoutes");
 const bitacoraRoutes = require("./src/routes/bitacoraRoutes");
 const reporteRoutes = require("./src/routes/reporteRoutes");
+const configuracionIARoutes = require("./src/routes/configuracionIARoutes");
+const revisionIARoutes = require("./src/routes/revisionIARoutes");
+const fuenteDocumentalRoutes =
+    require("./src/routes/fuenteDocumentalRoutes");
+const tipoDocumentalRoutes = require("./src/routes/tipoDocumentalRoutes");
+const plantillaEstructuraRoutes =
+    require("./src/routes/plantillaEstructuraRoutes");
 const acreditacionRoutes = require("./src/routes/acreditacionRoutes");
 const sesionRoutes = require("./src/routes/sesionRoutes");
 const sesionMantenimientoService =
@@ -112,15 +123,22 @@ app.use("/perfiles-participacion", perfilParticipacionRoutes);
 app.use("/perfiles-recurso", perfilRecursoRoutes);
 app.use("/participaciones", participacionRoutes);
 app.use("/expedientes", expedienteRoutes);
+app.use("/vencimientos", vencimientoRoutes);
 app.use("/requerimientos", requerimientoRoutes);
 app.use("/perfil-requerimientos", perfilRequerimientoRoutes);
 app.use("/evidencias", evidenciaRoutes);
 app.use("/evidencia-requerimientos", evidenciaRequerimientoRoutes);
 app.use("/evaluaciones", evaluacionRoutes);
+app.use("/expediente-requerimientos", expedienteRequerimientoRoutes);
 app.use("/participacion-personas", participacionPersonaRoutes);
 app.use("/participacion-recursos", participacionRecursoRoutes);
 app.use("/bitacora", bitacoraRoutes);
 app.use("/reportes", reporteRoutes);
+app.use("/configuracion-ia", configuracionIARoutes);
+app.use("/revisiones-ia", revisionIARoutes);
+app.use("/fuentes-documentales", fuenteDocumentalRoutes);
+app.use("/tipos-documentales", tipoDocumentalRoutes);
+app.use("/plantillas-estructura", plantillaEstructuraRoutes);
 app.use("/acreditaciones", acreditacionRoutes);
 app.use("/sesiones", sesionRoutes);
 app.use("/admin/respaldos", respaldoRoutes);
@@ -157,11 +175,14 @@ exports.api = onRequest(
       cors: true,
       maxInstances: 10,
       memory: "512MiB",
-      timeoutSeconds: 120,
+      // 300 s: procesar un archivo de Revisiones IA puede reintentar la
+      // llamada a la IA (hasta 3 intentos de 60 s).
+      timeoutSeconds: 300,
       invoker: "public",
       // "Ejecutar respaldo ahora" vive dentro de esta misma función HTTP
       // y puede terminar disparando un correo (respaldoNotificacionService).
-      secrets: [RESEND_API_KEY],
+      // AI_CONFIG_ENCRYPTION_KEY: cifrado de la API key de IA.
+      secrets: [RESEND_API_KEY, AI_CONFIG_ENCRYPTION_KEY],
     },
     app,
 );

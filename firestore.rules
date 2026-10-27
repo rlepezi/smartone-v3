@@ -74,6 +74,34 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Bloque 4: instancias de Requerimiento por Expediente. Se leen por
+    // mandanteId (superadmin y evaluador, todas); nadie escribe desde el
+    // cliente (generación, sincronización y evaluaciones son del backend).
+    match /expedienteRequerimientos/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Historial de estados de cada Expediente: lectura por mandanteId; solo
+    // el backend escribe (en la misma transacción que el cambio de estado).
+    match /expedienteEstados/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Requerimientos: cada uno pertenece a un Mandante. Se leen por
+    // mandanteId (superadmin y evaluador, todos); crear y editar pasan por
+    // la API, que los guarda junto con sus vínculos en una transacción.
+    match /requerimientos/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // requerimientosNombre: índice de unicidad del nombre, solo backend.
+    match /requerimientosNombre/{clave} {
+      allow read, write: if false;
+    }
+
     // Bloque 3: relaciones de Empresa. Toda escritura pasa por la API.
     // empresaMandantes: superadmin, evaluador y admin_comercial leen todo;
     // los roles de Mandante, solo los vínculos de su propio Mandante.
@@ -98,6 +126,62 @@ service cloud.firestore {
     match /empresaRecursos/{docId} {
       allow read: if tieneRol("superadmin") || tieneRol("evaluador");
       allow write: if false;
+    }
+
+    // Revisiones IA: sesiones, procesamientos y resultados. Solo el backend
+    // escribe (Admin SDK); se leen por mandanteId para el progreso en vivo
+    // (onSnapshot): superadmin y evaluador, todas; roles de Mandante, las
+    // del propio.
+    match /sesionesRevision/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    match /procesamientosIA/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    match /resultadosRevision/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Configuración de Revisiones IA de un Expediente (ID = expedienteId):
+    // solo el backend escribe; lectura por mandanteId.
+    match /configRevisionExpediente/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Catálogo de tipos documentales de Revisiones IA: lectura para
+    // usuarios autenticados; solo el backend escribe.
+    match /tiposDocumentales/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Plantillas de estructura de carpetas y resultados de completitud
+    // (Revisiones IA): solo el backend escribe; lectura por mandanteId.
+    match /plantillasEstructura/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    match /resultadosCompletitud/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Fuentes documentales (client secret de SharePoint cifrado): nunca
+    // desde el cliente; todo pasa por la API.
+    match /fuentesDocumentales/{docId} {
+      allow read, write: if false;
+    }
+
+    // Configuración de IA (API key cifrada): nunca desde el cliente.
+    match /configuracionIA/{docId} {
+      allow read, write: if false;
     }
 
     // empresasRut: índice de unicidad del RUT, solo para el backend.

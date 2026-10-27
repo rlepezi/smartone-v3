@@ -2,14 +2,15 @@ import React, { useEffect, useState } from "react";
 import { X, Search, Plus } from "lucide-react";
 import { acreditacionService } from "../../services/acreditacionService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
+import { CrearPerfilRecurso } from "../perfiles-recurso/CrearPerfilRecurso";
+import { SelectorPerfilRecurso } from "../perfiles-recurso/SelectorPerfilRecurso";
 import { ErrorBanner } from "../shared/ErrorBanner";
 import { ActionButton } from "../shared/ActionButton";
 import { ModalCrearPersona } from "../shared/ModalCrearPersona";
 import { ModalCrearRecurso } from "../shared/ModalCrearRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { disponibilidadDe, BadgesDisponibilidad } from "../acreditaciones/PanelSeleccionEntidades";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { hoyISO } from "../../utils/fechas";
 
 const CHIPS = [
   { key: "todas", label: "Todas" },
@@ -22,7 +23,7 @@ const CHIPS = [
 // Acreditación"/"Reemplazar Acreditación" (acreditacionService.asignarEntidad): si ya está activa
 // en otro Proyecto, la traslada (cierra su participación anterior, reutiliza su documentación
 // vigente) en vez de fallar por duplicado — nunca crea una entidad nueva, solo reutiliza el
-// catálogo de la Empresa. `tipo` acá es "persona"|"recurso" (mismo que usa SelectorRecursoAsignado);
+// catálogo de la Empresa. `tipo` acá es "persona"|"recurso" (mismo que usa SujetosAsignados);
 // se traduce a "persona"|"maquinaria" para el backend, igual que ya hace PasoAsignaciones.jsx.
 export const IngresarRecursoModal = ({
   tipo, empresaId, mandanteId, proyectoDestinoId, proyectoDestinoNombre, onIngresado, onCerrar,
@@ -55,12 +56,23 @@ export const IngresarRecursoModal = ({
       .finally(() => setLoading(false));
   }, [empresaId, tipoApi]);
 
+  const tipoPerfil = esPersona ? "persona" : "recurso";
+  const cargarPerfiles = () => perfilRecursoService.listar({ mandanteId, tipo: tipoPerfil, estado: "activo" })
+    .then((data) => setPerfilesDisponibles(data || []))
+    .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
+
   useEffect(() => {
     if (!mandanteId) return;
-    perfilRecursoService.listar({ mandanteId, tipo: esPersona ? "persona" : "recurso", estado: "activo" })
-      .then((data) => setPerfilesDisponibles(data || []))
-      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
-  }, [esPersona, mandanteId]);
+    cargarPerfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoPerfil, mandanteId]);
+
+  // Perfil creado desde este modal: se recarga la lista; si era el primero, queda elegido.
+  const handlePerfilCreado = ({ id }) => {
+    const eraElPrimero = perfilesDisponibles.length === 0;
+    cargarPerfiles();
+    if (eraElPrimero && id && perfilRecursoIds.length === 0) setPerfilRecursoIds([id]);
+  };
 
   // Al elegir a alguien se preselecciona el perfil del mismo nombre que su Función (Persona) o su
   // clasificación descriptiva (Maquinaria); si no hay coincidencia, se elige a mano.
@@ -213,41 +225,27 @@ export const IngresarRecursoModal = ({
 
         {seleccionado && (
           <div className="px-5 pt-3 border-t border-slate-100">
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-              {esPersona ? "Perfiles de Recurso (uno o más)" : "Perfil de Recurso"}
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className="block text-[11px] font-semibold text-slate-500">
+                {esPersona ? "Perfiles de Recurso (uno o más)" : "Perfil de Recurso"}
+              </label>
+              {perfilesDisponibles.length > 0 && (
+                <CrearPerfilRecurso variante="enlace" tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
+              )}
+            </div>
             {perfilesDisponibles.length === 0 ? (
-              <p className="text-[11px] text-slate-400">Sin Perfiles de Recurso configurados para este Mandante.</p>
-            ) : esPersona ? (
-              <div className="flex flex-wrap gap-1.5">
-                {perfilesDisponibles.map((p) => {
-                  const activo = perfilRecursoIds.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      aria-pressed={activo}
-                      onClick={() => setPerfilRecursoIds((prev) => (activo ? prev.filter((x) => x !== p.id) : [...prev, p.id]))}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${
-                        activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      {p.nombre}
-                    </button>
-                  );
-                })}
-              </div>
+              <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
             ) : (
-              <select
-                value={perfilRecursoIds[0] || ""}
-                onChange={(e) => setPerfilRecursoIds(e.target.value ? [e.target.value] : [])}
-                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-              >
-                <option value="">Seleccione un Perfil de Recurso...</option>
-                {perfilesDisponibles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.nombre}</option>
-                ))}
-              </select>
+              <SelectorPerfilRecurso
+                tipo={tipoPerfil}
+                perfiles={perfilesDisponibles}
+                valor={perfilRecursoIds}
+                onChange={setPerfilRecursoIds}
+                mandanteId={mandanteId}
+                onPerfilCreado={cargarPerfiles}
+                anchoCompleto
+                etiqueta={esPersona ? "Perfiles de Recurso" : "Perfil de Recurso"}
+              />
             )}
           </div>
         )}

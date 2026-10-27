@@ -3,6 +3,7 @@ const {FieldValue} = require("firebase-admin/firestore");
 const participacionRepository =
     require("../repositories/participacionRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
+const expedienteRepository = require("../repositories/expedienteRepository");
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
@@ -151,6 +152,20 @@ class ParticipacionSujetoService {
           403,
           "No tiene permisos para asignar recursos en proyectos de otro " +
           "Mandante.",
+      );
+    }
+    // Un Expediente cerrado es de solo lectura: no admite nuevas
+    // Personas/Maquinarias aunque su Participación siga activa (cierres
+    // anteriores a que el cierre finalizara la Participación).
+    const expedientes = await expedienteRepository.getByParticipacion(
+        participacion.id,
+    );
+    if (expedientes.length &&
+        expedientes.every((e) => e.estado === "cerrado")) {
+      throw new AppError(
+          409,
+          "El Expediente de esta Participación está cerrado: no admite " +
+          "nuevas asignaciones.",
       );
     }
     const proyecto = await proyectoRepository.getById(

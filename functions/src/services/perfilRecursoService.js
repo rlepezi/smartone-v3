@@ -8,6 +8,7 @@ const perfilRequerimientoRepository =
 const requerimientoRepository =
     require("../repositories/requerimientoRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
+const {normalizarNombre} = require("../utils/nombreRequerimiento");
 const AppError = require("../utils/AppError");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
@@ -100,19 +101,23 @@ class PerfilRecursoService {
    *
    * Tres consultas fijas, sin importar cuántos perfiles haya (sin N+1):
    * vínculos activos, Perfiles de Participación activos y Requerimientos
-   * activos, con proyección. Sin mandanteId (superadmin/evaluador sin
-   * filtro) lee los globales y agrupa por Mandante. El Mandante del
-   * vínculo se toma de su Perfil de Participación.
+   * activos, con proyección. Los Requerimientos se piden por Mandante: el
+   * indicado o, sin filtro (superadmin/evaluador), uno por cada Mandante
+   * con Perfiles de Participación activos. El Mandante del vínculo se toma
+   * de su Perfil de Participación.
    * @param {?string} mandanteId Mandante al que acotar, o null.
    * @return {Promise<function(Object): number>} Función perfil -> conteo.
    */
   async _contarRequerimientos(mandanteId) {
-    const [vinculos, perfilesParticipacion, requerimientos] =
-        await Promise.all([
-          perfilRequerimientoRepository.listActivosParaConteo({mandanteId}),
-          perfilParticipacionRepository.listActivosParaConteo({mandanteId}),
-          requerimientoRepository.listActivosAplicacion(),
-        ]);
+    const [vinculos, perfilesParticipacion] = await Promise.all([
+      perfilRequerimientoRepository.listActivosParaConteo({mandanteId}),
+      perfilParticipacionRepository.listActivosParaConteo({mandanteId}),
+    ]);
+    const mandanteIds = mandanteId ? [mandanteId] : [...new Set(
+        perfilesParticipacion.map((pp) => pp.mandanteId).filter(Boolean),
+    )];
+    const requerimientos = (await Promise.all(mandanteIds.map((mid) =>
+      requerimientoRepository.listActivosAplicacion(mid)))).flat();
 
     const mandantePorPerfilParticipacion = new Map(
         perfilesParticipacion.map((pp) => [pp.id, pp.mandanteId]),
@@ -149,6 +154,25 @@ class PerfilRecursoService {
   }
 
   /**
+   * Busca un perfil del Mandante y tipo con el mismo nombre, comparando
+   * normalizado (minúsculas, sin tildes, trim, espacios colapsados) y sin
+   * importar su estado. Si hubiera más de uno, prefiere el activo.
+   * @param {string} mandanteId ID del Mandante.
+   * @param {string} tipo "persona" | "recurso".
+   * @param {string} nombre Nombre a buscar.
+   * @param {?string} [excluirId] Perfil a ignorar (el que se edita).
+   * @return {Promise<?Object>} El perfil con ese nombre, o null.
+   */
+  async _buscarPorNombre(mandanteId, tipo, nombre, excluirId = null) {
+    const clave = normalizarNombre(nombre);
+    const iguales = (await perfilRecursoRepository.listByMandanteYTipo(
+        mandanteId, tipo,
+    )).filter((p) => p.id !== excluirId &&
+        normalizarNombre(p.nombre) === clave);
+    return iguales.find((p) => p.estado === "activo") || iguales[0] || null;
+  }
+
+  /**
    * Crea un nuevo perfil de recurso.
    * @param {Object} payload Datos del nuevo perfil.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -180,14 +204,29 @@ class PerfilRecursoService {
       throw new AppError(400, "El Mandante indicado no está activo.");
     }
 
-    const duplicado = await perfilRecursoRepository.getByNombre(
-        mandanteId, tipo, nombre.trim(),
-    );
-    if (duplicado) {
+    // Nombre único por Mandante y tipo, comparado normalizado y entre
+    // activos e inactivos. Si ya existe, el cliente recibe el perfil para
+    // ofrecer usarlo o reactivarlo en vez de crear otro.
+    const existente = await this._buscarPorNombre(mandanteId, tipo, nombre);
+    if (existente) {
+      const contar = await this._contarRequerimientos(mandanteId);
       throw new AppError(
           409,
-          `Ya existe un perfil de recurso con el nombre '${nombre}' ` +
-          `para ${tipo} en este Mandante.`,
+          `Ya existe un perfil de recurso con el nombre '${existente.nombre}'` +
+          (existente.estado === "activo" ? "" : " (inactivo)") +
+          ` para ${tipo} en este Mandante.`,
+          {
+            codigo: "PERFIL_EXISTENTE",
+            detalle: {
+              perfil: {
+                id: existente.id,
+                nombre: existente.nombre,
+                tipo: existente.tipo,
+                estado: existente.estado,
+              },
+              cantidadRequerimientos: contar(existente),
+            },
+          },
       );
     }
 
@@ -239,16 +278,19 @@ class PerfilRecursoService {
         throw new AppError(400, "El campo 'nombre' es requerido.");
       }
     }
-    if (updateData.nombre && updateData.nombre !== existente.nombre) {
-      const duplicado = await perfilRecursoRepository.getByNombre(
-          existente.mandanteId, existente.tipo, updateData.nombre,
+    // Renombrar: el nombre sigue siendo único (normalizado) entre los
+    // demás perfiles del Mandante y tipo, activos o inactivos. Reactivar no
+    // necesita validación: su nombre ya era único.
+    if (updateData.nombre && normalizarNombre(updateData.nombre) !==
+        normalizarNombre(existente.nombre)) {
+      const duplicado = await this._buscarPorNombre(
+          existente.mandanteId, existente.tipo, updateData.nombre, id,
       );
-      if (duplicado && duplicado.id !== id) {
+      if (duplicado) {
         throw new AppError(
             409,
             `Ya existe un perfil de recurso con el nombre ` +
-            `'${updateData.nombre}' para ${existente.tipo} en ` +
-            "este Mandante.",
+            `'${duplicado.nombre}' para ${existente.tipo} en este Mandante.`,
         );
       }
     }

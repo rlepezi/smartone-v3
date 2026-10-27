@@ -1,11 +1,14 @@
 import React, { useState } from "react";
 import {
-  CheckCircle2, Loader2, AlertCircle, Building2, FolderKanban, IdCard, Users, Truck, X, ArrowRightLeft, Info,
+  CheckCircle2, Loader2, AlertCircle, Building2, FolderKanban, IdCard, Users, Truck, X, ArrowRightLeft, Info, FolderOpen,
 } from "lucide-react";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { nombresPerfiles } from "../../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
 import { etiquetaTipoEntidad } from "../../../services/requerimientoService";
+import { CLASE_RESALTADO, REF_FECHA_INICIO } from "../asistenteNavegacion";
+import { DateInput } from "../../../components/ui/DateInput";
+import { textoRepositorio } from "../../../utils/repositorioDocumental";
 
 const ItemProgreso = ({ estado, label }) => {
   // estado: "pendiente" | "en_curso" | "hecho" | "error"
@@ -75,7 +78,7 @@ const DetalleModal = ({ titulo, onCerrar, children }) => (
 export const PasoResumen = ({
   empresaSel, proyectoSel, perfilSel, seleccion,
   fechaInicio, onFechaInicioChange, preview, requisitosPerfil,
-  ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, motivoBloqueo,
+  ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, problemas = [], onCorregir, repositorio = null,
 }) => {
   const [detalle, setDetalle] = useState(null); // "personas" | "maquinarias" | "traslados" | "requisitos"
   const [confirmando, setConfirmando] = useState(false);
@@ -185,15 +188,36 @@ export const PasoResumen = ({
           <FichaDato icon={FolderKanban} etiqueta="Proyecto" valor={proyectoSel?.nombre} secundario={proyectoSel?.codigo} onEditar={editar(3)} />
           <FichaDato icon={IdCard} etiqueta="Perfil de Participación" valor={perfilSel?.nombre} onEditar={editar(4)} />
         </div>
+        <div className="pt-3 border-t border-slate-100 flex items-start gap-3">
+          <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Documentación</p>
+            {repositorio ? (
+              <p className="text-sm font-bold text-carbon-dark truncate">
+                {textoRepositorio(repositorio)}
+                {repositorio.tipo === "sharepoint" && repositorio.url && (
+                  <a href={repositorio.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-[11px] font-bold text-primary hover:underline">Abrir</a>
+                )}
+              </p>
+            ) : (
+              <>
+                <p className="text-sm font-medium italic text-slate-400">Sin vincular</p>
+                <p className="text-[11px] text-slate-500">Podrás vincularla después desde el expediente.</p>
+              </>
+            )}
+          </div>
+          <LinkEditar onClick={editar(2)} />
+        </div>
         <div className="pt-3 border-t border-slate-100">
           <label className="block text-xs font-semibold text-gray-700 mb-1">Fecha de inicio *</label>
           <p className="text-[11px] text-slate-500 mb-2">
             Fecha desde la cual comenzarán a regir la participación y las asignaciones de esta acreditación.
           </p>
-          <input
-            type="date" value={fechaInicio} onChange={(e) => onFechaInicioChange(e.target.value)}
+          <DateInput
+            value={fechaInicio} onChange={(e) => onFechaInicioChange(e.target.value)}
             disabled={yaHayProgreso}
-            className="w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100 disabled:text-gray-500"
+            data-asistente-ref={REF_FECHA_INICIO}
+            className={`w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100 disabled:text-gray-500 ${CLASE_RESALTADO}`}
           />
           <p className="text-[11px] text-slate-400 mt-1.5">
             La fecha debe ser válida según las reglas del proyecto y no puede contradecir las fechas de vigencia aplicables.
@@ -288,10 +312,29 @@ export const PasoResumen = ({
         </div>
       )}
 
-      {motivoBloqueo && !ejecutando && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>No se puede crear la acreditación: {motivoBloqueo}</span>
+      {problemas.length > 0 && !ejecutando && (
+        <div role="alert" className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs space-y-2">
+          <p className="flex items-center gap-2 font-bold">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            No se puede crear la acreditación:
+          </p>
+          <ul className="space-y-1.5 pl-6">
+            {problemas.map((p) => (
+              <li key={p.ref + p.mensaje} className="flex items-center justify-between gap-3 flex-wrap">
+                <span>{p.mensaje}</span>
+                {/* Con algo ya creado no se puede volver a pasos anteriores. */}
+                {(!yaHayProgreso || p.ref === REF_FECHA_INICIO) && (
+                  <button
+                    type="button"
+                    onClick={() => onCorregir?.(p.paso, p.ref)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-red-200 font-bold text-red-700 hover:bg-red-100 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                  >
+                    {p.etiqueta} →
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -299,7 +342,7 @@ export const PasoResumen = ({
         <button
           type="button"
           onClick={handleCrear}
-          disabled={ejecutando || Boolean(motivoBloqueo)}
+          disabled={ejecutando || problemas.length > 0}
           className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
         >
           {ejecutando ? "Procesando..." : errorEjecucion ? "Reintentar" : "Crear acreditación"}

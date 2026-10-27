@@ -5,8 +5,12 @@ import { personaService } from "../../services/personaService";
 import { empresaService } from "../../services/empresaService";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
+import { CampoMandante } from "../shared/CampoMandante";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { OpcionesRadio } from "../shared/OpcionesRadio";
+import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import {
   SUGERENCIAS_TIPO_RELACION_PERSONA, SUGERENCIAS_TIPO_CONTRATO, SUGERENCIAS_JORNADA,
 } from "../../utils/sugerenciasRelacionLaboral";
@@ -15,10 +19,11 @@ import { ActionButton } from "../shared/ActionButton";
 import { CambiarEmpresaModal } from "../personas/CambiarEmpresaModal";
 import { CambiarProyectoModal } from "../shared/CambiarProyectoModal";
 import { MandanteChip } from "../shared/MandanteChip";
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+const PROFESION_MAX = 80;
 
 // Formulario de datos identitarios (crear / editar). Se usa en dos lugares:
 //   - PersonaFormPage: solo para CREAR (pantalla propia).
@@ -28,6 +33,9 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 //     pestaña.
 export const PersonaEdicionForm = ({
   idEntidad: id, formId, enDetalle = false, onGuardado, onCancelar, onDirtyChange, onGuardandoChange,
+  // Solo al crear: datos con que parte el formulario (ej. desde Revisiones IA: RUT y nombre leídos
+  // del documento).
+  valoresIniciales = null,
 }) => {
   const { profile } = useAuth();
   const esEdicion = Boolean(id);
@@ -35,10 +43,11 @@ export const PersonaEdicionForm = ({
   // La identificación no se edita después de creada, salvo superadmin.
   const rutEditable = !esEdicion || profile?.rol === "superadmin";
 
-  const [formData, setFormData] = useState({
-    rut: "",
-    nombre: "",
-    apellido: "",
+  const [formData, setFormData] = useState(() => ({
+    rut: (!id && valoresIniciales?.rut) || "",
+    nombre: (!id && valoresIniciales?.nombre) || "",
+    apellido: (!id && valoresIniciales?.apellido) || "",
+    profesion: "",
     estado: "activo",
     // Solo se usan al crear — la Empresa/relación laboral después se
     // cambia únicamente vía "Cambiar Empresa" desde el detalle (RN-063).
@@ -48,9 +57,16 @@ export const PersonaEdicionForm = ({
     tipoContrato: "",
     jornada: "",
     fechaInicio: hoyISO(),
-  });
+  }));
 
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
+  // Mandante en contexto (alta): con uno solo, o con el propio del rol, viene asignado igual que en
+  // Nueva Empresa; con varios se elige. Acota las Empresas a las asociadas a ese Mandante.
+  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
+  const mandanteFiltro = contextoMandante.mandanteId;
+  const empresasDelMandante = mandanteFiltro
+    ? empresasOpciones.filter((e) => (e.mandanteIds || []).includes(mandanteFiltro))
+    : empresasOpciones;
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
@@ -98,6 +114,7 @@ export const PersonaEdicionForm = ({
           rut: formatRutDisplay(data.rut || ""),
           nombre: data.nombre || "",
           apellido: data.apellido || "",
+          profesion: data.profesion || "",
           estado: data.estado || "activo",
         }));
         // Empresa actual: la de su relación activa (null si es de una empresa fuera del alcance).
@@ -136,6 +153,9 @@ export const PersonaEdicionForm = ({
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
     if (!formData.apellido.trim()) newErrors.apellido = "El apellido es obligatorio.";
+    if (formData.profesion.trim().length > PROFESION_MAX) {
+      newErrors.profesion = `Máximo ${PROFESION_MAX} caracteres.`;
+    }
     if (rutEditable) {
       if (!formData.rut.trim()) {
         newErrors.rut = "El RUT es obligatorio.";
@@ -149,12 +169,6 @@ export const PersonaEdicionForm = ({
       }
       if (!formData.tipoRelacion.trim()) {
         newErrors.tipoRelacion = "El tipo de relación es obligatorio.";
-      }
-      if (!formData.cargo.trim()) {
-        newErrors.cargo = "El cargo es obligatorio.";
-      }
-      if (!formData.tipoContrato.trim()) {
-        newErrors.tipoContrato = "El tipo de contrato es obligatorio.";
       }
       if (!formData.fechaInicio) {
         newErrors.fechaInicio = "La fecha de inicio es obligatoria.";
@@ -176,6 +190,7 @@ export const PersonaEdicionForm = ({
         const payload = {
           nombre: formData.nombre.trim(),
           apellido: formData.apellido.trim(),
+          profesion: formData.profesion.trim() || null,
           estado: formData.estado,
           ...(rutEditable ? { rut: cleanRut(formData.rut) } : {}),
         };
@@ -186,11 +201,12 @@ export const PersonaEdicionForm = ({
           rut: cleanRut(formData.rut),
           nombre: formData.nombre.trim(),
           apellido: formData.apellido.trim(),
+          profesion: formData.profesion.trim() || null,
           estado: formData.estado,
           empresaId: formData.empresaId,
           tipoRelacion: formData.tipoRelacion.trim(),
-          cargo: formData.cargo.trim(),
-          tipoContrato: formData.tipoContrato.trim(),
+          cargo: formData.cargo.trim() || null,
+          tipoContrato: formData.tipoContrato.trim() || null,
           jornada: formData.jornada.trim() || null,
           fechaInicio: formData.fechaInicio,
         };
@@ -216,8 +232,8 @@ export const PersonaEdicionForm = ({
       await personaService.cambiarEmpresa(personaExistente.personaId, {
         empresaId: formData.empresaId,
         tipoRelacion: formData.tipoRelacion.trim(),
-        cargo: formData.cargo.trim(),
-        tipoContrato: formData.tipoContrato.trim(),
+        cargo: formData.cargo.trim() || null,
+        tipoContrato: formData.tipoContrato.trim() || null,
         jornada: formData.jornada.trim() || null,
         fechaInicio: formData.fechaInicio,
         confirmado,
@@ -309,6 +325,13 @@ export const PersonaEdicionForm = ({
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
+                <CampoMandante
+                  contexto={contextoMandante}
+                  conFoco={false}
+                  onChange={() => elegirCampo("empresaId", "")}
+                />
+              </div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
                 <SelectConBusqueda
                   bloque
@@ -321,12 +344,15 @@ export const PersonaEdicionForm = ({
                   placeholder="Buscar por nombre o RUT..."
                   options={[
                     { value: "", label: "Seleccione una Empresa..." },
-                    ...empresasOpciones.map((e) => ({
+                    ...empresasDelMandante.map((e) => ({
                       value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
                     })),
                   ]}
                 />
                 {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+                {mandanteFiltro && empresasOpciones.length > 0 && empresasDelMandante.length === 0 && (
+                  <p className="text-[11px] font-semibold text-amber-700 mt-1">No hay Empresas asociadas a este Mandante.</p>
+                )}
               </div>
             </div>
           </div>
@@ -372,6 +398,23 @@ export const PersonaEdicionForm = ({
             </div>
 
             <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Profesión</label>
+              <input
+                type="text"
+                name="profesion"
+                value={formData.profesion}
+                onChange={handleChange}
+                disabled={!puedeEscribir}
+                maxLength={PROFESION_MAX}
+                placeholder="Ej: Técnico en Mecánica"
+                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
+                  errors.profesion ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                }`}
+              />
+              {errors.profesion && <p className="text-xs text-red-500 mt-1">{errors.profesion}</p>}
+            </div>
+
+            <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">RUT *</label>
               {!rutEditable ? (
                 <>
@@ -403,16 +446,14 @@ export const PersonaEdicionForm = ({
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Estado</label>
-              <select
+              <OpcionesRadio
                 name="estado"
                 value={formData.estado}
                 onChange={handleChange}
                 disabled={!puedeEscribir}
-                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-              >
-                <option value="activo">Activo</option>
-                <option value="inactivo">Inactivo</option>
-              </select>
+                opciones={OPCIONES_ACTIVO_INACTIVO}
+                ariaLabel="Estado"
+              />
             </div>
 
             {esEdicion && !enDetalle && mandanteActual && (
@@ -478,7 +519,7 @@ export const PersonaEdicionForm = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Cargo *</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Cargo (opcional)</label>
                 <input
                   type="text"
                   name="cargo"
@@ -494,7 +535,7 @@ export const PersonaEdicionForm = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Contrato *</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de Contrato (opcional)</label>
                 <input
                   type="text"
                   name="tipoContrato"
@@ -526,8 +567,7 @@ export const PersonaEdicionForm = ({
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-                <input
-                  type="date"
+                <DateInput
                   name="fechaInicio"
                   value={formData.fechaInicio}
                   onChange={handleChange}

@@ -6,7 +6,7 @@ import { spacing } from "../theme/spacing";
 import { typography } from "../theme/typography";
 import { StatusPill } from "./StatusPill";
 import { estadoResultado, estadoPorDiasRestantes } from "../theme/status";
-import { formatDate, diasRestantes } from "../utils/formatDate";
+import { formatFecha, diasRestantes } from "../utils/fechas";
 
 // Fila de un Requerimiento: número de orden (como en la v2), ícono neutro
 // de documento (el backend no entrega una categoría de ícono por
@@ -32,7 +32,7 @@ export function ReqRow({ numero, nombre, evaluacion }) {
         </Text>
         {vencimiento && (
           <Text style={[typography.caption, { color: estadoVencimiento?.fg || colors.muted }]}>
-            Vence {formatDate(vencimiento)}
+            Vence {formatFecha(vencimiento)}
           </Text>
         )}
       </View>

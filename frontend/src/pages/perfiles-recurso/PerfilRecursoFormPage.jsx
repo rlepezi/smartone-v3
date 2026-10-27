@@ -41,8 +41,9 @@ export const PerfilRecursoFormPage = () => {
       <PerfilRecursoFormulario
         id={id}
         onCancelar={() => navigate(volverA)}
-        onGuardado={({ id: perfilId, creado }) => (
-          creado ? navigate(volverA, { state: { nuevoId: perfilId } }) : navigate(volverA)
+        onGuardado={({ id: perfilId, creado, reactivado, existente }) => (
+          creado || reactivado || existente
+            ? navigate(volverA, { state: { nuevoId: perfilId } }) : navigate(volverA)
         )}
       />
     </div>

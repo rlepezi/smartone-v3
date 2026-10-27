@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Building2, Users, Truck, ChevronDown, ChevronRight, X } from "lucide-react";
 import { acreditacionService } from "../../../services/acreditacionService";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
-import { formatFecha } from "../../../utils/fechaFormatters";
+import { formatFecha } from "../../../utils/fechas";
 
 const BLOQUES = [
   { key: "empresa", label: "Empresa", icon: Building2 },

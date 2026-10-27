@@ -24,7 +24,7 @@ import {
 } from "../../services/participacionSujetoService";
 import { reporteService } from "../../services/reporteService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { StatusBadge } from "../../components/shared/StatusBadge";
 import { ActionButton } from "../../components/shared/ActionButton";
@@ -44,6 +44,7 @@ import { BotonesEdicion } from "../../components/shared/BotonesEdicion";
 import { useEdicionInPlace } from "../../hooks/useEdicionInPlace";
 import { estadoPorCumplimiento, claseAnilloCumplimiento } from "../../utils/cumplimientoClases";
 import { KpiCard, KpiValor, TarjetaPanel, CampoInfo } from "../../components/shared/DetalleUI";
+import { DateInput } from "../../components/ui/DateInput";
 
 const ESTADO_PROYECTO_MAP = ESTADOS_PROYECTO.reduce((acc, e) => {
   acc[e.value] = { label: e.label, className: "bg-slate-100 text-slate-600 border-slate-200" };
@@ -545,8 +546,7 @@ export const ProyectoDetailPage = () => {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-500 mb-1">Fecha de Inicio *</label>
-                <input
-                  type="date"
+                <DateInput
                   value={formData.fechaInicio}
                   onChange={(e) => setFormData((prev) => ({ ...prev, fechaInicio: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
@@ -554,8 +554,7 @@ export const ProyectoDetailPage = () => {
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-slate-500 mb-1">Fecha de Término</label>
-                <input
-                  type="date"
+                <DateInput
                   value={formData.fechaTermino}
                   onChange={(e) => setFormData((prev) => ({ ...prev, fechaTermino: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
