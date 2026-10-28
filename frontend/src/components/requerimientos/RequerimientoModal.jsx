@@ -6,6 +6,7 @@ import { CrearPerfilRecurso } from "../perfiles-recurso/CrearPerfilRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { OpcionesRadio } from "../shared/OpcionesRadio";
 import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
+import { ordenarPerfilesParticipacion } from "../../utils/ordenPerfiles";
 import { Tabs } from "../shared/Tabs";
 import { ReglasIARequerimiento } from "./reglas-ia/ReglasIARequerimiento";
 
@@ -258,7 +259,7 @@ export const RequerimientoModal = ({
                 <p className="text-[11px] text-amber-700">Este Mandante no tiene Perfiles de Participación activos.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {perfilesParticipacion.map((p) => {
+                  {ordenarPerfilesParticipacion(perfilesParticipacion).map((p) => {
                     const activo = contexto.perfilParticipacionIds.includes(p.id);
                     return (
                       <button

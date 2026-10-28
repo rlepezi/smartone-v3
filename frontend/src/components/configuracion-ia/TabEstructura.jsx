@@ -129,7 +129,8 @@ export const TabEstructura = () => {
       setPlantilla(p);
       setBorrador(p ? structuredClone(estructuraDe(p)) : null);
       setPendientes(new Map());
-      setTipos(t || []);
+      // Los tipos creados para las reglas por requerimiento no se extraen en la revisión por carpetas.
+      setTipos((t || []).filter((x) => !x.soloReglas));
       setRequerimientos(r || []);
       setError(null);
     }).catch((err) => { if (vigente) setError(err.message || "No se pudo cargar la plantilla."); });

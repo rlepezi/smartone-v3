@@ -107,6 +107,79 @@ class TipoDocumentalService {
   async actualizar(id, payload, actor) {
     const previo = await tipoDocumentalRepository.getById(id);
     if (!previo) throw new AppError(404, "Tipo documental no encontrado.");
+    const cambios = await this._cambiosValidados(payload);
+    if (Object.keys(cambios).length === 0) return conDefaults(previo);
+    const actualizado = await tipoDocumentalRepository.update(id, cambios);
+    const detalle = {};
+    Object.keys(cambios).forEach((campo) => {
+      detalle[campo] = {anterior: previo[campo] ?? null,
+        nuevo: cambios[campo]};
+    });
+    await bitacoraLogger.registrarEvento({
+      mandanteId: null, entidad: "tiposDocumentales", entidadId: id,
+      accion: "actualizado", actor,
+      detalle: {codigo: previo.codigo, ...detalle},
+    });
+    return actualizado;
+  }
+
+  /**
+   * Crea un tipo documental para las reglas de revisión IA. Queda con
+   * `soloReglas: true`: la revisión por carpetas (plantillas) solo sabe
+   * extraer los tipos del seed, así que este no se ofrece ahí.
+   * @param {Object} payload codigo, nombre, entidades, campos y,
+   *     opcionales, estadoIA (por defecto "piloto"), modeloPreferido y
+   *     umbralLegibilidad (por defecto 0,8).
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Tipo creado.
+   */
+  async crear(payload, actor) {
+    const codigo = String(payload.codigo || "").trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9_]{1,39}$/.test(codigo)) {
+      throw new AppError(400, "Código no válido: use mayúsculas, números y " +
+          "_ (2 a 40 caracteres, empieza con letra).");
+    }
+    const nombre = String(payload.nombre || "").trim();
+    if (!nombre || nombre.length > 80) {
+      throw new AppError(400, "Indique un nombre (máx. 80 caracteres).");
+    }
+    if (payload.entidades === undefined || payload.campos === undefined) {
+      throw new AppError(400, "Indique las entidades y los campos.");
+    }
+    const existentes = await Promise.all([
+      tipoDocumentalRepository.getById(codigo),
+      tipoDocumentalRepository.getByCodigo(codigo),
+    ]);
+    if (existentes.some(Boolean)) {
+      throw new AppError(409, `Ya existe un tipo con el código ${codigo}.`);
+    }
+    const cambios = await this._cambiosValidados(payload);
+    const creado = await tipoDocumentalRepository.create(codigo, {
+      codigo, nombre,
+      estadoIA: "piloto", modeloPreferido: null, umbralLegibilidad: 0.8,
+      ...cambios,
+      version: 1, reglas: [], soloReglas: true,
+      metricas: {procesados: 0, aceptadosSinCambio: 0, corregidos: 0,
+        costoTotalUsd: 0},
+      estado: "activo",
+    });
+    await bitacoraLogger.registrarEvento({
+      mandanteId: null, entidad: "tiposDocumentales", entidadId: codigo,
+      accion: "creado", actor,
+      detalle: {codigo, nombre, estadoIA: creado.estadoIA,
+        entidades: creado.entidades,
+        campos: (creado.campos || []).map((c) => c.clave)},
+    });
+    return conDefaults(creado);
+  }
+
+  /**
+   * Valida los campos editables de un tipo (los que vengan).
+   * @param {Object} payload estadoIA, modeloPreferido, umbralLegibilidad,
+   *     entidades, campos.
+   * @return {Promise<Object>} Cambios validados.
+   */
+  async _cambiosValidados(payload) {
     const cambios = {};
     if (payload.estadoIA !== undefined) {
       if (!ESTADOS_IA.includes(payload.estadoIA)) {
@@ -144,19 +217,7 @@ class TipoDocumentalService {
       if (!r.ok) throw new AppError(400, r.error);
       cambios.campos = r.valor;
     }
-    if (Object.keys(cambios).length === 0) return conDefaults(previo);
-    const actualizado = await tipoDocumentalRepository.update(id, cambios);
-    const detalle = {};
-    Object.keys(cambios).forEach((campo) => {
-      detalle[campo] = {anterior: previo[campo] ?? null,
-        nuevo: cambios[campo]};
-    });
-    await bitacoraLogger.registrarEvento({
-      mandanteId: null, entidad: "tiposDocumentales", entidadId: id,
-      accion: "actualizado", actor,
-      detalle: {codigo: previo.codigo, ...detalle},
-    });
-    return actualizado;
+    return cambios;
   }
 
   /**

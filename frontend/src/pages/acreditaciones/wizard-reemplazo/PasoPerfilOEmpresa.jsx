@@ -128,9 +128,6 @@ export const PasoPerfilOEmpresa = ({
           <label className="block text-xs font-semibold text-gray-700">
             {entidadTipo === "persona" ? "Perfiles de Recurso en el Proyecto destino * (uno o más)" : "Perfil de Recurso en el Proyecto destino *"}
           </label>
-          {perfilesDisponibles.length > 0 && (
-            <CrearPerfilRecurso variante="enlace" tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
-          )}
         </div>
         {perfilesCargados && perfilesDisponibles.length === 0 ? (
           <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />

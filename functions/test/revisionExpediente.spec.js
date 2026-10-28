@@ -37,6 +37,12 @@ describe("elegibilidadRequerimiento", () => {
       plantilla: plantilla()}).motivo).toBe("tipo_inactivo");
   });
 
+  it("tipo soloReglas: no elegible ni en carpeta libre", () => {
+    expect(elegibilidadRequerimiento({requerimiento: req,
+      tipo: {...tipoActivo, soloReglas: true}, plantilla: null, libre: true})
+        .motivo).toBe("solo_reglas");
+  });
+
   it("no existe en la plantilla", () => {
     expect(elegibilidadRequerimiento({requerimiento: req, tipo: tipoActivo,
       plantilla: {secciones: []}}).motivo).toBe("no_en_plantilla");

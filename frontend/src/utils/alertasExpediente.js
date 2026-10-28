@@ -1,24 +1,31 @@
 import { estadoVencimientosExpediente } from "./vencimientos";
 
-// Alerta de un Expediente "En Ejecución": en esa fase el estado ya no se recalcula, así que si
-// aparecen requisitos vencidos, pendientes (incluye sin evaluar) o que no cumplen, el Expediente
-// conserva su estado y se avisa. Pendientes y no cumple salen de `resumen`; los vencidos dependen
-// del día, así que se pasan desde el endpoint de vencimientos (`vencidos`) o, en el listado (sin
-// consultas por fila), se deducen de resumen.fechaVencimientoMasProxima: `true` = "hay alguno".
+// `vencidos`: cantidad (desde el endpoint de vencimientos) o, en los listados (sin consultas por
+// fila), undefined: se deduce de resumen.fechaVencimientoMasProxima.
+const hayVencidos = (expediente, vencidos) => (vencidos === undefined
+  ? estadoVencimientosExpediente(expediente) === "vencidos" : vencidos > 0);
 
-// Problemas del Expediente, o null si no está en ejecución o no tiene ninguno.
-export const problemasEnEjecucion = (expediente, vencidos) => {
-  if (expediente?.estado !== "en_ejecucion") return null;
+// Estado que se muestra: un Expediente "completado" con documentos vencidos se ve como
+// "Completado con pendientes" (los vencidos dependen del día y el backend no los guarda en el estado).
+export const estadoVisibleExpediente = (expediente, vencidos) => {
+  const estado = expediente?.estado;
+  return estado === "completado" && hayVencidos(expediente, vencidos) ? "completado_pendientes" : estado;
+};
+
+// Qué falta en un Expediente completado (o completado con pendientes), o null si nada: requisitos
+// vencidos y pendientes (nuevos sin evaluar). Los "no cumple" son resultado, no pendientes: se ven en
+// el % de cumplimiento. `vencidos`: `true` = "hay alguno" (listado).
+export const problemasExpediente = (expediente, vencidos) => {
+  if (!["completado", "completado_pendientes"].includes(expediente?.estado)) return null;
   const r = expediente.resumen || {};
   const problemas = {
     vencidos: vencidos ?? (estadoVencimientosExpediente(expediente) === "vencidos" ? true : 0),
-    noCumple: r.noCumple || 0,
     pendientes: r.pendiente || 0,
   };
-  return problemas.vencidos + problemas.noCumple + problemas.pendientes > 0 ? problemas : null;
+  return problemas.vencidos || problemas.pendientes ? problemas : null;
 };
 
-// "2 requisitos vencidos, 1 no cumple, 3 pendientes" (solo los que existen).
+// "2 requisitos vencidos, 3 pendientes" (solo los que existen).
 export const textoProblemas = (problemas) => {
   if (!problemas) return "";
   const partes = [];
@@ -27,11 +34,8 @@ export const textoProblemas = (problemas) => {
   } else if (problemas.vencidos) {
     partes.push(`${problemas.vencidos} ${problemas.vencidos === 1 ? "requisito vencido" : "requisitos vencidos"}`);
   }
-  if (problemas.noCumple) {
-    partes.push(`${problemas.noCumple} ${problemas.noCumple === 1 ? "no cumple" : "no cumplen"}`);
-  }
   if (problemas.pendientes) {
-    partes.push(`${problemas.pendientes} ${problemas.pendientes === 1 ? "pendiente" : "pendientes"}`);
+    partes.push(`${problemas.pendientes} ${problemas.pendientes === 1 ? "requisito pendiente" : "requisitos pendientes"}`);
   }
   return partes.join(", ");
 };

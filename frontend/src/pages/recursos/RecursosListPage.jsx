@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { PatenteChip } from "../../components/shared/PatenteChip";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate } from "react-router-dom";
 import {
@@ -444,7 +445,8 @@ export const RecursosListPage = () => {
                     </span>
                   </td>
                   <td className="py-4 px-6 text-slate-600 font-mono text-sm">
-                    {item.patente || <span className="text-slate-400 italic font-sans">-</span>}
+                    {item.patente ? <PatenteChip valor={item.patente} tipo={item.tipoIdentificacion} />
+                      : <span className="text-slate-400 italic font-sans">-</span>}
                   </td>
                   <td className="py-2 px-6 text-slate-600 font-medium">
                     {partes.length === 0 && (mandantesDeEmpresa[item.empresaActual?.empresaId] || []).length > 0 ? (

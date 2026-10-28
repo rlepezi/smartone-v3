@@ -1,8 +1,8 @@
 import { ArrowRight, GitCommitVertical } from "lucide-react";
-import { ESTADOS_EXPEDIENTE, etiquetaMotivoCierre } from "../../services/expedienteService";
+import { etiquetaEstadoExpediente, etiquetaMotivoCierre } from "../../services/expedienteService";
 import { formatFechaHora } from "../../utils/fechas";
 
-const etiquetaEstado = (estado) => ESTADOS_EXPEDIENTE.find((e) => e.value === estado)?.label || estado || "—";
+const etiquetaEstado = etiquetaEstadoExpediente;
 
 // Motivo legible: los de cierre por su nombre; las correcciones con su propio rótulo.
 const etiquetaMotivo = (motivo) => {

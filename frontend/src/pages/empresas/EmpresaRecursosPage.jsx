@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PatenteChip } from "../../components/shared/PatenteChip";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, HardHat, Users, Truck, UserPlus, Plus, RefreshCw } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
@@ -253,7 +254,10 @@ export const EmpresaRecursosPage = () => {
                 </a>
               </td>
               <td className="py-4 px-6 font-mono font-semibold text-slate-700 whitespace-nowrap">
-                {textoIdentificacion(f.identificacion)}
+                {f.tipo === "maquinaria" && f.identificacion?.numero
+                  ? <PatenteChip valor={f.identificacion.numero}
+                    tipo={{ PATENTE: "patente", SERIE: "serie" }[f.identificacion.tipo] || null} />
+                  : textoIdentificacion(f.identificacion)}
               </td>
               <td className="py-4 px-6 text-slate-600 font-medium">{f.detalle || "-"}</td>
               <td className="py-4 px-6">

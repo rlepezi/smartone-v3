@@ -571,8 +571,9 @@ class RevisionIAService {
     return (await tipoDocumentalRepository.list())
         .filter((t) => disponibleParaIA(t, entidad))
         .map(conDefaultsTipo)
-        .map(({id, codigo, nombre, estadoIA, entidades, campos}) => ({id,
-          codigo, nombre, estadoIA, entidades, campos}))
+        .map(({id, codigo, nombre, estadoIA, entidades, campos,
+          soloReglas}) => ({id, codigo, nombre, estadoIA, entidades, campos,
+          soloReglas: Boolean(soloReglas)}))
         .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
   }
 }

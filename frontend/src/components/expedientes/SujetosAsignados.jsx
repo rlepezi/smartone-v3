@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { IngresarRecursoModal } from "./IngresarRecursoModal";
 import { ResumenCumplimientoLista } from "../shared/ResumenCumplimientoLista";
+import { BadgeAcreditacion } from "../shared/BadgeAcreditacion";
+import { PatenteChip } from "../shared/PatenteChip";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { describirEvento } from "../../utils/bitacoraFormatters";
@@ -108,20 +110,21 @@ const HistorialSujeto = ({ tipo, id }) => {
 // Pestañas Personas / Recursos del Detalle de Expediente: tabla de las personas o maquinarias
 // asignadas (sub-pestañas Pendientes/Evaluadas, búsqueda, filtro por perfil o tipo, botón de
 // ingreso) y, a la derecha, el panel de detalle de la fila elegida. La evaluación (planilla de
-// requisitos) la dibuja quien usa este componente, en un modal que se abre al elegir una fila o
-// con "Evaluar requisitos" (`onIrARequisitos`).
+// requisitos) la dibuja quien usa este componente, en un modal que se abre solo con
+// "Evaluar requisitos" (`onIrARequisitos`) o con doble clic en la fila; un clic solo muestra su detalle.
 // `items`: [{ id, nombre, subtitulo (perfiles / tipo), busqueda (RUT / patente), requerimientos,
 // resumen (contadores del sujeto), estado: "pendiente"|"evaluada", fechaInicio }].
 // `alertasVencimiento`: { sujetoId: { texto, vencidos } } — ícono de alerta junto al nombre con
 // el detalle en su tooltip ("1 vencido, 2 próximos a vencer"); rojo si hay vencidos.
 // `puedeIngresar`: false en un Expediente cerrado (solo lectura: sin "Ingresar").
+// `umbralesAcreditacion`: los del Mandante del Expediente, para el color y nivel del %.
 // `seleccionadoId` puede ser null (panel cerrado). `key={tipo}` desde quien lo usa reinicia
 // sub-pestaña, búsqueda y filtro al cambiar de pestaña.
 export const SujetosAsignados = ({
   tipo, items, seleccionadoId, onSeleccionar,
   empresaId, empresaNombre, mandanteId, proyectoDestinoId, proyectoDestinoNombre, proyectoTexto,
-  perfilParticipacionNombre, onIngresado, puedeConfigurar = false, onConfigurar, onIrARequisitos,
-  puedeIngresar = true, alertasVencimiento = {},
+  perfilParticipacionNombre, perfilParticipacionId = null, onIngresado, puedeConfigurar = false, onConfigurar, onIrARequisitos,
+  puedeIngresar = true, alertasVencimiento = {}, umbralesAcreditacion = null,
 }) => {
   const t = TEXTOS[tipo];
   // Sub-pestaña elegida por el usuario; mientras no elija, parte en Pendientes, o en Evaluadas si
@@ -231,6 +234,7 @@ export const SujetosAsignados = ({
                   <th className="px-3 py-2.5">{t.colClasificacion}</th>
                   <th className="px-3 py-2.5">{t.colIdentificador}</th>
                   <th className="px-3 py-2.5 text-center">Requerimientos</th>
+                  <th className="px-3 py-2.5">Cumplimiento</th>
                   <th className="px-3 py-2.5">Estado</th>
                 </tr>
               </thead>
@@ -241,6 +245,15 @@ export const SujetosAsignados = ({
                     <tr
                       key={i.id}
                       onClick={() => onSeleccionar(i.id)}
+                      // Doble clic = "Evaluar requisitos": abre el modal de evaluación (igual en
+                      // Personas y Recursos).
+                      onDoubleClick={() => {
+                        if (!onIrARequisitos) return;
+                        window.getSelection?.()?.removeAllRanges();
+                        onSeleccionar(i.id);
+                        onIrARequisitos();
+                      }}
+                      title="Doble clic para evaluar requisitos"
                       aria-selected={activo}
                       className={`cursor-pointer transition-colors ${activo ? "bg-primary-lighter/60" : "hover:bg-slate-50"}`}
                     >
@@ -258,8 +271,12 @@ export const SujetosAsignados = ({
                         </span>
                       </td>
                       <td className="px-3 py-3 text-slate-600">{i.subtitulo || "—"}</td>
-                      <td className="px-3 py-3 font-mono text-slate-600 whitespace-nowrap">{i.busqueda || "Sin datos"}</td>
+                      <td className="px-3 py-3 font-mono text-slate-600 whitespace-nowrap">
+                        {!i.busqueda ? "Sin datos" : tipo === "recurso"
+                          ? <PatenteChip valor={i.busqueda} tipo={i.tipoIdentificacion} /> : i.busqueda}
+                      </td>
                       <td className="px-3 py-3 text-center font-semibold text-slate-700 tabular-nums">{i.requerimientos}</td>
+                      <td className="px-3 py-3"><BadgeAcreditacion pct={i.avancePct} sinEtiqueta umbrales={umbralesAcreditacion} /></td>
                       <td className="px-3 py-3"><InsigniaEstado estado={i.estado} /></td>
                     </tr>
                   );
@@ -287,13 +304,18 @@ export const SujetosAsignados = ({
 
           <div className="space-y-1.5">
             <p className="text-sm font-bold text-carbon-dark break-words">{seleccionado.nombre}</p>
-            <InsigniaEstado estado={seleccionado.estado} />
+            <div className="flex flex-wrap items-center gap-2">
+              <InsigniaEstado estado={seleccionado.estado} />
+              <BadgeAcreditacion pct={seleccionado.avancePct} umbrales={umbralesAcreditacion} />
+            </div>
           </div>
 
           <div className="space-y-2.5">
             <FilaDetalle Icono={Tags} etiqueta={t.colClasificacion}>{seleccionado.subtitulo}</FilaDetalle>
             <FilaDetalle Icono={IdCard} etiqueta={t.colIdentificador}>
-              {seleccionado.busqueda ? <span className="font-mono">{seleccionado.busqueda}</span> : null}
+              {!seleccionado.busqueda ? null : tipo === "recurso"
+                ? <PatenteChip valor={seleccionado.busqueda} tipo={seleccionado.tipoIdentificacion} />
+                : <span className="font-mono">{seleccionado.busqueda}</span>}
             </FilaDetalle>
             <FilaDetalle Icono={CalendarDays} etiqueta="Inicio asignación">
               {seleccionado.fechaInicio ? formatFecha(seleccionado.fechaInicio) : null}
@@ -316,9 +338,9 @@ export const SujetosAsignados = ({
                 {puedeConfigurar && (
                   <button
                     type="button" onClick={onConfigurar}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/30 bg-white text-primary text-[11px] font-bold hover:bg-primary-lighter"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary-dark transition-colors"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Configurar requisitos
+                    <Plus className="w-4 h-4" /> Configurar requisitos
                   </button>
                 )}
               </div>
@@ -327,9 +349,9 @@ export const SujetosAsignados = ({
                 <ResumenCumplimientoLista resumen={seleccionado.resumen} />
                 <button
                   type="button" onClick={onIrARequisitos}
-                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-[11px] font-bold text-carbon-dark hover:bg-slate-50"
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-white text-sm font-bold shadow-sm hover:bg-primary-dark transition-colors"
                 >
-                  Evaluar requisitos
+                  <FileText className="w-4 h-4" /> Evaluar requisitos
                 </button>
               </>
             )}
@@ -344,6 +366,7 @@ export const SujetosAsignados = ({
           tipo={tipo}
           empresaId={empresaId}
           mandanteId={mandanteId}
+          perfilParticipacionId={perfilParticipacionId}
           proyectoDestinoId={proyectoDestinoId}
           proyectoDestinoNombre={proyectoDestinoNombre}
           onIngresado={handleIngresado}

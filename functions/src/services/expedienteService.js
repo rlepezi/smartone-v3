@@ -24,26 +24,28 @@ const AppError = require("../utils/AppError");
 
 const db = admin.firestore();
 
-// DESVIACIÓN DOCUMENTADA (decisions.md, "Estado de Expediente derivado"):
-// creado / en_revision / con_observaciones / aprobado se CALCULAN a partir
-// del estado real de las Evaluaciones (ver calcularEstadoDerivado). Los demás
-// cambios son decisiones manuales (ver decisions.md, "Ejecución y cierre de
-// Expedientes"):
-//  - aprobado → en_ejecucion ("Iniciar ejecución"): la Empresa acreditada ya
-//    opera en el Proyecto. Desde ahí el estado YA NO se recalcula: si
-//    aparecen pendientes, no cumple o vencidos, el Expediente muestra una
-//    alerta pero conserva su estado.
-//  - cualquiera salvo cerrado → cerrado ("Cerrar expediente", o automático
-//    al finalizar/archivar el Proyecto): finaliza la Participación y sus
-//    Personas/Maquinarias activas.
-//  - correcciones (solo superadmin): en_ejecucion → aprobado y reabrir un
-//    cerrado al estado que tenía antes del cierre.
+// Estado del Expediente = avance de la evaluación, CALCULADO desde sus
+// contadores (ver calcularEstadoDerivado):
+//  - creado: ningún requisito evaluado.
+//  - en_ejecucion: hay evaluados, pero faltan.
+//  - completado: todos los requisitos (Empresa, Personas y Maquinarias)
+//    evaluados, cumplan o no: el resultado se informa aparte con el % de
+//    cumplimiento (Acreditada / Aceptable / Rechazada).
+//  - completado_pendientes: ya estuvo completado (fechaCompletado) y
+//    apareció algo por evaluar (un requerimiento o un sujeto nuevo).
+// Los documentos vencidos no cambian el estado guardado (dependen del día):
+// la interfaz muestra "Completado con pendientes" si hay vencidos.
+//  - cerrado: decisión manual ("Cerrar expediente", o automático al
+//    finalizar/archivar el Proyecto); reabrir (superadmin) lo recalcula.
+// "Inicio en faena" (fechaInicioEjecucion) es una marca aparte, no un estado.
 // Todo cambio de estado escribe un documento en expedienteEstados en la
 // misma transacción, y un evento en Bitácora.
 
-// Estados que la derivación automática NUNCA pisa: una vez que el Expediente
-// entró a ejecución o se cerró, es una decisión manual.
-const ESTADOS_MANUALES = ["en_ejecucion", "cerrado"];
+// Estados que la derivación automática NUNCA pisa.
+const ESTADOS_MANUALES = ["cerrado"];
+
+// Estados desde los que se puede registrar el inicio en faena.
+const ESTADOS_COMPLETADOS = ["completado", "completado_pendientes"];
 
 // Motivos de cierre de un Expediente ("otro" exige detalle).
 const MOTIVOS_CIERRE = [
@@ -408,31 +410,47 @@ class ExpedienteService {
    * Sobre las instancias ACTIVAS: "evaluadas" son las que tienen resultado
    * cumple / no_cumple / no_aplica ("pendiente" — evaluada así o sin
    * evaluar — no cuenta).
-   *   - ninguna evaluada                     -> "creado"
-   *   - algunas sin evaluar                  -> "en_revision"
-   *   - todas evaluadas, algún "No Cumple"   -> "con_observaciones"
-   *   - todas evaluadas, sin "No Cumple"     -> "aprobado"
+   *   - todas evaluadas (y al menos una)       -> "completado"
+   *   - falta alguna y ya estuvo completado    -> "completado_pendientes"
+   *   - ninguna evaluada                       -> "creado"
+   *   - algunas evaluadas, faltan otras        -> "en_ejecucion"
    * @param {?Object} resumen Contadores del Expediente.
+   * @param {{fueCompletado: (boolean|undefined)}} [opciones] Si alguna vez
+   *     estuvo completado (fechaCompletado).
    * @return {{estado: string, total: number, evaluados: number,
    *     noCumple: number}} Estado derivado y conteos usados.
    */
-  calcularEstadoDerivado(resumen) {
+  calcularEstadoDerivado(resumen, {fueCompletado = false} = {}) {
     const r = resumen || resumenVacio();
     const total = r.activas || 0;
     const noCumple = r.noCumple || 0;
     const evaluados = (r.cumple || 0) + noCumple + (r.noAplica || 0);
     let estado;
-    if (evaluados === 0) estado = "creado";
-    else if (evaluados < total) estado = "en_revision";
-    else if (noCumple > 0) estado = "con_observaciones";
-    else estado = "aprobado";
+    if (total > 0 && evaluados >= total) estado = "completado";
+    else if (fueCompletado) estado = "completado_pendientes";
+    else if (evaluados === 0) estado = "creado";
+    else estado = "en_ejecucion";
     return {estado, total, evaluados, noCumple};
   }
 
   /**
+   * Estado derivado de un Expediente guardado, con los campos que agrega al
+   * cambiar (fechaCompletado la primera vez que se completa).
+   * @param {Object} expediente Expediente (resumen, fechaCompletado).
+   * @return {{estado: string, extra: Object}} Estado y campos a escribir.
+   */
+  _derivar(expediente) {
+    const {estado} = this.calcularEstadoDerivado(expediente.resumen,
+        {fueCompletado: Boolean(expediente.fechaCompletado)});
+    const extra = estado === "completado" && !expediente.fechaCompletado ?
+      {fechaCompletado: FieldValue.serverTimestamp()} : {};
+    return {estado, extra};
+  }
+
+  /**
    * Recalcula y persiste el estado derivado de un Expediente (ver
-   * calcularEstadoDerivado). No toca los estados manuales
-   * ("en_ejecucion"/"cerrado") ni un Expediente en generación. Nunca debe
+   * calcularEstadoDerivado). No toca un Expediente cerrado ni uno en
+   * generación. Nunca debe
    * hacer fallar la operación que lo dispara: los errores se registran.
    * @param {string} id ID del expediente.
    * @param {Object} actor Usuario que originó el cambio (para la bitácora).
@@ -452,10 +470,10 @@ class ExpedienteService {
             expediente.estadoGeneracion === "en_proceso") {
           return;
         }
-        const {estado} = this.calcularEstadoDerivado(expediente.resumen);
+        const {estado, extra} = this._derivar(expediente);
         if (estado === expediente.estado) return;
         this._aplicarCambioEstado(tx, expediente, {
-          estadoNuevo: estado, origen: "automatico", actor, actorNombre,
+          estadoNuevo: estado, origen: "automatico", actor, actorNombre, extra,
         });
         cambio = {expediente, estadoNuevo: estado};
       });
@@ -605,8 +623,10 @@ class ExpedienteService {
   }
 
   /**
-   * "Iniciar ejecución": aprobado → en_ejecucion. El Proyecto no puede estar
-   * finalizado, archivado ni suspendido. Fija fechaInicioEjecucion.
+   * "Registrar inicio en faena": marca (fechaInicioEjecucion) de que la
+   * Empresa ya opera en el Proyecto. No cambia el estado. Solo con el
+   * Expediente completado (o completado con pendientes) y una vez; el
+   * Proyecto no puede estar finalizado, archivado ni suspendido.
    * @param {string} id ID del Expediente.
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object>} El Expediente actualizado.
@@ -615,37 +635,41 @@ class ExpedienteService {
     // Se re-deriva antes: la decisión nunca se toma sobre un estado viejo.
     await this.recalcularEstado(id, actor);
     await this.getExpedienteById(id, actor);
-    const actorNombre = await this._nombreActor(actor);
-    let anterior;
+    let expedienteAntes;
     await db.runTransaction(async (tx) => {
       const expediente = await this._leerEnTransaccion(tx, id);
       const proyectoSnap = await tx.get(
           db.collection(proyectoRepository.COLLECTION)
               .doc(expediente.proyectoId),
       );
-      if (expediente.estado !== "aprobado") {
+      if (!ESTADOS_COMPLETADOS.includes(expediente.estado)) {
         throw new AppError(
             409,
-            "Solo un Expediente Aprobado puede pasar a En Ejecución " +
-            `(estado actual: '${expediente.estado}').`,
+            "Solo un Expediente Completado puede registrar el inicio en " +
+            `faena (estado actual: '${expediente.estado}').`,
         );
+      }
+      if (expediente.fechaInicioEjecucion) {
+        throw new AppError(409, "El inicio en faena ya está registrado.");
       }
       const estadoProyecto = proyectoSnap.data()?.estado;
       if (ESTADOS_PROYECTO_SIN_EJECUCION.includes(estadoProyecto)) {
         throw new AppError(
             409,
-            `El Proyecto está '${estadoProyecto}': no se puede iniciar la ` +
-            "ejecución.",
+            `El Proyecto está '${estadoProyecto}': no se puede registrar el ` +
+            "inicio en faena.",
         );
       }
-      this._aplicarCambioEstado(tx, expediente, {
-        estadoNuevo: "en_ejecucion", origen: "manual", actor, actorNombre,
-        extra: {fechaInicioEjecucion: FieldValue.serverTimestamp()},
+      tx.update(db.collection(expedienteRepository.COLLECTION).doc(id), {
+        fechaInicioEjecucion: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
-      anterior = expediente;
+      expedienteAntes = expediente;
     });
-    await this._registrarCambioEnBitacora(anterior, "en_ejecucion",
-        {origen: "manual"}, actor);
+    await bitacoraLogger.registrarEvento({
+      mandanteId: expedienteAntes.mandanteId, entidad: "expediente",
+      entidadId: id, accion: "inicio_faena", actor, detalle: {},
+    });
     return expedienteRepository.getById(id);
   }
 
@@ -906,8 +930,8 @@ class ExpedienteService {
   }
 
   /**
-   * Corrección (superadmin): en_ejecucion → aprobado. Borra
-   * fechaInicioEjecucion y retoma el recálculo automático.
+   * Corrección (superadmin): quita la marca de inicio en faena
+   * (fechaInicioEjecucion). No cambia el estado.
    * @param {string} id ID del Expediente.
    * @param {{detalle: string}} payload Motivo de la corrección.
    * @param {Object} actor Usuario autenticado.
@@ -916,34 +940,29 @@ class ExpedienteService {
   async volverAAprobado(id, payload, actor) {
     const detalle = this._exigirDetalle(payload?.detalle);
     await this.getExpedienteById(id, actor);
-    const actorNombre = await this._nombreActor(actor);
-    let anterior;
+    let expedienteAntes;
     await db.runTransaction(async (tx) => {
       const expediente = await this._leerEnTransaccion(tx, id);
-      if (expediente.estado !== "en_ejecucion") {
-        throw new AppError(
-            409, "Solo un Expediente En Ejecución puede volver a Aprobado.",
-        );
+      if (!expediente.fechaInicioEjecucion) {
+        throw new AppError(409, "El Expediente no tiene inicio en faena.");
       }
-      this._aplicarCambioEstado(tx, expediente, {
-        estadoNuevo: "aprobado", origen: "manual", motivo: "correccion",
-        detalle, actor, actorNombre,
-        extra: {fechaInicioEjecucion: null},
+      tx.update(db.collection(expedienteRepository.COLLECTION).doc(id), {
+        fechaInicioEjecucion: null,
+        updatedAt: FieldValue.serverTimestamp(),
       });
-      anterior = expediente;
+      expedienteAntes = expediente;
     });
-    await this._registrarCambioEnBitacora(anterior, "aprobado",
-        {origen: "manual", motivo: "correccion", detalle}, actor);
-    // Vuelve a la fase de evaluación: el estado se recalcula con la regla
-    // automática (puede quedar en otro estado si cambiaron las evaluaciones).
-    return await this.recalcularEstado(id, actor) ||
-        expedienteRepository.getById(id);
+    await bitacoraLogger.registrarEvento({
+      mandanteId: expedienteAntes.mandanteId, entidad: "expediente",
+      entidadId: id, accion: "inicio_faena_quitado", actor,
+      detalle: {motivo: "correccion", detalle},
+    });
+    return expedienteRepository.getById(id);
   }
 
   /**
-   * Corrección (superadmin): reabre un Expediente cerrado al estado que
-   * tenía antes del cierre (según expedienteEstados; si no hay historial,
-   * el que dan sus evaluaciones). NO reactiva la Participación ni las
+   * Corrección (superadmin): reabre un Expediente cerrado con el estado
+   * que dan sus evaluaciones. NO reactiva la Participación ni las
    * Personas/Maquinarias finalizadas.
    * @param {string} id ID del Expediente.
    * @param {{detalle: string}} payload Motivo de la corrección.
@@ -958,19 +977,18 @@ class ExpedienteService {
     let estadoNuevo;
     await db.runTransaction(async (tx) => {
       const expediente = await this._leerEnTransaccion(tx, id);
-      const ultimoCierre = await tx.get(
-          expedienteEstadoRepository.queryUltimoCierre(id),
-      );
       if (expediente.estado !== "cerrado") {
         throw new AppError(409, "El Expediente no está cerrado.");
       }
-      const previo = ultimoCierre.docs[0]?.data().estadoAnterior;
-      estadoNuevo = previo && previo !== "cerrado" ? previo :
-        this.calcularEstadoDerivado(expediente.resumen).estado;
+      const derivado = this._derivar(expediente);
+      estadoNuevo = derivado.estado;
       this._aplicarCambioEstado(tx, expediente, {
         estadoNuevo, origen: "manual", motivo: "reapertura", detalle, actor,
         actorNombre,
-        extra: {fechaCierre: null, motivoCierre: null, detalleCierre: null},
+        extra: {
+          ...derivado.extra,
+          fechaCierre: null, motivoCierre: null, detalleCierre: null,
+        },
       });
       anterior = expediente;
     });

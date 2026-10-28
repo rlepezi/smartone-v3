@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
+import { CampoIdentificacionRecurso } from "../shared/CampoIdentificacionRecurso";
+import { errorIdentificacion, normalizarPatente } from "../../utils/identificacionRecurso";
 import { Truck, Building2, AlertCircle, Repeat } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { recursoService } from "../../services/recursoService";
@@ -43,6 +45,8 @@ export const RecursoEdicionForm = ({
     nombre: "",
     tipo: "",
     estado: "activo",
+    // Alta: patente por defecto. Las maquinarias anteriores llegan sin tipo (null) y deben elegirlo.
+    tipoIdentificacion: "patente",
     patente: "",
     marca: "",
     modelo: "",
@@ -143,6 +147,7 @@ export const RecursoEdicionForm = ({
           tipo: data.tipo || "",
           estado: data.estado || "activo",
           patente: data.patente || "",
+          tipoIdentificacion: data.tipoIdentificacion || null,
           marca: data.marca || "",
           modelo: data.modelo || "",
           anio: data.anio ? String(data.anio) : "",
@@ -197,7 +202,8 @@ export const RecursoEdicionForm = ({
     if (usaTipoPersonalizado && !tipoPersonalizado.trim()) {
       newErrors.tipoPersonalizado = "Debe especificar el tipo.";
     }
-    if (!formData.patente.trim()) newErrors.patente = "La patente es obligatoria.";
+    const errorId = errorIdentificacion(formData.tipoIdentificacion, formData.patente);
+    if (errorId) newErrors.patente = errorId;
     if (!esEdicion) {
       if (!formData.empresaId) {
         newErrors.empresaId = "Debe seleccionar una Empresa.";
@@ -220,7 +226,8 @@ export const RecursoEdicionForm = ({
       nombre: formData.nombre.trim(),
       tipo: usaTipoPersonalizado ? tipoPersonalizado.trim() : formData.tipo,
       estado: formData.estado,
-      patente: formData.patente.trim(),
+      tipoIdentificacion: formData.tipoIdentificacion,
+      patente: formData.tipoIdentificacion === "patente" ? normalizarPatente(formData.patente) : formData.patente.trim(),
       confirmarPatenteDuplicada,
       marca: formData.marca.trim() || null,
       modelo: formData.modelo.trim() || null,
@@ -490,21 +497,14 @@ export const RecursoEdicionForm = ({
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Patente / Identificación *</label>
-              <input
-                type="text"
-                name="patente"
-                value={formData.patente}
-                onChange={handleChange}
-                disabled={!puedeEscribir}
-                placeholder="Ej: ABCD12"
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
-                  errors.patente ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                }`}
-              />
-              {errors.patente && <p className="text-xs text-red-500 mt-1">{errors.patente}</p>}
-            </div>
+            <CampoIdentificacionRecurso
+              tipo={formData.tipoIdentificacion}
+              valor={formData.patente}
+              disabled={!puedeEscribir}
+              onCambiarTipo={(v) => handleChange({ target: { name: "tipoIdentificacion", value: v } })}
+              onCambiarValor={(v) => handleChange({ target: { name: "patente", value: v } })}
+              error={errors.patente}
+            />
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Marca (Opcional)</label>

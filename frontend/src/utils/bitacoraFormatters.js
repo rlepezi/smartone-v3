@@ -17,7 +17,9 @@ const ESTADO_EXPEDIENTE_LABELS = {
   en_correccion: "En Corrección",
   reevaluacion: "Reevaluación",
   aprobado: "Aprobado",
-  en_ejecucion: "En Ejecución",
+  en_ejecucion: "En ejecución",
+  completado: "Completado",
+  completado_pendientes: "Completado con pendientes",
   cerrado: "Cerrado",
 };
 
@@ -70,6 +72,8 @@ export const describirEvento = (registro) => {
       const nuevo = ESTADO_EXPEDIENTE_LABELS[detalle?.estadoNuevo] || detalle?.estadoNuevo;
       return `Expediente transicionado a ${nuevo}`;
     }
+    if (accion === "inicio_faena") return "Inicio en faena registrado";
+    if (accion === "inicio_faena_quitado") return "Inicio en faena quitado (corrección)";
     if (accion === "requerimiento_agregado") return "Requerimiento agregado al Expediente";
     if (accion === "requerimiento_quitado") return "Requerimiento quitado del Expediente";
   }

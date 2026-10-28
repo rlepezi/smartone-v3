@@ -8,6 +8,12 @@ export const tipoDocumentalService = {
     return res.data;
   },
 
+  // datos: { codigo, nombre, entidades, campos, estadoIA?, modeloPreferido?, umbralLegibilidad? }.
+  async crear(datos) {
+    const res = await apiClient("/tipos-documentales", { method: "POST", body: datos });
+    return res.data;
+  },
+
   // cambios: { estadoIA, modeloPreferido, umbralLegibilidad, entidades, campos }.
   async actualizar(id, cambios) {
     const res = await apiClient(`/tipos-documentales/${id}`, { method: "PUT", body: cambios });

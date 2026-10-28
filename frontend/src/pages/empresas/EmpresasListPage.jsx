@@ -25,20 +25,9 @@ import { EmpresaChip } from "../../components/shared/EmpresaChip";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { ParticipantesCell } from "../../components/shared/ParticipantesCell";
 import { CLASE_LINEA } from "../../utils/lineasAlineadas";
+import { categoriaAcreditacionExpediente } from "../../utils/cumplimientoCalculos";
 
-// Espejo manual de MAPEO_ESTADO_KPI_EMPRESA en
-// functions/src/services/reporteService.js (fuente única de verdad) —
-// "rechazada"/"no acreditada" NO existe: la máquina de estados de
-// Expediente no tiene un estado terminal de rechazo, brecha conocida y
-// aceptada también ahí.
-const CATEGORIA_ACREDITACION = {
-  aprobado: "acreditada",
-  en_ejecucion: "acreditada",
-  cerrado: "acreditada",
-  creado: "en_proceso",
-  en_revision: "en_proceso",
-  con_observaciones: "con_observaciones",
-};
+// Categoría de acreditación: categoriaAcreditacionExpediente (utils/cumplimientoCalculos).
 
 const ACREDITACION_MAP = {
   acreditada: { label: "Acreditada", className: "bg-sage-lighter text-sage-darker border-sage-light" },
@@ -214,7 +203,7 @@ export const EmpresasListPage = () => {
   const categoriaAcreditacionDe = (empresaId) => {
     const row = (resumenGeneral?.porEmpresa || []).find((r) => r.empresaId === empresaId);
     if (!row?.expedienteEstado) return null;
-    return CATEGORIA_ACREDITACION[row.expedienteEstado] || null;
+    return categoriaAcreditacionExpediente(row.expedienteEstado, row.noCumple);
   };
 
   const empresasFiltradas = empresas.filter((e) => {
@@ -462,7 +451,7 @@ export const EmpresasListPage = () => {
                 ) : (
                   participaciones.map((p) => {
                     const avance = p.evaluacion?.avancePct ?? null;
-                    const categoria = CATEGORIA_ACREDITACION[p.evaluacion?.expedienteEstado] || null;
+                    const categoria = categoriaAcreditacionExpediente(p.evaluacion?.expedienteEstado, p.evaluacion?.noCumple);
                     return (
                       <div key={p.participacionId} className={CLASE_LINEA}>
                         {avance === null ? (

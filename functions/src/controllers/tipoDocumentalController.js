@@ -20,6 +20,23 @@ class TipoDocumentalController {
   }
 
   /**
+   * Crea un tipo (para las reglas de revisión IA).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async crear(req, res, next) {
+    try {
+      const data = await tipoDocumentalService.crear(req.body || {},
+          req.user);
+      res.status(201).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Edita un tipo.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

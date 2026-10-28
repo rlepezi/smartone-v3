@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { PatenteChip } from "../../../components/shared/PatenteChip";
 import { Search, Plus, Info, AlertCircle } from "lucide-react";
 import { acreditacionService } from "../../../services/acreditacionService";
 import { personaService } from "../../../services/personaService";
@@ -332,7 +333,9 @@ export const PasoAsignaciones = ({
                       className="w-4 h-4 shrink-0 rounded border-gray-300 text-primary focus:ring-primary/30"
                     />
                     <span className="text-xs font-semibold text-carbon-dark truncate">{nombreDe(i)}</span>
-                    <span className="text-[11px] text-slate-400 shrink-0">{tipo === "persona" ? (i.rut ? formatRutDisplay(i.rut) : "") : i.patente || ""}</span>
+                    {tipo === "persona"
+                      ? <span className="text-[11px] text-slate-400 shrink-0">{i.rut ? formatRutDisplay(i.rut) : ""}</span>
+                      : <span className="shrink-0"><PatenteChip valor={i.patente} tipo={i.tipoIdentificacion} /></span>}
                     <BadgesDisponibilidad item={i} proyectoActualId={proyectoActualId} seleccionada={Boolean(sel)} />
                     {sel && carpetaLista && ruta && (sel.carpetaRelativa ? (
                       <span title={sel.carpetaRelativa} className="shrink-0 px-1.5 rounded-full text-[10px] font-bold bg-sage-lighter text-sage-darker border border-sage-light">📁</span>

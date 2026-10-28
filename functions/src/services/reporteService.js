@@ -19,21 +19,22 @@ const {
   porcentajeCumplimiento, sumarResumenes, claveSujeto,
 } = require("../utils/cumplimiento");
 
-// Mapeo de estado de Expediente -> categoría del KPI de Empresas. Decisión
-// de diseño deliberada, no cambiar sin revisar el resto del reporte:
-//   - acreditadas: el Expediente ya alcanzó un estado operativo/aprobado.
-//   - enProceso: el Expediente sigue en preparación/revisión/corrección.
-//   - observadas: el Expediente tiene observaciones pendientes de corregir.
-// "rechazadas" NO existe: la máquina de estados de Expediente no tiene un
-// estado terminal de rechazo — brecha conocida y aceptada para este
-// reporte, no se simula acá.
-const MAPEO_ESTADO_KPI_EMPRESA = {
-  aprobado: "acreditadas",
-  en_ejecucion: "acreditadas",
-  cerrado: "acreditadas",
-  creado: "enProceso",
-  en_revision: "enProceso",
-  con_observaciones: "observadas",
+// Categoría del KPI de Empresas de un Expediente, según su estado (avance
+// de la evaluación) y su resultado:
+//   - enProceso: aún en evaluación (creado / en_ejecucion).
+//   - observadas: evaluado (completado, con o sin pendientes nuevos) con
+//     algún requisito "No cumple".
+//   - acreditadas: evaluado sin "No cumple", o cerrado.
+// "rechazadas" NO existe como estado: el resultado se ve en el % de
+// cumplimiento (Acreditada / Aceptable / Rechazada).
+const ESTADOS_EN_PROCESO = ["creado", "en_ejecucion"];
+const categoriaKpiEmpresa = (expediente) => {
+  if (expediente.estado === "cerrado") return "acreditadas";
+  if (ESTADOS_EN_PROCESO.includes(expediente.estado)) return "enProceso";
+  if (["completado", "completado_pendientes"].includes(expediente.estado)) {
+    return expediente.resumen?.noCumple ? "observadas" : "acreditadas";
+  }
+  return null;
 };
 
 const TIPOS_DETALLE_VALIDOS = [
@@ -84,7 +85,7 @@ class ReporteService {
   }
 
   /**
-   * Agrupa un conjunto de Expedientes según MAPEO_ESTADO_KPI_EMPRESA.
+   * Agrupa un conjunto de Expedientes según categoriaKpiEmpresa.
    * `total` cuenta EXPEDIENTES (procesos de acreditación), no Empresas
    * distintas. La vista deduplicada por Empresa vive en `porEmpresa`.
    * @param {Object[]} expedientes Expedientes a categorizar.
@@ -94,7 +95,7 @@ class ReporteService {
   _categorizarEmpresas(expedientes) {
     const conteo = {acreditadas: 0, enProceso: 0, observadas: 0};
     expedientes.forEach((e) => {
-      const categoria = MAPEO_ESTADO_KPI_EMPRESA[e.estado];
+      const categoria = categoriaKpiEmpresa(e);
       if (categoria) conteo[categoria]++;
     });
     return {total: expedientes.length, ...conteo};
@@ -413,6 +414,7 @@ class ReporteService {
       evaluacion: {
         avancePct: avance.avancePct,
         evaluados: avance.cumple + avance.noCumple + avance.noAplica,
+        noCumple: avance.noCumple,
         expedienteEstado: expediente?.estado || null,
       },
     };

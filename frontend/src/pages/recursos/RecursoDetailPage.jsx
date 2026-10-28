@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { PatenteChip } from "../../components/shared/PatenteChip";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -439,7 +440,9 @@ export const RecursoDetailPage = () => {
       <TarjetaPanel titulo="Datos de la Maquinaria">
         <div className="space-y-3">
           <CampoInfo etiqueta="Nombre">{recurso.nombre}</CampoInfo>
-          <CampoInfo etiqueta="Identificación / Patente">{recurso.patente}</CampoInfo>
+          <CampoInfo etiqueta={recurso.tipoIdentificacion === "serie" ? "N° de serie / código interno" : recurso.tipoIdentificacion === "patente" ? "Patente" : "Identificación"}>
+            {recurso.patente ? <PatenteChip valor={recurso.patente} tipo={recurso.tipoIdentificacion} /> : null}
+          </CampoInfo>
           <CampoInfo etiqueta="Marca">{recurso.marca}</CampoInfo>
           <CampoInfo etiqueta="Modelo">{recurso.modelo}</CampoInfo>
           <CampoInfo etiqueta="Año">{recurso.anio}</CampoInfo>
@@ -498,7 +501,13 @@ export const RecursoDetailPage = () => {
       <DetalleEntidadLayout
         onVolver={() => { if (confirmarSalida()) navigate("/recursos"); }}
         titulo={recurso.nombre}
-        subtitulo={`${formatCatalogo(recurso.tipo)}${recurso.patente ? ` · ${recurso.patente}` : ""}${nombreEmpresa ? ` · ${nombreEmpresa}` : ""}`}
+        subtitulo={(
+          <span className="inline-flex items-center flex-wrap gap-1.5">
+            {formatCatalogo(recurso.tipo)}
+            {recurso.patente && <>· <PatenteChip valor={recurso.patente} tipo={recurso.tipoIdentificacion} /></>}
+            {nombreEmpresa && <>· {nombreEmpresa}</>}
+          </span>
+        )}
         badge={<StatusBadge value={recurso.estado} map={MAPA_ACTIVO_INACTIVO} />}
         acciones={puedeEscribir && (
           <>

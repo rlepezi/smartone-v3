@@ -14,6 +14,7 @@ import { OpcionesRadio } from "../../components/shared/OpcionesRadio";
 import { Pagination } from "../../components/shared/Pagination";
 import { RequerimientoModal } from "../../components/requerimientos/RequerimientoModal";
 import { estadoIAReq } from "../../utils/reglasIA";
+import { ordenarPerfilesParticipacion } from "../../utils/ordenPerfiles";
 import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
@@ -273,19 +274,23 @@ export const RequerimientosListPage = () => {
     if (pideNuevo) cambiarContexto({ nuevo: null });
   };
 
-  const ppActivos = perfilesParticipacion.filter((p) => p.estado === "activo");
+  const ppActivos = ordenarPerfilesParticipacion(perfilesParticipacion.filter((p) => p.estado === "activo"));
   const prActivos = perfilesRecurso.filter((p) => p.tipo === tipo && p.estado === "activo");
   const nombrePP = Object.fromEntries(perfilesParticipacion.map((p) => [p.id, p.nombre]));
   const nombrePR = Object.fromEntries(perfilesRecurso.map((p) => [p.id, p.nombre]));
 
   const delTipo = requerimientos.filter((r) => r.tipoEntidad === tipo);
   const termino = busqueda.trim().toLowerCase();
-  const filas = delTipo.filter((r) => {
+  // Los del tipo que calzan con los chips de perfiles seleccionados; alimenta el contador.
+  const delPerfil = delTipo.filter((r) => {
     const pps = r.aplicabilidad?.perfilParticipacionIds || [];
     const prs = r.aplicabilidad?.perfilRecursoIds ?? null;
     if (chipsPP.length && !chipsPP.some((id) => pps.includes(id))) return false;
     // "Todos" aplica a cualquier Perfil de Recurso.
     if (tipo !== "empresa" && chipsPR.length && prs !== null && !chipsPR.some((id) => prs.includes(id))) return false;
+    return true;
+  });
+  const filas = delPerfil.filter((r) => {
     if (filtroEstado && r.estado !== filtroEstado) return false;
     if (termino && !`${r.nombre} ${r.nombreCorto || ""} ${r.descripcion || ""}`.toLowerCase().includes(termino)) return false;
     return true;
@@ -302,9 +307,15 @@ export const RequerimientosListPage = () => {
     cambiarContexto({ pp: null, pr: null });
   };
 
-  const alternarChip = (clave, actuales, id) => cambiarContexto({
-    [clave]: actuales.includes(id) ? actuales.filter((x) => x !== id) : [...actuales, id],
-  });
+  // Sin chips en la URL se muestran todos los perfiles, y los chips se ven activos. Al tocar uno
+  // con todos activos se desmarca solo ese; si quedan todos o ninguno, se vuelve a "todos".
+  const chipActivo = (actuales, id) => actuales.length === 0 || actuales.includes(id);
+  const alternarChip = (clave, actuales, id, disponibles) => {
+    const ids = disponibles.map((p) => p.id);
+    const base = actuales.length === 0 ? ids : actuales.filter((x) => ids.includes(x));
+    const siguiente = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    cambiarContexto({ [clave]: siguiente.length === 0 || siguiente.length === ids.length ? null : siguiente });
+  };
 
   const abrirNuevo = () => setModal({ requerimiento: null });
   const abrirEdicion = (r) => setModal({ requerimiento: r });
@@ -319,7 +330,7 @@ export const RequerimientosListPage = () => {
     activo ? "bg-primary border-primary text-white" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
   }`;
   const entidad = etiquetaTipoEntidad(tipo);
-  const activosDelTipo = delTipo.filter((r) => r.estado === "activo").length;
+  const activosDelPerfil = delPerfil.filter((r) => r.estado === "activo").length;
   const tipoModal = modalAbierto?.requerimiento?.tipoEntidad || tipo;
 
   const botonNuevo = puedeEscribir && (
@@ -387,7 +398,7 @@ export const RequerimientosListPage = () => {
                         type="button"
                         role="tab"
                         aria-selected={activa}
-                        onClick={() => cambiarContexto({ tipo: t.value, pr: null })}
+                        onClick={() => cambiarContexto({ tipo: t.value, pp: null, pr: null })}
                         className={`relative flex flex-col items-center gap-2 px-2 py-4 sm:py-5 rounded-2xl border-2 transition-colors ${CLASE_FOCO} ${
                           activa ? "border-primary bg-primary-lighter" : "border-slate-200 bg-white hover:border-slate-300"
                         }`}
@@ -425,9 +436,9 @@ export const RequerimientosListPage = () => {
                     <div className="flex flex-wrap gap-2">
                       {ppActivos.map((p) => (
                         <button
-                          key={p.id} type="button" aria-pressed={chipsPP.includes(p.id)}
-                          onClick={() => alternarChip("pp", chipsPP, p.id)}
-                          className={claseChip(chipsPP.includes(p.id))}
+                          key={p.id} type="button" aria-pressed={chipActivo(chipsPP, p.id)}
+                          onClick={() => alternarChip("pp", chipsPP, p.id, ppActivos)}
+                          className={claseChip(chipActivo(chipsPP, p.id))}
                         >
                           {p.nombre}
                         </button>
@@ -444,9 +455,9 @@ export const RequerimientosListPage = () => {
                       <div className="flex flex-wrap gap-2">
                         {prActivos.map((p) => (
                           <button
-                            key={p.id} type="button" aria-pressed={chipsPR.includes(p.id)}
-                            onClick={() => alternarChip("pr", chipsPR, p.id)}
-                            className={claseChip(chipsPR.includes(p.id))}
+                            key={p.id} type="button" aria-pressed={chipActivo(chipsPR, p.id)}
+                            onClick={() => alternarChip("pr", chipsPR, p.id, prActivos)}
+                            className={claseChip(chipActivo(chipsPR, p.id))}
                           >
                             {p.nombre}
                           </button>
@@ -465,7 +476,7 @@ export const RequerimientosListPage = () => {
                 <div>
                   <h2 className="text-lg font-bold text-carbon-dark">Requerimientos de {entidad}</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {delTipo.length} {delTipo.length === 1 ? "requerimiento" : "requerimientos"} · {activosDelTipo} {activosDelTipo === 1 ? "activo" : "activos"}
+                    {delPerfil.length} {delPerfil.length === 1 ? "requerimiento" : "requerimientos"} · {activosDelPerfil} {activosDelPerfil === 1 ? "activo" : "activos"}
                   </p>
                 </div>
                 {botonNuevo}
@@ -510,7 +521,7 @@ export const RequerimientosListPage = () => {
                   <ul className="divide-y divide-slate-100">
                     {filasPagina.map((r) => {
                       const titulo = r.nombreCorto || r.nombre;
-                      const pps = (r.aplicabilidad?.perfilParticipacionIds || []).map((id) => nombrePP[id] || "—");
+                      const pps = ordenarPerfilesParticipacion((r.aplicabilidad?.perfilParticipacionIds || []).map((id) => ({ nombre: nombrePP[id] || "—" }))).map((p) => p.nombre);
                       const prs = r.aplicabilidad?.perfilRecursoIds ?? null;
                       const aplica = `${pps.length ? pps.join(" · ") : "Sin perfiles"}${
                         tipo === "empresa" ? "" : ` — ${prs === null ? "Todos" : prs.map((id) => nombrePR[id] || "—").join(", ")}`}`;

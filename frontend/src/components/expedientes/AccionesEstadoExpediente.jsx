@@ -9,9 +9,10 @@ const CLASE_CAMPO = "w-full px-3 py-2 rounded-lg border text-xs focus:outline-no
 const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
 // Acciones de estado de un Expediente (detalle). Devuelve:
-//  - `botonPrincipal`: "Iniciar ejecución" (aprobado) o "Cerrar expediente" (en ejecución), o null.
-//  - `accionesMenu`: ítems para el menú ⋮ ("Cerrar expediente" en la fase de evaluación;
-//    "Volver a Aprobado" y "Reabrir" solo para superadmin).
+//  - `botonPrincipal`: "Registrar inicio en faena" (completado, sin marca) o "Cerrar expediente"
+//    (con inicio en faena), o null. El inicio en faena es una marca, no cambia el estado.
+//  - `accionesMenu`: ítems para el menú ⋮ ("Cerrar expediente" mientras no sea el botón principal;
+//    "Quitar inicio en faena" y "Reabrir" solo para superadmin).
 //  - `modales`: los diálogos de confirmación, a dibujar en la página.
 // Permisos: superadmin y mandante_admin gestionan el estado (el backend acota al Mandante);
 // mandante_lector y evaluador no ven acciones. `onCambiado` recarga el detalle.
@@ -59,18 +60,20 @@ export const useAccionesEstadoExpediente = ({ expediente, rol, alcanceCierre, on
     return ejecutar(() => llamada(expediente.id, { detalle: detalle.trim() }));
   };
 
+  const completado = ["completado", "completado_pendientes"].includes(estado);
+  const enFaena = Boolean(expediente?.fechaInicioEjecucion);
   let botonPrincipal = null;
-  if (gestiona && estado === "aprobado") {
-    botonPrincipal = <ActionButton variant="primary" icon={PlayCircle} onClick={() => abrir("iniciar")}>Iniciar ejecución</ActionButton>;
-  } else if (gestiona && estado === "en_ejecucion") {
+  if (gestiona && completado && !enFaena) {
+    botonPrincipal = <ActionButton variant="primary" icon={PlayCircle} onClick={() => abrir("iniciar")}>Registrar inicio en faena</ActionButton>;
+  } else if (gestiona && enFaena && estado !== "cerrado") {
     botonPrincipal = <ActionButton variant="primary" icon={Lock} onClick={() => abrir("cerrar")}>Cerrar expediente</ActionButton>;
   }
 
   const accionesMenu = [
-    ...(gestiona && ["creado", "en_revision", "con_observaciones"].includes(estado)
+    ...(gestiona && estado !== "cerrado" && !enFaena
       ? [{ label: "Cerrar expediente", icon: Lock, onClick: () => abrir("cerrar") }] : []),
-    ...(esSuperadmin && estado === "en_ejecucion"
-      ? [{ label: "Volver a Aprobado", icon: Undo2, onClick: () => abrir("volver") }] : []),
+    ...(esSuperadmin && enFaena && estado !== "cerrado"
+      ? [{ label: "Quitar inicio en faena", icon: Undo2, onClick: () => abrir("volver") }] : []),
     ...(esSuperadmin && estado === "cerrado"
       ? [{ label: "Reabrir expediente", icon: RotateCcw, onClick: () => abrir("reabrir") }] : []),
   ];
@@ -101,9 +104,9 @@ export const useAccionesEstadoExpediente = ({ expediente, rol, alcanceCierre, on
     <>
       {dialogo === "iniciar" && (
         <ConfirmacionModal
-          titulo="Iniciar ejecución"
-          mensaje="El expediente pasa a En Ejecución: la empresa acreditada comienza a operar en el proyecto. Desde ahora el estado ya no se recalcula con las evaluaciones; si aparecen requisitos vencidos, pendientes o que no cumplen, se mostrará una alerta."
-          textoConfirmar="Iniciar ejecución"
+          titulo="Registrar inicio en faena"
+          mensaje="Se registra hoy como la fecha en que la empresa comenzó a operar en el proyecto. El estado del expediente no cambia: sigue calculándose con las evaluaciones."
+          textoConfirmar="Registrar inicio"
           ocupado={ocupado}
           onCancelar={cerrarDialogo}
           onConfirmar={() => ejecutar(() => expedienteService.iniciarEjecucion(expediente.id))}
@@ -142,9 +145,9 @@ export const useAccionesEstadoExpediente = ({ expediente, rol, alcanceCierre, on
       {dialogo === "volver" && (
         <ConfirmacionModal
           peligro
-          titulo="Volver a Aprobado"
-          mensaje="Corrección de un error: el expediente sale de En Ejecución, se borra la fecha de inicio de ejecución y el estado vuelve a calcularse con las evaluaciones."
-          textoConfirmar="Volver a Aprobado"
+          titulo="Quitar inicio en faena"
+          mensaje="Corrección de un error: se borra la fecha de inicio en faena. El estado del expediente no cambia."
+          textoConfirmar="Quitar inicio en faena"
           ocupado={ocupado}
           onCancelar={cerrarDialogo}
           onConfirmar={() => confirmarCorreccion(expedienteService.volverAAprobado)}
@@ -159,7 +162,7 @@ export const useAccionesEstadoExpediente = ({ expediente, rol, alcanceCierre, on
         <ConfirmacionModal
           peligro
           titulo="Reabrir expediente"
-          mensaje="El expediente vuelve al estado que tenía antes del cierre. No se reactivan la participación ni las personas y maquinarias finalizadas: eso se gestiona aparte."
+          mensaje="El expediente vuelve al estado que dan sus evaluaciones. No se reactivan la participación ni las personas y maquinarias finalizadas: eso se gestiona aparte."
           textoConfirmar="Reabrir"
           ocupado={ocupado}
           onCancelar={cerrarDialogo}

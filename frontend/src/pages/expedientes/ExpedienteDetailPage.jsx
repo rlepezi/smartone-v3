@@ -5,7 +5,7 @@ import {
   ArrowLeft, ClipboardList, LayoutGrid, CheckCircle2,
   History, ChevronDown, ChevronUp, ChevronRight, Download, Building2, Users, Truck,
   Home, ExternalLink, Info, ClipboardCheck,
-  Clock, XCircle, X, AlertTriangle, Lock, CalendarClock, Sparkles, FolderOpen,
+  Clock, XCircle, X, Percent, AlertTriangle, Lock, CalendarClock, Sparkles, FolderOpen,
 } from "lucide-react";
 import { TabDocumentacion } from "../../components/expedientes/documentacion/TabDocumentacion";
 import { PanelDocumentos } from "../../components/expedientes/documentacion/PanelDocumentos";
@@ -36,15 +36,16 @@ import { formatCatalogo } from "../../utils/formatCatalogo";
 import { mandanteService } from "../../services/mandanteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import {
-  porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio,
+  porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio, textoPorcentaje, nivelAcreditacion,
 } from "../../utils/cumplimientoCalculos";
+import { BadgeAcreditacion } from "../../components/shared/BadgeAcreditacion";
 import { MultiSegmentRing } from "../../components/shared/MultiSegmentRing";
 import { CLASE_PISTA_DONA, segmentosCumplimiento } from "../../utils/estadosCumplimiento";
 import { PlanillaEvaluacion } from "../../components/expedientes/PlanillaEvaluacion";
 import { SujetosAsignados } from "../../components/expedientes/SujetosAsignados";
 import { useAccionesEstadoExpediente } from "../../components/expedientes/AccionesEstadoExpediente";
 import { HistorialEstadosExpediente } from "../../components/expedientes/HistorialEstadosExpediente";
-import { problemasEnEjecucion, textoProblemas } from "../../utils/alertasExpediente";
+import { problemasExpediente, textoProblemas, estadoVisibleExpediente } from "../../utils/alertasExpediente";
 import { resumenTextoVencimientos } from "../../utils/vencimientos";
 import { VencimientosExpediente } from "../../components/expedientes/VencimientosExpediente";
 import { ConfigurarRequerimientosModal } from "../../components/perfiles-participacion/ConfigurarRequerimientosModal";
@@ -86,6 +87,7 @@ const construirRecursosItems = (expedienteData, recursosAsignados, recursosOptio
       nombre: r?.nombre || a.recursoId,
       subtitulo: r?.tipo ? formatCatalogo(r.tipo) : "",
       busqueda: r?.patente || "",
+      tipoIdentificacion: r?.tipoIdentificacion || null,
       avancePct: porcentajeCumplimiento(resumen),
       estado: calcularEstadoSujeto(resumen),
       requerimientos: resumen?.activas || 0,
@@ -175,6 +177,37 @@ const PuntosEstado = ({ d }) => (
     ))}
   </div>
 );
+
+// Tarjetas de resumen de la pestaña Empresa, Personas o Recursos: % de cumplimiento (con su nivel
+// de acreditación) y contadores.
+const KpisComponente = ({ d, umbrales }) => {
+  const nivel = nivelAcreditacion(d.avancePct, umbrales);
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className={`flex items-center gap-3 p-4 rounded-2xl border ${nivel.caja}`}>
+        <Percent className={`w-5 h-5 ${nivel.icono}`} />
+        <div>
+          <p className={`text-lg font-black leading-none ${nivel.texto}`}>{textoPorcentaje(d.avancePct)}</p>
+          <p className={`text-[11px] mt-1 font-bold ${nivel.texto}`}>{nivel.etiqueta || "Cumplimiento"}</p>
+        </div>
+      </div>
+      {[
+        { n: d.total, l: "Requisitos totales", box: "bg-primary-lighter/60 border-primary-light", Icono: ClipboardCheck, ic: "text-primary" },
+        { n: d.cumple, l: "Cumplen", box: "bg-sage-lighter border-slate-100", Icono: CheckCircle2, ic: "text-sage-darker" },
+        { n: d.pendiente, l: "Pendientes", box: "bg-amber-50 border-amber-100", Icono: Clock, ic: "text-amber-500" },
+        { n: d.noCumple, l: "No cumplen", box: "bg-red-50 border-red-100", Icono: XCircle, ic: "text-red-500" },
+      ].map((k) => (
+        <div key={k.l} className={`flex items-center gap-3 p-4 rounded-2xl border ${k.box}`}>
+          <k.Icono className={`w-5 h-5 ${k.ic}`} />
+          <div>
+            <p className="text-lg font-black text-carbon-dark leading-none">{k.n}</p>
+            <p className="text-[11px] text-slate-500 mt-1">{k.l}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export const ExpedienteDetailPage = () => {
   const { id } = useParams();
@@ -323,7 +356,7 @@ export const ExpedienteDetailPage = () => {
     cargarOpciones();
   }, []);
 
-  // Acciones de estado (Iniciar ejecución, Cerrar, Volver a Aprobado, Reabrir) y sus modales.
+  // Acciones de estado (Registrar inicio en faena, Cerrar, Quitar inicio en faena, Reabrir) y sus modales.
   const accionesEstado = useAccionesEstadoExpediente({
     expediente,
     rol: profile?.rol,
@@ -379,7 +412,9 @@ export const ExpedienteDetailPage = () => {
   }
 
   const cerrado = expediente.estado === "cerrado";
-  const problemas = problemasEnEjecucion(expediente, vencimientos ? vencimientos.totales?.vencidos || 0 : undefined);
+  const vencidosExpediente = vencimientos ? vencimientos.totales?.vencidos || 0 : undefined;
+  const problemas = problemasExpediente(expediente, vencidosExpediente);
+  const estadoVisible = estadoVisibleExpediente(expediente, vencidosExpediente);
 
   // Vencimientos agrupados (todo sale de la respuesta del endpoint, sin cálculos propios).
   const itemsVencimiento = vencimientos?.items || [];
@@ -416,16 +451,16 @@ export const ExpedienteDetailPage = () => {
     navigate(`/expedientes/${id}?${siguiente.toString()}`);
   };
 
-  // Fecha en que se alcanzó cada etapa del stepper (0 Creado … 4 Cerrado), desde el historial: la
-  // última vez que se llegó a ese estado. "Con observaciones" cuenta como la etapa En Revisión.
-  const ETAPA_DE_ESTADO = { creado: 0, en_revision: 1, con_observaciones: 1, aprobado: 2, en_ejecucion: 3, cerrado: 4 };
+  // Fecha en que se alcanzó cada etapa del stepper (0 Creado, 1 En ejecución, 2 Completado,
+  // 3 Cerrado), desde el historial: la última vez que se llegó a ese estado.
+  const ETAPA_DE_ESTADO = { creado: 0, en_ejecucion: 1, completado: 2, completado_pendientes: 2, cerrado: 3 };
   const fechasEtapas = [expediente.createdAt];
   (historialEstados || []).forEach((h) => {
     const etapa = ETAPA_DE_ESTADO[h.estadoNuevo];
     if (etapa !== undefined) fechasEtapas[etapa] = h.createdAt;
   });
 
-  // Alerta de "En Ejecución": lleva a la tabla de requisitos de la Empresa filtrada a los casos.
+  // Aviso de "Completado con pendientes": lleva a la tabla de requisitos de la Empresa filtrada.
   const verRequisitosConProblemas = () => {
     setFiltroRequisitos("con_problemas");
     cambiarNivel("empresa");
@@ -466,6 +501,14 @@ export const ExpedienteDetailPage = () => {
     setRecursoSeleccionadoId(sujetoId);
     setDetalleCerrado(sujetoId === null);
     setRequisitosAbiertos(sujetoId !== null);
+  };
+
+  // Clic en una fila del listado: solo muestra su detalle. Los requisitos se abren con el botón
+  // "Evaluar requisitos" del panel de detalle.
+  const verDetalleSujeto = (sujetoId) => {
+    setRecursoSeleccionadoId(sujetoId);
+    setDetalleCerrado(sujetoId === null);
+    setRequisitosAbiertos(false);
   };
 
   // Navegación ←/→ entre evaluados del mismo nivel, sin subir al panel de selección: solo tiene
@@ -718,7 +761,7 @@ export const ExpedienteDetailPage = () => {
       {problemas && (
         <div role="alert" className="flex items-center gap-3 flex-wrap px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span className="flex-1 min-w-[12rem] font-semibold">En ejecución con {textoProblemas(problemas)}.</span>
+          <span className="flex-1 min-w-[12rem] font-semibold">Completado con pendientes: {textoProblemas(problemas)}.</span>
           <button
             type="button"
             onClick={verRequisitosConProblemas}
@@ -750,7 +793,12 @@ export const ExpedienteDetailPage = () => {
 
       {/* Estado del Expediente */}
       <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
-        <EstadoExpedienteStepper estado={expediente.estado} variante="completa" fechas={fechasEtapas} />
+        <EstadoExpedienteStepper estado={estadoVisible} variante="completa" fechas={fechasEtapas} />
+        {expediente.fechaInicioEjecucion && (
+          <p className="mt-4 text-center text-[11px] text-slate-500">
+            En faena desde el <strong className="text-slate-700">{formatFecha(expediente.fechaInicioEjecucion)}</strong>
+          </p>
+        )}
       </div>
 
       {/* Pestañas */}
@@ -860,6 +908,7 @@ export const ExpedienteDetailPage = () => {
                           {d.total} requisitos
                         </span>
                         <span className="ml-auto"><PuntosEstado d={d} /></span>
+                        <BadgeAcreditacion pct={d.avancePct} umbrales={mandante?.umbralesAcreditacion} />
                         <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
                       </button>
                     ))}
@@ -873,22 +922,7 @@ export const ExpedienteDetailPage = () => {
             {/* ── Empresa ── */}
             {nivelActivo === "empresa" && (
               <>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  {[
-                    { n: dEmpresa.total, l: "Requisitos totales", box: "bg-primary-lighter/60 border-primary-light", Icono: ClipboardCheck, ic: "text-primary" },
-                    { n: dEmpresa.cumple, l: "Cumplen", box: "bg-sage-lighter border-slate-100", Icono: CheckCircle2, ic: "text-sage-darker" },
-                    { n: dEmpresa.pendiente, l: "Pendientes", box: "bg-amber-50 border-amber-100", Icono: Clock, ic: "text-amber-500" },
-                    { n: dEmpresa.noCumple, l: "No cumplen", box: "bg-red-50 border-red-100", Icono: XCircle, ic: "text-red-500" },
-                  ].map((k) => (
-                    <div key={k.l} className={`flex items-center gap-3 p-4 rounded-2xl border ${k.box}`}>
-                      <k.Icono className={`w-5 h-5 ${k.ic}`} />
-                      <div>
-                        <p className="text-lg font-black text-carbon-dark leading-none">{k.n}</p>
-                        <p className="text-[11px] text-slate-500 mt-1">{k.l}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <KpisComponente d={dEmpresa} umbrales={mandante?.umbralesAcreditacion} />
 
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
@@ -956,19 +990,22 @@ export const ExpedienteDetailPage = () => {
             {/* ── Personas / Recursos ── */}
             {(nivelActivo === "persona" || nivelActivo === "recurso") && (
               <>
+                <KpisComponente d={nivelActivo === "persona" ? dPersonas : dRecursos} umbrales={mandante?.umbralesAcreditacion} />
                 <SujetosAsignados
                   key={nivelActivo}
                   tipo={nivelActivo}
                   items={itemsActivos}
                   seleccionadoId={seleccionadoId}
-                  onSeleccionar={seleccionarSujeto}
+                  onSeleccionar={verDetalleSujeto}
                   empresaId={expediente.empresaId}
                   empresaNombre={nombreEmpresa}
                   mandanteId={expediente.mandanteId}
+                  umbralesAcreditacion={mandante?.umbralesAcreditacion}
                   proyectoDestinoId={expediente.proyectoId}
                   proyectoDestinoNombre={proyecto?.nombre}
                   proyectoTexto={proyectoTexto}
                   perfilParticipacionNombre={perfil?.nombre}
+                  perfilParticipacionId={expediente.perfilParticipacionId}
                   onIngresado={() => { cargarOpciones(); cargarDatos(true); }}
                   puedeConfigurar={puedeConfigurarRequerimientos && !cerrado}
                   puedeIngresar={!cerrado}
@@ -991,9 +1028,17 @@ export const ExpedienteDetailPage = () => {
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                             {nivelActivo === "persona" ? "Requisitos de la persona" : "Requisitos de la maquinaria"}
                           </p>
-                          <h3 className="text-base font-bold text-carbon-dark truncate">
-                            {itemsActivos.find((i) => i.id === seleccionadoId)?.nombre}
-                          </h3>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h3 className="text-base font-bold text-carbon-dark truncate">
+                              {itemsActivos.find((i) => i.id === seleccionadoId)?.nombre}
+                            </h3>
+                            {/* Tipo de trabajador (Perfiles de persona) o tipo de maquinaria. */}
+                            {itemsActivos.find((i) => i.id === seleccionadoId)?.subtitulo && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-primary-lighter border border-primary-light text-primary-dark text-[11px] font-bold whitespace-nowrap">
+                                {itemsActivos.find((i) => i.id === seleccionadoId).subtitulo}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <button
                           type="button"

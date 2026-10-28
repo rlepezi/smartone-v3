@@ -676,8 +676,12 @@ class EmpresaService {
           tipo: "maquinaria",
           id: m.id,
           nombre: m.nombre,
-          identificacion: m.patente ?
-              {tipo: "PATENTE", numero: m.patente} : null,
+          // Sin tipo guardado (maquinarias anteriores) no se asume patente.
+          identificacion: m.patente ? {
+            tipo: m.tipoIdentificacion === "serie" ? "SERIE" :
+              m.tipoIdentificacion === "patente" ? "PATENTE" : "IDENTIFICACION",
+            numero: m.patente,
+          } : null,
           detalle: m.tipo || null,
           estadoSujeto: m.estado || null,
           proyectos: proyectosRecurso(m.id),

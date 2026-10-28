@@ -1,18 +1,24 @@
 import { apiClient } from "../api/apiClient";
 
-// Catálogo de estados: espejo manual de
-// functions/src/services/expedienteService.js (fuente única de verdad).
-// creado / en_revision / con_observaciones / aprobado son DERIVADOS de las Evaluaciones reales
-// (el backend los recalcula solo); en_ejecucion y cerrado son decisiones manuales ("Iniciar
-// ejecución" y "Cerrar expediente"), y el cierre también ocurre al finalizar el Proyecto.
+// Catálogo de estados: espejo manual de functions/src/services/expedienteService.js (fuente única
+// de verdad). El estado es el AVANCE de la evaluación y lo calcula el backend: creado (nada
+// evaluado), en_ejecucion (faltan requisitos), completado (todo evaluado; el resultado va aparte,
+// con el % de cumplimiento) y completado_pendientes (estuvo completado y apareció algo por evaluar;
+// la interfaz también lo muestra así si hay documentos vencidos). cerrado es manual.
 export const ESTADOS_EXPEDIENTE = [
   { value: "creado", label: "Creado", color: "bg-primary-lighter text-primary-dark border-primary-light" },
-  { value: "en_revision", label: "En Revisión", color: "bg-amber-50 text-amber-700 border-amber-200" },
-  { value: "con_observaciones", label: "Con Observaciones", color: "bg-amber-50 text-amber-700 border-amber-200" },
-  { value: "aprobado", label: "Aprobado", color: "bg-sage-lighter text-sage-darker border-sage-light" },
-  { value: "en_ejecucion", label: "En Ejecución", color: "bg-sage-lighter text-sage-darker border-sage-light" },
+  { value: "en_ejecucion", label: "En ejecución", color: "bg-blue-50 text-blue-700 border-blue-200" },
+  { value: "completado", label: "Completado", color: "bg-sage-lighter text-sage-darker border-sage-light" },
+  { value: "completado_pendientes", label: "Completado con pendientes", color: "bg-amber-50 text-amber-700 border-amber-200" },
   { value: "cerrado", label: "Cerrado", color: "bg-slate-100 text-slate-600 border-slate-200" },
 ];
+
+// Etiqueta de un estado, incluidos los del modelo anterior (aparecen en el historial).
+const ETIQUETAS_ESTADO_ANTERIOR = {
+  en_revision: "En revisión", con_observaciones: "Con observaciones", aprobado: "Aprobado",
+};
+export const etiquetaEstadoExpediente = (estado) =>
+  ESTADOS_EXPEDIENTE.find((e) => e.value === estado)?.label || ETIQUETAS_ESTADO_ANTERIOR[estado] || estado || "—";
 
 // Motivos de cierre (espejo de MOTIVOS_CIERRE del backend). "otro" exige detalle.
 export const MOTIVOS_CIERRE = [
@@ -58,7 +64,8 @@ export const expedienteService = {
     return res.data;
   },
 
-  // Transiciones manuales de estado (ver functions/src/services/expedienteService.js).
+  // Acciones manuales (ver functions/src/services/expedienteService.js). "Inicio en faena" es una
+  // marca (fechaInicioEjecucion), no un estado.
   async iniciarEjecucion(id) {
     const res = await apiClient(`/expedientes/${id}/iniciar-ejecucion`, { method: "POST" });
     return res.data;
@@ -71,7 +78,8 @@ export const expedienteService = {
     return res.data;
   },
 
-  // Correcciones (solo superadmin), con motivo obligatorio: { detalle }.
+  // Correcciones (solo superadmin), con motivo obligatorio: { detalle }. volverAAprobado quita la
+  // marca de inicio en faena (el endpoint conserva su nombre).
   async volverAAprobado(id, payload) {
     const res = await apiClient(`/expedientes/${id}/volver-a-aprobado`, { method: "POST", body: payload });
     return res.data;

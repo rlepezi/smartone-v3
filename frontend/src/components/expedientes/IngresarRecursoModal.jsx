@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { PatenteChip } from "../shared/PatenteChip";
+import { formatCatalogo } from "../../utils/formatCatalogo";
 import { X, Search, Plus } from "lucide-react";
 import { acreditacionService } from "../../services/acreditacionService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
@@ -9,6 +11,7 @@ import { ActionButton } from "../shared/ActionButton";
 import { ModalCrearPersona } from "../shared/ModalCrearPersona";
 import { ModalCrearRecurso } from "../shared/ModalCrearRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { RequerimientosNuevoPerfilModal } from "../perfiles-recurso/RequerimientosNuevoPerfilModal";
 import { disponibilidadDe, BadgesDisponibilidad } from "../acreditaciones/PanelSeleccionEntidades";
 import { hoyISO } from "../../utils/fechas";
 
@@ -26,7 +29,7 @@ const CHIPS = [
 // catálogo de la Empresa. `tipo` acá es "persona"|"recurso" (mismo que usa SujetosAsignados);
 // se traduce a "persona"|"maquinaria" para el backend, igual que ya hace PasoAsignaciones.jsx.
 export const IngresarRecursoModal = ({
-  tipo, empresaId, mandanteId, proyectoDestinoId, proyectoDestinoNombre, onIngresado, onCerrar,
+  tipo, empresaId, mandanteId, perfilParticipacionId = null, proyectoDestinoId, proyectoDestinoNombre, onIngresado, onCerrar,
 }) => {
   const esPersona = tipo === "persona";
   const tipoApi = esPersona ? "persona" : "maquinaria";
@@ -46,6 +49,13 @@ export const IngresarRecursoModal = ({
   // Traslado desde otro Proyecto: el backend responde 409 CONFIRMACION_REQUERIDA con las
   // asignaciones que se finalizarán (Empresa actual y Proyecto); se confirman en un modal.
   const [afectados, setAfectados] = useState(null);
+  // Perfil de Recurso recién creado: se pregunta qué Requerimientos le aplican.
+  const [perfilNuevo, setPerfilNuevo] = useState(null);
+  const preguntarRequerimientos = (perfil) => {
+    if (perfilParticipacionId && perfil?.id && !perfil.existente && !perfil.reactivado) {
+      setPerfilNuevo({ id: perfil.id, nombre: perfil.nombre, tipo: tipoPerfil });
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -68,9 +78,11 @@ export const IngresarRecursoModal = ({
   }, [tipoPerfil, mandanteId]);
 
   // Perfil creado desde este modal: se recarga la lista; si era el primero, queda elegido.
-  const handlePerfilCreado = ({ id }) => {
+  const handlePerfilCreado = (perfil) => {
+    const { id } = perfil;
     const eraElPrimero = perfilesDisponibles.length === 0;
     cargarPerfiles();
+    preguntarRequerimientos(perfil);
     if (eraElPrimero && id && perfilRecursoIds.length === 0) setPerfilRecursoIds([id]);
   };
 
@@ -109,6 +121,11 @@ export const IngresarRecursoModal = ({
     const conEstado = { ...entidad, participacionActiva: null };
     setItems((prev) => [...prev, conEstado]);
     elegir(conEstado);
+    // Maquinaria creada con su Perfil de Recurso: queda asignado (y la lista se recarga por si es nuevo).
+    if (entidad.perfilRecursoId) {
+      setPerfilRecursoIds([entidad.perfilRecursoId]);
+      cargarPerfiles();
+    }
     setModalCrearAbierto(false);
   };
 
@@ -212,7 +229,15 @@ export const IngresarRecursoModal = ({
                     >
                       <span className="min-w-0">
                         <span className="block text-xs font-bold text-carbon-dark truncate">{nombreDe(i)}</span>
-                        {secundarioDe(i) && <span className="block text-[11px] text-slate-400 font-mono truncate">{secundarioDe(i)}</span>}
+                        {esPersona ? (
+                          secundarioDe(i) && <span className="block text-[11px] text-slate-400 font-mono truncate">{secundarioDe(i)}</span>
+                        ) : (i.patente || i.tipo) && (
+                          // Maquinaria: patente (como placa) y su tipo.
+                          <span className="mt-1 flex items-center gap-2 min-w-0">
+                            <PatenteChip valor={i.patente} tipo={i.tipoIdentificacion} />
+                            {i.tipo && <span className="text-[11px] text-slate-500 truncate">{formatCatalogo(i.tipo)}</span>}
+                          </span>
+                        )}
                       </span>
                       <BadgesDisponibilidad item={i} proyectoActualId={proyectoDestinoId} seleccionada={activo} />
                     </button>
@@ -229,9 +254,6 @@ export const IngresarRecursoModal = ({
               <label className="block text-[11px] font-semibold text-slate-500">
                 {esPersona ? "Perfiles de Recurso (uno o más)" : "Perfil de Recurso"}
               </label>
-              {perfilesDisponibles.length > 0 && (
-                <CrearPerfilRecurso variante="enlace" tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
-              )}
             </div>
             {perfilesDisponibles.length === 0 ? (
               <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
@@ -242,7 +264,7 @@ export const IngresarRecursoModal = ({
                 valor={perfilRecursoIds}
                 onChange={setPerfilRecursoIds}
                 mandanteId={mandanteId}
-                onPerfilCreado={cargarPerfiles}
+                onPerfilCreado={(perfil) => { cargarPerfiles(); preguntarRequerimientos(perfil); }}
                 anchoCompleto
                 etiqueta={esPersona ? "Perfiles de Recurso" : "Perfil de Recurso"}
               />
@@ -279,10 +301,19 @@ export const IngresarRecursoModal = ({
           <ModalCrearRecurso
             empresaId={empresaId}
             mandanteId={mandanteId}
+            perfilParticipacionId={perfilParticipacionId}
             onCreada={handleCreada}
             onCerrar={() => setModalCrearAbierto(false)}
           />
         )
+      )}
+
+      {perfilNuevo && (
+        <RequerimientosNuevoPerfilModal
+          perfilParticipacionId={perfilParticipacionId}
+          perfil={perfilNuevo}
+          onCerrar={() => setPerfilNuevo(null)}
+        />
       )}
 
       {afectados && seleccionado && (

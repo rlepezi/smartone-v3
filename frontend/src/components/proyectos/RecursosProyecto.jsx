@@ -58,6 +58,7 @@ export const RecursosProyecto = ({
               ? (sujeto ? `${sujeto.nombre} ${sujeto.apellido}` : a.personaId)
               : (sujeto?.nombre || a.recursoId),
             secundario: esPersonas ? (sujeto?.rut ? formatRutDisplay(sujeto.rut) : "") : (sujeto?.patente || ""),
+            tipoIdentificacion: esPersonas ? null : sujeto?.tipoIdentificacion || null,
             clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
             evaluacion: evaluarSujeto({ expediente, vigentes: datos.vigentes, campo, sujetoId: a[campo], perfilRecursoIds: a.perfilRecursoIds }),
           };

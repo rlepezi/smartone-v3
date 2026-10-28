@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Building2,
@@ -21,6 +21,7 @@ import {
   CheckSquare,
   DatabaseBackup,
   BrainCircuit,
+  Gauge,
   ChevronsLeft,
   ChevronsRight,
   Menu,
@@ -69,6 +70,7 @@ const NAV_GROUPS = [
       { label: "Perfiles de Participación", path: "/perfiles-participacion", icon: IdCard, excludeRoles: ["admin_comercial"] },
       { label: "Perfiles de Recurso", path: "/perfiles-recurso", icon: Tags, excludeRoles: ["admin_comercial"] },
       { label: "Requerimientos", path: "/requerimientos", icon: ClipboardCheck, excludeRoles: ["admin_comercial"] },
+      { label: "Niveles de acreditación", path: "/configuracion/acreditacion", icon: Gauge, roles: ["superadmin", "mandante_admin"] },
       { label: "Inteligencia Artificial", path: "/configuracion/ia", icon: BrainCircuit, roles: ["superadmin", "mandante_admin"] },
     ],
   },
@@ -86,17 +88,23 @@ const NAV_GROUPS = [
 
 const NAV_ITEMS_FLAT = NAV_GROUPS.flatMap((g) => g.items);
 
-// Desde este ancho el menú es fijo (expandido o colapsado); más angosto es un panel deslizable.
-const MEDIA_ESCRITORIO = "(min-width: 1024px)";
+// Desde este ancho el menú es fijo (expandido o colapsado); más angosto es un panel deslizable que
+// se cierra con cualquier clic fuera de él. 768 px y no 1024: con el escalado de Windows (125-150 %)
+// o zoom del navegador, un notebook queda bajo 1024 px y el menú se escondía al usar la página.
+const MEDIA_ESCRITORIO = "(min-width: 768px)";
+// Bajo este ancho el menú fijo parte colapsado si el usuario no eligió otra cosa.
+const MEDIA_ANCHO = "(min-width: 1024px)";
 
 // Preferencia "menú colapsado", por usuario y en este navegador. El acceso a localStorage puede
-// fallar (modo privado, almacenamiento bloqueado): en ese caso el menú parte expandido.
+// fallar (modo privado, almacenamiento bloqueado): en ese caso vale el valor según el ancho.
 const claveColapsado = (uid) => `smartone:menuColapsado:${uid || "anonimo"}`;
 const leerColapsado = (uid) => {
+  const porDefecto = typeof window !== "undefined" && !window.matchMedia(MEDIA_ANCHO).matches;
   try {
-    return window.localStorage.getItem(claveColapsado(uid)) === "1";
+    const guardado = window.localStorage.getItem(claveColapsado(uid));
+    return guardado === null ? porDefecto : guardado === "1";
   } catch {
-    return false;
+    return porDefecto;
   }
 };
 const guardarColapsado = (uid, valor) => {

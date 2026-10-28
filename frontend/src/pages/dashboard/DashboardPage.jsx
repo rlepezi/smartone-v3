@@ -108,7 +108,7 @@ const iconoEvento = (evento) => {
     return { Icon: Clock, className: "bg-amber-50 text-amber-600" };
   }
   if (entidad === "expediente") {
-    if (accion === "transicion_estado" && detalle?.estadoNuevo === "aprobado") {
+    if (accion === "transicion_estado" && ["aprobado", "completado"].includes(detalle?.estadoNuevo)) {
       return { Icon: CheckCircle2, className: "bg-sage-lighter text-sage-dark" };
     }
     return { Icon: FileCheck2, className: "bg-primary-lighter text-primary-dark" };

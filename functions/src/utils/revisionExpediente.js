@@ -15,6 +15,7 @@ const MOTIVOS_NO_ELEGIBLE = {
   no_en_plantilla: "No existe en la plantilla",
   documento_deshabilitado: "Documento deshabilitado en la plantilla",
   dato_sensible: "Dato sensible",
+  solo_reglas: "Se revisa con “Revisar con IA” en la evaluación",
 };
 
 /**
@@ -61,6 +62,8 @@ function elegibilidadRequerimiento({requerimiento, tipo, plantilla,
       !ESTADOS_IA_ELEGIBLES.includes(tipo.estadoIA)) {
     return no("tipo_inactivo");
   }
+  // Tipo creado para las reglas por requerimiento: sin extracción por carpeta.
+  if (tipo.soloReglas) return no("solo_reglas");
   if (libre) return {...base, elegible: true, motivo: null};
   const docs = documentosDeTipo(plantilla, tipo.codigo);
   if (!docs.length) return no("no_en_plantilla");

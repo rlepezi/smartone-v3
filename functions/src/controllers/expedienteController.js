@@ -85,7 +85,7 @@ class ExpedienteController {
   }
 
   /**
-   * Iniciar ejecución: aprobado → en_ejecucion.
+   * Registrar inicio en faena (marca, no cambia el estado).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -96,7 +96,7 @@ class ExpedienteController {
       const data = await expedienteService.iniciarEjecucion(
           req.params.id, req.user,
       );
-      res.status(200).json({message: "Ejecución iniciada.", data});
+      res.status(200).json({message: "Inicio en faena registrado.", data});
     } catch (error) {
       next(error);
     }
@@ -121,7 +121,7 @@ class ExpedienteController {
   }
 
   /**
-   * Corrección: en_ejecucion → aprobado ({detalle}).
+   * Corrección: quitar el inicio en faena ({detalle}).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -132,7 +132,7 @@ class ExpedienteController {
       const data = await expedienteService.volverAAprobado(
           req.params.id, req.body, req.user,
       );
-      res.status(200).json({message: "Expediente devuelto a Aprobado.", data});
+      res.status(200).json({message: "Inicio en faena quitado.", data});
     } catch (error) {
       next(error);
     }

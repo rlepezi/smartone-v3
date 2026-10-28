@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { estadoVisibleExpediente } from "../../utils/alertasExpediente";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, AlertCircle, Link2, FileCheck2, Users, Truck, Activity } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
@@ -172,7 +173,7 @@ export const ParticipacionDetailPage = () => {
           </div>
           {expediente ? (
             <div className="space-y-4">
-              <EstadoExpedienteStepper estado={expediente.estado} />
+              <EstadoExpedienteStepper estado={estadoVisibleExpediente(expediente)} />
               <EstadoCumplimientoPanel resumen={resumen} size={110} strokeWidth={12} />
               <p className="text-xs text-slate-500">
                 <span className="font-bold text-carbon-dark">{resumen.cumple}</span> de{" "}

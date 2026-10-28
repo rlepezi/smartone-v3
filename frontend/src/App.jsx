@@ -28,6 +28,7 @@ import { PerfilParticipacionDetailPage } from "./pages/perfiles-participacion/Pe
 import { ConfigurarRequerimientosPage } from "./pages/perfiles-participacion/ConfigurarRequerimientosPage";
 import { RespaldosPage } from "./pages/respaldos/RespaldosPage";
 import { ConfiguracionIAPage } from "./pages/configuracion/ConfiguracionIAPage";
+import { ConfiguracionAcreditacionPage } from "./pages/configuracion/ConfiguracionAcreditacionPage";
 import { RevisionesIAListPage } from "./pages/revisiones-ia/RevisionesIAListPage";
 import { NuevaRevisionPage } from "./pages/revisiones-ia/NuevaRevisionPage";
 import { SesionRevisionPage } from "./pages/revisiones-ia/SesionRevisionPage";
@@ -149,6 +150,15 @@ function App() {
                       element={
                         <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
                           <ConfiguracionIAPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    {/* Configuración → Niveles de acreditación: superadmin (cualquier Mandante) y mandante_admin (el suyo) */}
+                    <Route
+                      path="/configuracion/acreditacion"
+                      element={
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
+                          <ConfiguracionAcreditacionPage />
                         </ProtectedRoute>
                       }
                     />

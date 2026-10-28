@@ -17,10 +17,22 @@ const ESTADO_IA = {
 };
 const CLASE_BADGE = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
 
-// Modal de edición de un tipo: estado IA, modelo preferido, umbral de legibilidad, a qué entidades
-// aplica y qué campos extrae la IA (los usan las reglas de revisión).
-const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
+// Campos sugeridos para un tipo nuevo (se pueden quitar o cambiar).
+const CAMPOS_NUEVO = [
+  { clave: "rut", etiqueta: "RUT", tipo: "rut" },
+  { clave: "fechaEmision", etiqueta: "Fecha de emisión", tipo: "fecha" },
+  { clave: "fechaVencimiento", etiqueta: "Fecha de vencimiento", tipo: "fecha" },
+];
+
+// Modal de creación (tipo = null) o edición de un tipo: estado IA, modelo preferido, umbral de
+// legibilidad, a qué entidades aplica y qué campos extrae la IA (los usan las reglas de revisión).
+// El código y el nombre solo se eligen al crear.
+const EditarTipoModal = ({ tipo: tipoInicial, modelos, onGuardado, onCancelar }) => {
+  const esNuevo = !tipoInicial;
+  const tipo = tipoInicial || { estadoIA: "piloto", umbralLegibilidad: 0.8, entidades: ["persona"], campos: CAMPOS_NUEVO };
   const [datos, setDatos] = useState({
+    codigo: "",
+    nombre: "",
     estadoIA: tipo.estadoIA || "piloto",
     modeloPreferido: tipo.modeloPreferido || "",
     umbralLegibilidad: String(tipo.umbralLegibilidad ?? 0.8),
@@ -41,10 +53,13 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
     setGuardando(true);
     setError(null);
     try {
-      onGuardado(await tipoDocumentalService.actualizar(tipo.id, {
+      const cambios = {
         estadoIA: datos.estadoIA, modeloPreferido: datos.modeloPreferido || null, umbralLegibilidad: umbral,
         entidades: datos.entidades, campos: datos.campos.map((c) => ({ ...c, clave: c.clave.trim(), etiqueta: c.etiqueta.trim() })),
-      }));
+      };
+      onGuardado(esNuevo
+        ? await tipoDocumentalService.crear({ ...cambios, codigo: datos.codigo.trim().toUpperCase(), nombre: datos.nombre.trim() })
+        : await tipoDocumentalService.actualizar(tipo.id, cambios), esNuevo);
     } catch (err) {
       setError(err.message || "No se pudo guardar el tipo documental.");
       setGuardando(false);
@@ -55,6 +70,10 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
   const alEnviar = (e) => {
     e.preventDefault();
     if (!umbralValido) return;
+    if (esNuevo && (!/^[A-Z][A-Z0-9_]{1,39}$/.test(datos.codigo.trim()) || !datos.nombre.trim())) {
+      setError("Indique un nombre y un código (mayúsculas, números y _, empieza con letra).");
+      return;
+    }
     if (!datos.entidades.length) { setError("Elija al menos una entidad."); return; }
     if (!datos.campos.length || datos.campos.some((c) => !c.clave.trim() || !c.etiqueta.trim())) {
       setError("Cada campo necesita clave y etiqueta.");
@@ -67,8 +86,26 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => !guardando && onCancelar()}>
       <form role="dialog" aria-modal="true" aria-labelledby="editar-tipo-titulo" onSubmit={alEnviar} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4">
-        <h3 id="editar-tipo-titulo" className="text-sm font-bold text-carbon-dark">Editar {tipo.nombre}</h3>
+        <h3 id="editar-tipo-titulo" className="text-sm font-bold text-carbon-dark">{esNuevo ? "Nuevo tipo documental" : `Editar ${tipo.nombre}`}</h3>
         {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+        {esNuevo && (
+          <>
+            <p className="text-[11px] text-slate-500">
+              Para las reglas de revisión IA por requerimiento. No se ofrece en las plantillas de la revisión por carpetas,
+              que solo extraen cédula y licencia.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className={CLASE_LABEL}>Nombre *</span>
+                <input value={datos.nombre} maxLength={80} onChange={(e) => setDatos((d) => ({ ...d, nombre: e.target.value }))} placeholder="Certificado de la empresa" className={CLASE_INPUT} />
+              </label>
+              <label className="block">
+                <span className={CLASE_LABEL}>Código * (no se puede cambiar)</span>
+                <input value={datos.codigo} maxLength={40} onChange={(e) => setDatos((d) => ({ ...d, codigo: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") }))} placeholder="CERT_EMPRESA" className={`${CLASE_INPUT} font-mono`} />
+              </label>
+            </div>
+          </>
+        )}
         <label className="block">
           <span className={CLASE_LABEL}>Estado IA</span>
           <select value={datos.estadoIA} onChange={(e) => setDatos((d) => ({ ...d, estadoIA: e.target.value }))} className={CLASE_INPUT}>
@@ -120,12 +157,12 @@ const EditarTipoModal = ({ tipo, modelos, onGuardado, onCancelar }) => {
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onCancelar} disabled={guardando} className={CLASE_SECUNDARIO}>Cancelar</button>
-          <button type="submit" disabled={guardando || !umbralValido} className={CLASE_PRIMARIO}>{guardando ? "Guardando..." : "Guardar"}</button>
+          <button type="submit" disabled={guardando || !umbralValido} className={CLASE_PRIMARIO}>{guardando ? "Guardando..." : esNuevo ? "Crear" : "Guardar"}</button>
         </div>
         {confirmarActivo && (
           <ConfirmacionModal
             titulo="Activar el tipo documental"
-            mensaje="Los requerimientos de este tipo podrán usar modo automático."
+            mensaje="Activo indica que el tipo ya está validado. Piloto y Activo permiten usarlo en las reglas IA de los requerimientos."
             textoConfirmar="Activar"
             ocupado={guardando}
             onConfirmar={guardar}
@@ -186,11 +223,13 @@ export const TabTipos = () => {
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
-      <Tarjeta titulo="Tipos documentales" Icono={IdCard}>
+      <Tarjeta titulo="Tipos documentales" Icono={IdCard} acciones={tipos && (
+        <button type="button" onClick={() => setEditando("nuevo")} className={CLASE_PRIMARIO}><Plus className="w-3.5 h-3.5" /> Nuevo tipo documental</button>
+      )}>
         {!tipos ? (
           <div className="h-32 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
         ) : tipos.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-400">Aún no hay tipos documentales cargados. Se crean con el script de seed del módulo.</p>
+          <p className="py-8 text-center text-xs text-slate-400">Aún no hay tipos documentales. Cree uno con "Nuevo tipo documental".</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[60rem] text-left text-xs">
@@ -365,10 +404,13 @@ export const TabTipos = () => {
       )}
       {editando && (
         <EditarTipoModal
-          tipo={editando}
+          tipo={editando === "nuevo" ? null : editando}
           modelos={modelos}
-          onGuardado={(actualizado) => {
-            setTipos((lista) => lista.map((t) => (t.id === actualizado.id ? { ...t, ...actualizado } : t)));
+          onGuardado={(actualizado, esNuevo) => {
+            setTipos((lista) => (esNuevo
+              ? [...lista, { ...actualizado, requerimientos: [], concordancia: null, costoPromedioUsd: null }]
+                .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es"))
+              : lista.map((t) => (t.id === actualizado.id ? { ...t, ...actualizado } : t))));
             setEditando(null);
           }}
           onCancelar={() => setEditando(null)}

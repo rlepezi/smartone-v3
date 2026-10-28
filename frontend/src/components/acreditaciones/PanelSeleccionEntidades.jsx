@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { PatenteChip } from "../shared/PatenteChip";
 import { X, Search } from "lucide-react";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
@@ -193,7 +194,9 @@ export const PanelSeleccionEntidades = ({ tipo, items, seleccionIds, proyectoAct
                       </td>
                       <td className="py-3 px-4">
                         <p className="font-bold text-carbon-dark">{cfg.nombre(i)}</p>
-                        {cfg.secundario(i) && <p className="text-[11px] text-slate-400 font-mono">{cfg.secundario(i)}</p>}
+                        {cfg.secundario(i) && (tipo === "recurso"
+                          ? <p className="mt-0.5"><PatenteChip valor={cfg.secundario(i)} tipo={i.tipoIdentificacion} /></p>
+                          : <p className="text-[11px] text-slate-400 font-mono">{cfg.secundario(i)}</p>)}
                       </td>
                       <td className="py-3 px-4 text-slate-600">{cfg.clasificacion(i) || <span className="text-slate-300">-</span>}</td>
                       <td className="py-3 px-4">

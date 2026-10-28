@@ -1,6 +1,7 @@
 const mandanteRepository = require("../repositories/mandanteRepository");
 const {validateRut, cleanRut} = require("../utils/rutValidator");
 const AppError = require("../utils/AppError");
+const {validarUmbralesAcreditacion} = require("../utils/umbralesAcreditacion");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo", "bloqueado"];
 const TELEFONO_MAX_DIGITOS = 11;
@@ -164,7 +165,8 @@ class MandanteService {
    * superadmin puede editar todos los campos. mandante_admin puede llamar
    * este mismo método pero acotado a autogestión: solo su propio
    * mandanteId (ya forzado por getMandanteById) y solo los campos
-   * nombreFantasia/contacto/configuracion.zonaHoraria/logoUrl — cualquier
+   * nombreFantasia/contacto/configuracion.zonaHoraria/logoUrl/
+   * umbralesAcreditacion — cualquier
    * otro campo del payload (razonSocial, rut, estado) se ignora en
    * silencio, sin romper la petición.
    * @param {string} id ID del mandante.
@@ -193,6 +195,10 @@ class MandanteService {
       if (payload.logoUrl !== undefined) {
         updateData.logoUrl = payload.logoUrl;
       }
+      if (payload.umbralesAcreditacion !== undefined) {
+        updateData.umbralesAcreditacion =
+            validarUmbralesAcreditacion(payload.umbralesAcreditacion);
+      }
       return await mandanteRepository.update(id, updateData);
     }
 
@@ -203,6 +209,7 @@ class MandanteService {
       "configuracion",
       "estado",
       "logoUrl",
+      "umbralesAcreditacion",
     ];
 
     for (const key of allowedFields) {
@@ -218,6 +225,11 @@ class MandanteService {
 
     if (updateData.contacto !== undefined) {
       this._validarTelefono(updateData.contacto?.telefono);
+    }
+
+    if (updateData.umbralesAcreditacion !== undefined) {
+      updateData.umbralesAcreditacion =
+          validarUmbralesAcreditacion(updateData.umbralesAcreditacion);
     }
 
     // No permitir cambiar RUT directamente por este método

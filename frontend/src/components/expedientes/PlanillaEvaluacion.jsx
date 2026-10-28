@@ -39,7 +39,7 @@ import {
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";
 import { StatusBadge, MAPA_EVALUACION } from "../../components/shared/StatusBadge";
-import { textoVencimiento, CLASE_VENCIMIENTO } from "../../utils/vencimientos";
+import { textoVencimiento, CLASE_VENCIMIENTO, vencimientoSugerido } from "../../utils/vencimientos";
 import { EstadoCumplimientoPanel } from "../../components/shared/EstadoCumplimientoPanel";
 import { ResumenCumplimientoLista } from "../../components/shared/ResumenCumplimientoLista";
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
@@ -366,10 +366,21 @@ export const PlanillaEvaluacion = ({
   }, [items, datosSujeto]);
 
   const handleResultadoChange = (requerimientoId, resultado) => {
-    setRespuestas((prev) => ({
-      ...prev,
-      [requerimientoId]: { ...prev[requerimientoId], resultado },
-    }));
+    // SOAP y Permiso de circulación: al marcar "Cumple" sin fecha, se propone el 31/03 del año
+    // siguiente (editable).
+    const sugerida = resultado === "cumple"
+      ? vencimientoSugerido(items.find((i) => i.id === requerimientoId)) : null;
+    setRespuestas((prev) => {
+      const actual = prev[requerimientoId] || {};
+      return {
+        ...prev,
+        [requerimientoId]: {
+          ...actual,
+          resultado,
+          ...(sugerida && !actual.fechaVencimiento ? { fechaVencimiento: sugerida } : {}),
+        },
+      };
+    });
   };
 
   const handleObservacionesChange = (requerimientoId, observaciones) => {
@@ -670,7 +681,7 @@ export const PlanillaEvaluacion = ({
   const itemsFiltradosTabla = items.filter((r) => {
     if (soloInstanciaId) return r.id === soloInstanciaId;
     const term = busqueda.trim().toLowerCase();
-    if (term && !r.nombre.toLowerCase().includes(term)) return false;
+    if (term && !`${r.nombre} ${r.nombreCorto || ""}`.toLowerCase().includes(term)) return false;
     return cumpleFiltro(r, filtroResultado);
   });
 
@@ -984,7 +995,7 @@ export const PlanillaEvaluacion = ({
                       <td className="py-3 pr-3 text-slate-400 font-semibold">{index + 1}</td>
                       <td className="py-3 pr-3 max-w-xs">
                         <div className="flex items-start gap-1.5">
-                          <p className="font-semibold text-slate-700 whitespace-normal">{r.nombre}</p>
+                          <p className="font-semibold text-slate-700 whitespace-normal" title={r.nombre}>{r.nombreCorto || r.nombre}</p>
                           {evidencia && (
                             <a
                               href={evidencia.archivoUrl || undefined}

@@ -220,11 +220,6 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
               <label className="block text-xs font-semibold text-gray-700">
                 {esPersona ? "Perfiles de Recurso * (uno o más)" : "Perfil de Recurso *"}
               </label>
-              {perfilesRecursoListos && perfilesRecursoOpciones.length > 0 && (
-                <CrearPerfilRecurso
-                  variante="enlace" tipo={tipoPerfil} mandanteId={proyectoSeleccionado.mandanteId} onCreado={handlePerfilCreado}
-                />
-              )}
             </div>
             {!proyectoSeleccionado ? (
               <p className="text-[11px] text-slate-400">Seleccione primero un Proyecto.</p>

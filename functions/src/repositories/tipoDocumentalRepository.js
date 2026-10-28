@@ -41,6 +41,21 @@ class TipoDocumentalRepository {
   }
 
   /**
+   * Crea un tipo documental con su código como ID. Falla si ya existe.
+   * @param {string} id ID (el código).
+   * @param {Object} data Campos.
+   * @return {Promise<Object>} Tipo creado.
+   */
+  async create(id, data) {
+    await db.collection(COLLECTION).doc(id).create({
+      ...data,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return this.getById(id);
+  }
+
+  /**
    * Actualiza campos de un tipo documental.
    * @param {string} id ID del tipo.
    * @param {Object} data Campos.

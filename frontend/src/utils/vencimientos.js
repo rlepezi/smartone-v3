@@ -58,3 +58,16 @@ export const resumenTextoVencimientos = ({ vencidos = 0, proximos = 0 }) => [
   vencidos ? `${vencidos} vencido${vencidos === 1 ? "" : "s"}` : null,
   proximos ? `${proximos} próximo${proximos === 1 ? "" : "s"} a vencer` : null,
 ].filter(Boolean).join(", ");
+
+// Documentos de vehículos que en Chile vencen el 31 de marzo: el SOAP y el Permiso de
+// circulación. Se reconocen por el nombre (corto o largo) del requerimiento.
+const VENCEN_31_MARZO = [/\bsoap\b/, /\bpermiso de circulacion\b/];
+const normalizar = (texto) => String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+// Fecha de vencimiento sugerida al marcar "Cumple": 31/03 del año siguiente a hoy ("aaaa-mm-dd"),
+// o null si el requerimiento no es uno de esos documentos.
+export const vencimientoSugerido = (requerimiento, hoy = hoyISO()) => {
+  const nombres = `${normalizar(requerimiento?.nombreCorto)} ${normalizar(requerimiento?.nombre)}`;
+  if (!VENCEN_31_MARZO.some((re) => re.test(nombres))) return null;
+  return `${Number(String(hoy).slice(0, 4)) + 1}-03-31`;
+};

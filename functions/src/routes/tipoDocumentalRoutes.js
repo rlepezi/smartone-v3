@@ -8,6 +8,7 @@ router.use(authMiddleware, requireRole(["superadmin"]));
 
 router.get("/", controller.listar);
 router.get("/por-normalizar", controller.porNormalizar);
+router.post("/", controller.crear);
 router.put("/:id", controller.actualizar);
 router.patch("/:id/estado", controller.cambiarEstado);
 

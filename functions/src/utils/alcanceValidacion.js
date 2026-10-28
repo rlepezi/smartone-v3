@@ -58,7 +58,9 @@ function modalidadDe(d, tipos) {
       motivoModalidad: "sin_tipo_documental"};
   }
   const tipo = tipos.get(d.tipoDocumentalCodigo);
-  if (!tipo) {
+  // Un tipo creado para las reglas por requerimiento no tiene extracción en
+  // la revisión por carpetas.
+  if (!tipo || tipo.soloReglas) {
     return {modalidad: "solo_completitud",
       motivoModalidad: "tipo_no_normalizado"};
   }

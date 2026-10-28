@@ -18,7 +18,7 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { formatFecha } from "../../utils/fechas";
-import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
+import { evaluarSujeto, categoriaAcreditacionExpediente } from "../../utils/cumplimientoCalculos";
 import { expedienteRequerimientoService } from "../../services/expedienteRequerimientoService";
 import { estadoPorCumplimiento, claseAnilloCumplimiento } from "../../utils/cumplimientoClases";
 import { KpiCard, KpiValor, TarjetaPanel, CampoInfo } from "../../components/shared/DetalleUI";
@@ -48,16 +48,7 @@ const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 // Gestión de la asociación Empresa-Mandante (pestaña Mandantes).
 const ROLES_GESTION_MANDANTES = ["superadmin", "admin_comercial"];
 
-// Espejo de MAPEO_ESTADO_KPI_EMPRESA (reporteService.js) y del listado de
-// Empresas: estado del Expediente más reciente -> categoría de acreditación.
-const CATEGORIA_ACREDITACION = {
-  aprobado: "acreditada",
-  en_ejecucion: "acreditada",
-  cerrado: "acreditada",
-  creado: "en_proceso",
-  en_revision: "en_proceso",
-  con_observaciones: "con_observaciones",
-};
+// Categoría de acreditación: categoriaAcreditacionExpediente (utils/cumplimientoCalculos).
 
 const ACREDITACION_MAP = {
   acreditada: { label: "Acreditada", className: "bg-sage-lighter text-sage-darker border-sage-light" },
@@ -252,6 +243,7 @@ export const EmpresaDetailPage = () => {
                 ? (sujeto ? `${sujeto.nombre} ${sujeto.apellido}` : a.personaId)
                 : (sujeto?.nombre || a.recursoId),
               secundario: esPersonas ? (sujeto?.rut ? formatRutDisplay(sujeto.rut) : "") : (sujeto?.patente || ""),
+              tipoIdentificacion: esPersonas ? null : sujeto?.tipoIdentificacion || null,
               clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
               evaluacion: evaluarSujeto({ expediente, vigentes, campo, sujetoId: a[campo], perfilRecursoIds: a.perfilRecursoIds }),
             };
@@ -284,7 +276,7 @@ export const EmpresaDetailPage = () => {
   // --- Derivados (todo sale de `resumen` / `filaReporte`) ---
   const participacionesActivas = resumen?.participacionesActivas || [];
   const avance = filaReporte === undefined ? undefined : filaReporte?.avancePct ?? null;
-  const categoria = CATEGORIA_ACREDITACION[filaReporte?.expedienteEstado] || null;
+  const categoria = categoriaAcreditacionExpediente(filaReporte?.expedienteEstado, filaReporte?.noCumple);
 
   // Mandantes DISTINTOS entre las Participaciones activas, con cuántos
   // Proyectos activos tiene la Empresa en cada uno.

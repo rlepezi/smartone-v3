@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
+import { BadgeAcreditacion } from "../../components/shared/BadgeAcreditacion";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FileCheck2, Users, Truck, AlertTriangle } from "lucide-react";
-import { problemasEnEjecucion, textoProblemas } from "../../utils/alertasExpediente";
+import { problemasExpediente, textoProblemas, estadoVisibleExpediente } from "../../utils/alertasExpediente";
 import { expedienteService, ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
 import { estadoVencimientosExpediente } from "../../utils/vencimientos";
 import { proyectoService } from "../../services/proyectoService";
@@ -50,17 +51,6 @@ const RecursosCelda = ({ personas = 0, maquinarias = 0 }) => {
       </span>
     </div>
   );
-};
-
-// Mismos umbrales que pidió el usuario — no hay ningún umbral de color
-// por % ya definido en otro lado de la app (se revisó ReportesPage.jsx,
-// que muestra el % en texto plano, sin semáforo) con el que ser
-// consistente.
-const claseCumplimiento = (pct) => {
-  if (pct === null || pct === undefined) return "bg-slate-100 text-slate-500 border-slate-200";
-  if (pct >= 70) return "bg-sage-lighter text-sage-darker border-sage-light";
-  if (pct >= 40) return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-red-50 text-red-700 border-red-200";
 };
 
 export const ExpedientesListPage = () => {
@@ -116,7 +106,7 @@ export const ExpedientesListPage = () => {
     Promise.all(
       mandanteIdsKey.split(",").map((id) =>
         mandanteService.obtenerPorId(id)
-          .then((m) => [id, { nombre: getMandanteDisplayName(m) || id, logoUrl: m?.logoUrl || null }])
+          .then((m) => [id, { nombre: getMandanteDisplayName(m) || id, logoUrl: m?.logoUrl || null, umbrales: m?.umbralesAcreditacion || null }])
           .catch(() => [id, { nombre: id, logoUrl: null }]),
       ),
     ).then((pares) => setMandantesInfo((prev) => ({ ...prev, ...Object.fromEntries(pares) })));
@@ -300,21 +290,20 @@ export const ExpedientesListPage = () => {
                 </td>
                 <td className="py-4 px-4">
                   <div className="flex items-start gap-1.5">
-                    <EstadoExpedienteStepper estado={item.estado} />
-                    {problemasEnEjecucion(item) && (
+                    <EstadoExpedienteStepper estado={estadoVisibleExpediente(item)} />
+                    {problemasExpediente(item) && (
                       <AlertTriangle
                         className="w-4 h-4 text-amber-500 shrink-0"
-                        aria-label={`En ejecución con ${textoProblemas(problemasEnEjecucion(item))}`}
+                        aria-label={`Completado con pendientes: ${textoProblemas(problemasExpediente(item))}`}
                       >
-                        <title>{`En ejecución con ${textoProblemas(problemasEnEjecucion(item))}`}</title>
+                        <title>{`Completado con pendientes: ${textoProblemas(problemasExpediente(item))}`}</title>
                       </AlertTriangle>
                     )}
                   </div>
                 </td>
                 <td className="py-4 px-4">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${claseCumplimiento(pct)}`}>
-                    {pct === null ? "—" : `${pct}%`}
-                  </span>
+                  {/* % con su nivel según los umbrales del Mandante del Expediente. */}
+                  <BadgeAcreditacion pct={pct} umbrales={mandantesInfo[item.mandanteId]?.umbrales} />
                 </td>
                 <td className="py-4 px-4 text-slate-600 font-medium">
                   <p>{formatFecha(item.createdAt)}</p>

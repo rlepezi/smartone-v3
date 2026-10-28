@@ -77,6 +77,16 @@ export const evaluarSujeto = ({ expediente, campo, sujetoId }) => {
   };
 };
 
+// Categoría de acreditación de una Empresa según el estado de su Expediente y sus "no cumple".
+// Espejo de categoriaKpiEmpresa (functions/src/services/reporteService.js).
+export const categoriaAcreditacionExpediente = (estado, noCumple) => {
+  if (!estado) return null;
+  if (estado === "cerrado") return "acreditada";
+  if (["creado", "en_ejecucion"].includes(estado)) return "en_proceso";
+  if (["completado", "completado_pendientes"].includes(estado)) return noCumple ? "con_observaciones" : "acreditada";
+  return null;
+};
+
 // Conteo de Expedientes por cada estado del catálogo (ESTADOS_EXPEDIENTE de
 // expedienteService.js) — incluye los estados en 0 para que el llamador
 // decida si los oculta o no.
@@ -87,4 +97,30 @@ export const calcularConteosPorEstadoExpediente = (expedientes, estadosCatalogo)
     if (conteos[exp.estado] !== undefined) conteos[exp.estado]++;
   });
   return conteos;
+};
+
+// Umbrales de defecto del nivel de acreditación. Cada Mandante puede configurar los suyos
+// (Configuración → Niveles de acreditación; campo `umbralesAcreditacion` del Mandante). Mismos
+// valores que functions/src/utils/umbralesAcreditacion.js.
+export const UMBRALES_ACREDITACION_DEFECTO = { acreditada: 100, aceptable: 85 };
+
+// Umbrales del Mandante, o los de defecto si no tiene (o los guardados no son coherentes).
+export const resolverUmbrales = (umbrales) => {
+  const acreditada = Number(umbrales?.acreditada);
+  const aceptable = Number(umbrales?.aceptable);
+  const validos = acreditada > 0 && acreditada <= 100 && aceptable > 0 && aceptable < acreditada;
+  return validos ? { acreditada, aceptable } : UMBRALES_ACREDITACION_DEFECTO;
+};
+
+// Nivel de acreditación según el % de cumplimiento y los umbrales del Mandante (por defecto: 100 %
+// Acreditada en verde, desde 85 % Aceptable en amarillo, bajo 85 % Rechazada en rojo). Sin nada
+// evaluable (null) no hay nivel.
+export const nivelAcreditacion = (pct, umbrales = null) => {
+  if (pct === null || pct === undefined) {
+    return { etiqueta: null, caja: "bg-slate-50 border-slate-200", texto: "text-slate-400", icono: "text-slate-400" };
+  }
+  const { acreditada, aceptable } = resolverUmbrales(umbrales);
+  if (pct >= acreditada) return { etiqueta: "Acreditada", caja: "bg-emerald-50 border-emerald-300", texto: "text-emerald-700", icono: "text-emerald-600" };
+  if (pct >= aceptable) return { etiqueta: "Aceptable", caja: "bg-amber-50 border-amber-300", texto: "text-amber-700", icono: "text-amber-500" };
+  return { etiqueta: "Rechazada", caja: "bg-red-50 border-red-300", texto: "text-red-700", icono: "text-red-500" };
 };

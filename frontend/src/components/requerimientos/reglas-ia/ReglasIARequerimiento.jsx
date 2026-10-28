@@ -149,6 +149,7 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
 
   const { requerimiento, tipo, tiposDisponibles, vinculos, pruebas, transiciones } = config;
   const estado = ESTADOS_IA_REQ[requerimiento.estadoIA] || ESTADOS_IA_REQ.sin_reglas;
+  const tipoNoDisponible = Boolean(tipo) && !tiposDisponibles.some((t) => t.id === tipo.id);
   const esquemaDe = (v) => (v.regla?.tipo === "deterministica" ? verificaciones.find((x) => x.clave === v.regla.verificacion)?.parametros : null);
   const puedeProbar = ["en_definicion", "en_prueba"].includes(requerimiento.estadoIA) && tipo && vinculos.some((v) => v.activa && v.regla?.estado === "activa");
   const id = requerimiento.id;
@@ -187,13 +188,22 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
         {tiposDisponibles.length === 0 && !tipo ? (
           <p className="text-xs text-slate-500">No hay tipos documentales IA disponibles para {etiquetaEntidad(requerimiento.tipoEntidad)} todavía.</p>
         ) : (
-          <select id="req-ia-tipo" value={requerimiento.tipoDocumentalId || ""} disabled={ocupado}
+          <select id="req-ia-tipo" value={tipoNoDisponible ? "" : requerimiento.tipoDocumentalId || ""} disabled={ocupado}
             onChange={(e) => { const v = e.target.value || null; conAviso(() => silencioso(() => reglaIAService.asignarTipo(id, v), "Tipo documental actualizado.")); }}
             className={CLASE_INPUT}>
             <option value="">Sin tipo documental</option>
-            {tipo && !tiposDisponibles.some((t) => t.id === tipo.id) && <option value={tipo.id}>{tipo.nombre} (no disponible)</option>}
             {tiposDisponibles.map((t) => <option key={t.id} value={t.id}>{t.nombre}{t.estadoIA === "piloto" ? " (piloto)" : ""}</option>)}
           </select>
+        )}
+        {/* El tipo guardado se mantiene hasta que el usuario elija otro o lo quite. */}
+        {tipoNoDisponible && (
+          <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+            <span className="mr-auto">El tipo documental configurado ya no está disponible para IA ({tipo.nombre}). Elija otro o quítelo.</span>
+            <button type="button" disabled={ocupado} className={CLASE_SECUNDARIO}
+              onClick={() => conAviso(() => silencioso(() => reglaIAService.asignarTipo(id, null), "Tipo documental quitado."))}>
+              Quitar tipo
+            </button>
+          </div>
         )}
         {tipo && (
           <p className="text-[11px] text-slate-500 mt-1">

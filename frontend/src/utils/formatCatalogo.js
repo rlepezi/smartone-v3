@@ -10,5 +10,6 @@ export const formatCatalogo = (valor) => {
   if (!valor) return valor;
   return valor
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    // Inicio de cada palabra (no \b\w: tras una letra con tilde, "Camión" quedaba "CamióN").
+    .replace(/(^|\s)(\S)/g, (_, espacio, c) => espacio + c.toUpperCase());
 };
