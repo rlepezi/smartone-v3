@@ -19,6 +19,7 @@ const responder = (accion, status = 200) => async (req, res, next) => {
  */
 const revisionRequerimientoIAController = {
   estado: responder((req) => servicio.estado(req.params.id, req.user)),
+  pautas: responder((req) => servicio.pautas(req.params.id, req.user)),
   listar: responder((req) => servicio.listar(req.params.id, req.query,
       req.user)),
   revisar: responder((req) => servicio.revisar(req.params.id,

@@ -245,6 +245,8 @@ export const RequerimientosListPage = () => {
   // Rutas antiguas del formulario: ?nuevo=1 abre el modal de alta; ?editar=<id> el de edición,
   // poniendo antes el Mandante y la pestaña del Requerimiento.
   const idEditar = params.get("editar");
+  // "Definir reglas" del panel de evaluación: ?editar=<id>&pestana=reglas abre la pestaña Reglas IA.
+  const pestanaEditar = params.get("pestana");
   const pideNuevo = params.get("nuevo") === "1";
   useEffect(() => {
     if (!idEditar) return;
@@ -252,10 +254,11 @@ export const RequerimientosListPage = () => {
       .then((r) => {
         const siguiente = new URLSearchParams(window.location.search);
         siguiente.delete("editar");
+        siguiente.delete("pestana");
         if (!mandanteFijo && r.mandanteId) siguiente.set("mandante", r.mandanteId);
         siguiente.set("tipo", r.tipoEntidad);
         setParams(siguiente, { replace: true });
-        setModal({ requerimiento: r });
+        setModal({ requerimiento: r, pestana: pestanaEditar === "reglas" ? "reglas" : "datos" });
       })
       .catch((err) => {
         const siguiente = new URLSearchParams(window.location.search);
@@ -591,6 +594,7 @@ export const RequerimientosListPage = () => {
           mandante={mandanteActual}
           tipoEntidad={tipoModal}
           requerimiento={modalAbierto.requerimiento}
+          pestanaInicial={modalAbierto.pestana || "datos"}
           perfilesParticipacion={opcionesModal(
             ppActivos, perfilesParticipacion, modalAbierto.requerimiento?.aplicabilidad?.perfilParticipacionIds,
           )}

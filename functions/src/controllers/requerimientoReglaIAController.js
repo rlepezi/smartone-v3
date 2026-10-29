@@ -24,6 +24,8 @@ const requerimientoReglaIAController = {
   obtener: responder((req) => servicio.obtener(req.params.id, req.user)),
   asignarTipo: responder((req) => servicio.asignarTipo(req.params.id,
       cuerpo(req).tipoDocumentalId ?? null, req.user)),
+  asignarModelo: responder((req) => servicio.asignarModelo(req.params.id,
+      cuerpo(req).modelo ?? null, req.user)),
   cambiarEstadoIA: responder((req) => servicio.cambiarEstadoIA(req.params.id,
       cuerpo(req).estadoIA, req.user)),
   agregarRegla: responder((req) => servicio.agregarRegla(req.params.id,

@@ -14,7 +14,12 @@ const res = (clave, campos, contexto = {}, parametros = {}) =>
 
 describe("verificaciones: regla común", () => {
   it("sin el campo requerido es no_determinable, nunca no_cumple", () => {
-    for (const v of catalogo().filter((x) => x.clave !== "campo_presente")) {
+    // campo_presente verifica justamente la ausencia; archivo_presente no
+    // necesita campos (basta con que el documento se haya presentado);
+    // carpeta_presente verifica la ruta del archivo, no campos.
+    const exceptuadas = ["campo_presente", "archivo_presente",
+      "carpeta_presente"];
+    for (const v of catalogo().filter((x) => !exceptuadas.includes(x.clave))) {
       expect(res(v.clave, {}, {rut: RUT_A, nombre: "Ana Demo",
         fechaTerminoProyecto: "2027-01-01", patente: "BBCD12",
         rutEmpresa: RUT_B}, {diasMaximos: 30, tolerancia: "tokens"}))

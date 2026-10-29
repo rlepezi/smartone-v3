@@ -4,6 +4,7 @@ const {COLECCION_INDICE} = require("../utils/nombreRequerimiento");
 
 const db = admin.firestore();
 const COLLECTION = "requerimientos";
+const COLECCION_PLANTILLAS = "plantillasEstructura";
 
 /**
  * Acceso a datos de Firestore para el recurso Requerimiento. Cada
@@ -145,26 +146,37 @@ class RequerimientoRepository {
    *   "NOMBRE_DUPLICADO"` y no se escribe nada.
    * - `claveLiberar`: clave que deja de usar (renombre o desactivación);
    *   se borra solo si sigue a su nombre.
+   * - `plantilla` (opcional): {id, aplicar(plantillaActual) → campos o
+   *   null}. La plantilla de estructura se lee DENTRO de la transacción y,
+   *   si `aplicar` devuelve campos, se actualiza en la misma: requerimiento
+   *   y nueva versión de la plantilla se guardan juntos o no se guarda
+   *   nada (si `aplicar` lanza, tampoco).
    * @param {{ref: FirebaseFirestore.DocumentReference, esNuevo: boolean,
    *     datos: Object, claveTomar: ?string, claveLiberar: ?string,
    *     escribirVinculos: (function(FirebaseFirestore.Transaction):
-   *     void|undefined)}} operacion Datos de la operación.
+   *     void|undefined), plantilla: ?Object}} operacion Datos de la
+   *     operación.
    * @return {Promise<void>}
    */
   async guardarAtomico({
     ref, esNuevo, datos, claveTomar, claveLiberar, escribirVinculos,
+    plantilla = null,
   }) {
     const indice = db.collection(COLECCION_INDICE);
+    const refPlantilla = plantilla ?
+      db.collection(COLECCION_PLANTILLAS).doc(plantilla.id) : null;
     const refTomar = claveTomar ? indice.doc(claveTomar) : null;
     const refLiberar = claveLiberar ? indice.doc(claveLiberar) : null;
 
     await db.runTransaction(async (tx) => {
       // Lecturas primero.
-      const [docActual, docTomar, docLiberar] = await Promise.all([
-        esNuevo ? null : tx.get(ref),
-        refTomar ? tx.get(refTomar) : null,
-        refLiberar ? tx.get(refLiberar) : null,
-      ]);
+      const [docActual, docTomar, docLiberar, docPlantilla] =
+        await Promise.all([
+          esNuevo ? null : tx.get(ref),
+          refTomar ? tx.get(refTomar) : null,
+          refLiberar ? tx.get(refLiberar) : null,
+          refPlantilla ? tx.get(refPlantilla) : null,
+        ]);
       if (!esNuevo && !docActual.exists) {
         throw Object.assign(new Error("Requerimiento no encontrado."), {
           codigo: "NO_ENCONTRADO",
@@ -195,6 +207,11 @@ class RequerimientoRepository {
         tx.update(ref, {...datos, updatedAt: ahora});
       }
       if (escribirVinculos) escribirVinculos(tx);
+      if (refPlantilla) {
+        const campos = plantilla.aplicar(docPlantilla.exists ?
+          {id: docPlantilla.id, ...docPlantilla.data()} : null);
+        if (campos) tx.update(refPlantilla, {...campos, updatedAt: ahora});
+      }
     });
   }
 }

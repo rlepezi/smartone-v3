@@ -6,13 +6,15 @@ import { ConfirmacionModal } from "../../shared/ConfirmacionModal";
 import { ReglaModal } from "../../configuracion-ia/ReglaModal";
 import { CampoParametro } from "../../configuracion-ia/CampoParametro";
 import {
-  ESTADOS_IA_REQ, RESULTADOS_PROPUESTOS, SEVERIDADES, TIPOS_REGLA, etiquetaEntidad, fechaDMA,
+  ESTADOS_IA_REQ, RESULTADOS_PROPUESTOS, SEVERIDADES, TIPOS_REGLA, fechaDMA, reglasSugeridasPara,
 } from "../../../utils/reglasIA";
-import { CLASE_INPUT, CLASE_LABEL, CLASE_PRIMARIO, CLASE_SECUNDARIO, formatUsd } from "../../configuracion-ia/estilos";
+import { CLASE_INPUT, CLASE_PRIMARIO, CLASE_SECUNDARIO, formatUsd } from "../../configuracion-ia/estilos";
 import { AgregarReglaModal } from "./AgregarReglaModal";
 import { CopiarReglasModal } from "./CopiarReglasModal";
 import { ProbarReglasModal } from "./ProbarReglasModal";
 import { ResultadoPrueba } from "./ResultadoPrueba";
+import { UbicacionPlantillaResumen } from "./UbicacionPlantillaResumen";
+import { configuracionIAService } from "../../../services/configuracionIAService";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
 const AVISO_HABILITADO = "Al modificar las reglas, el requerimiento vuelve a En definición y deberá probarse de nuevo.";
@@ -25,7 +27,7 @@ const TRANSICIONES = {
 const valorTexto = (v) => (Array.isArray(v) ? v.join(", ") : String(v));
 
 // Una regla del requerimiento: orden, severidad, parámetros (los personalizados se marcan), activa y
-// quitar. Las alertas (regla inactiva, campos que el tipo no extrae…) se muestran debajo.
+// quitar. Las alertas (regla inactiva, entidad incompatible…) se muestran debajo.
 const FilaRegla = ({ vinculo, indice, total, esquema, ocupado, onMover, onCambiar, onQuitar }) => {
   const [editando, setEditando] = useState(null); // borrador de parámetros
   const regla = vinculo.regla;
@@ -97,10 +99,15 @@ const FilaRegla = ({ vinculo, indice, total, esquema, ocupado, onMover, onCambia
   );
 };
 
-// Pestaña "Reglas IA" del requerimiento (solo superadmin): estado IA y sus transiciones, tipo
-// documental (filtrado por la entidad), reglas de la biblioteca con severidad y parámetros propios,
-// "Probar reglas" y las últimas pruebas. Cada cambio se guarda al momento y queda en la Bitácora.
-export const ReglasIARequerimiento = ({ requerimientoId }) => {
+// Pestaña "Reglas IA" del requerimiento (solo superadmin): estado IA y sus transiciones, reglas de
+// la biblioteca con severidad y parámetros propios (más las sugeridas, de un clic), lo que la IA
+// leerá (sale de las reglas; si el requerimiento está vinculado a un documento de la estructura de
+// carpetas, se suman los campos del tipo de ese documento), el modelo, "Probar reglas" y las últimas
+// pruebas. El tipo documental no se elige aquí: sale del vínculo en la plantilla. Cada cambio se guarda al momento y queda en la Bitácora.
+// Muestra también la ubicación del requerimiento en la estructura de carpetas (`onIrADatos`: a la
+// pestaña Datos, donde se asigna).
+// `carpetaExpediente`: abierto desde un expediente, la carpeta asignada ahí al requerimiento.
+export const ReglasIARequerimiento = ({ requerimientoId, onIrADatos, carpetaExpediente = null }) => {
   const [config, setConfig] = useState(null);
   const [verificaciones, setVerificaciones] = useState([]);
   const [error, setError] = useState(null);
@@ -109,11 +116,18 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
   const [modal, setModal] = useState(null); // agregar | copiar | nueva | probar
   const [pendiente, setPendiente] = useState(null); // { titulo, mensaje, accion }
   const [pruebaVista, setPruebaVista] = useState(null);
+  const [modelos, setModelos] = useState([]); // con precios configurados
 
   useEffect(() => {
     let vigente = true;
-    Promise.all([reglaIAService.obtenerRequerimiento(requerimientoId), reglaIAService.verificaciones()])
-      .then(([c, v]) => { if (vigente) { setConfig(c); setVerificaciones(v || []); } })
+    Promise.all([reglaIAService.obtenerRequerimiento(requerimientoId), reglaIAService.verificaciones(),
+      configuracionIAService.obtener().catch(() => null)])
+      .then(([c, v, ia]) => {
+        if (!vigente) return;
+        setConfig(c);
+        setVerificaciones(v || []);
+        setModelos(Object.keys(ia?.preciosPorModelo || {}));
+      })
       .catch((err) => { if (vigente) setError(err.message || "No se pudo cargar la configuración IA."); });
     return () => { vigente = false; };
   }, [requerimientoId]);
@@ -147,12 +161,17 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
     return error ? <ErrorBanner message={error} /> : <p className="py-6 text-center text-xs text-slate-400">Cargando reglas IA...</p>;
   }
 
-  const { requerimiento, tipo, tiposDisponibles, vinculos, pruebas, transiciones } = config;
+  const { requerimiento, tipo, vinculos, pruebas, transiciones } = config;
   const estado = ESTADOS_IA_REQ[requerimiento.estadoIA] || ESTADOS_IA_REQ.sin_reglas;
-  const tipoNoDisponible = Boolean(tipo) && !tiposDisponibles.some((t) => t.id === tipo.id);
   const esquemaDe = (v) => (v.regla?.tipo === "deterministica" ? verificaciones.find((x) => x.clave === v.regla.verificacion)?.parametros : null);
-  const puedeProbar = ["en_definicion", "en_prueba"].includes(requerimiento.estadoIA) && tipo && vinculos.some((v) => v.activa && v.regla?.estado === "activa");
+  const puedeProbar = ["en_definicion", "en_prueba"].includes(requerimiento.estadoIA) && vinculos.some((v) => v.activa && v.regla?.estado === "activa");
   const id = requerimiento.id;
+  // Verificaciones determinísticas que ya usa el requerimiento: no se repiten al crear ni al agregar.
+  const verificacionesUsadas = vinculos.filter((v) => v.regla?.tipo === "deterministica" && v.regla.verificacion)
+    .map((v) => v.regla.verificacion);
+  // Reglas sugeridas para la entidad que el requerimiento aún no usa (se agregan con un clic).
+  const sugeridas = reglasSugeridasPara(requerimiento.tipoEntidad).filter((r) => !verificacionesUsadas.includes(r.verificacion));
+  const camposIA = config.camposIA || [];
 
   const mover = (indice, delta) => {
     const ids = vinculos.map((v) => v.id);
@@ -183,34 +202,7 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
         ))}
       </div>
 
-      <div>
-        <label htmlFor="req-ia-tipo" className={CLASE_LABEL}>Tipo documental</label>
-        {tiposDisponibles.length === 0 && !tipo ? (
-          <p className="text-xs text-slate-500">No hay tipos documentales IA disponibles para {etiquetaEntidad(requerimiento.tipoEntidad)} todavía.</p>
-        ) : (
-          <select id="req-ia-tipo" value={tipoNoDisponible ? "" : requerimiento.tipoDocumentalId || ""} disabled={ocupado}
-            onChange={(e) => { const v = e.target.value || null; conAviso(() => silencioso(() => reglaIAService.asignarTipo(id, v), "Tipo documental actualizado.")); }}
-            className={CLASE_INPUT}>
-            <option value="">Sin tipo documental</option>
-            {tiposDisponibles.map((t) => <option key={t.id} value={t.id}>{t.nombre}{t.estadoIA === "piloto" ? " (piloto)" : ""}</option>)}
-          </select>
-        )}
-        {/* El tipo guardado se mantiene hasta que el usuario elija otro o lo quite. */}
-        {tipoNoDisponible && (
-          <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
-            <span className="mr-auto">El tipo documental configurado ya no está disponible para IA ({tipo.nombre}). Elija otro o quítelo.</span>
-            <button type="button" disabled={ocupado} className={CLASE_SECUNDARIO}
-              onClick={() => conAviso(() => silencioso(() => reglaIAService.asignarTipo(id, null), "Tipo documental quitado."))}>
-              Quitar tipo
-            </button>
-          </div>
-        )}
-        {tipo && (
-          <p className="text-[11px] text-slate-500 mt-1">
-            Extrae: {tipo.campos.map((c) => c.etiqueta).join(", ") || "sin campos"}.
-          </p>
-        )}
-      </div>
+      <UbicacionPlantillaResumen requerimiento={{ ...requerimiento, id }} tipoCodigo={tipo?.codigo || null} onIrADatos={onIrADatos} carpetaExpediente={carpetaExpediente} />
 
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -219,6 +211,18 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
           <button type="button" disabled={ocupado} onClick={() => conAviso(() => setModal("copiar"))} className={CLASE_SECUNDARIO}><Copy className="w-3.5 h-3.5" /> Copiar de otro requerimiento</button>
           <button type="button" disabled={ocupado} onClick={() => conAviso(() => setModal("nueva"))} className={CLASE_SECUNDARIO}><Plus className="w-3.5 h-3.5" /> Nueva regla</button>
         </div>
+        {sugeridas.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-slate-400">Sugeridas:</span>
+            {sugeridas.map((r) => (
+              <button key={r.verificacion} type="button" disabled={ocupado}
+                onClick={() => conAviso(() => silencioso(() => reglaIAService.agregarSugeridas(requerimiento, [r]), `Regla «${r.nombre}» agregada.`))}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-[11px] font-semibold text-slate-600 hover:border-primary hover:text-primary disabled:opacity-50">
+                <Plus className="w-3 h-3" /> {r.etiqueta}
+              </button>
+            ))}
+          </div>
+        )}
         {vinculos.length === 0 ? (
           <p className="py-6 text-center text-xs text-slate-500 rounded-xl border border-dashed border-slate-200">Aún no hay reglas. Agréguelas desde la biblioteca o cree una nueva.</p>
         ) : (
@@ -237,11 +241,30 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
         )}
       </div>
 
+      <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+        <p className="text-[11px] text-slate-600">
+          <span className="font-bold text-carbon-dark">La IA leerá:</span>{" "}
+          {camposIA.map((c) => <span key={c.clave} className="inline-block mr-1 mb-0.5 px-1.5 py-px rounded bg-white border border-slate-200 text-slate-600">{c.etiqueta}</span>)}
+        </p>
+        <p className="text-[11px] text-slate-400">Se calcula con las reglas activas{tipo?.origen === "plantilla" ? ` y los campos de ${tipo.nombre} (documento vinculado en la estructura de carpetas)` : ""}.</p>
+        <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+          <span className="font-bold text-carbon-dark">Modelo:</span>
+          <select aria-label="Modelo de IA" value={requerimiento.modeloPreferidoIA || ""} disabled={ocupado} className={`${CLASE_INPUT} w-auto`}
+            onChange={(e) => { const m = e.target.value || null; conAviso(() => silencioso(() => reglaIAService.asignarModelo(id, m), "Modelo actualizado.")); }}>
+            <option value="">Usar modelo por defecto</option>
+            {modelos.map((m) => <option key={m} value={m}>{m}</option>)}
+            {requerimiento.modeloPreferidoIA && !modelos.includes(requerimiento.modeloPreferidoIA) && (
+              <option value={requerimiento.modeloPreferidoIA}>{requerimiento.modeloPreferidoIA} (sin precios)</option>
+            )}
+          </select>
+        </label>
+      </div>
+
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold text-carbon-dark mr-auto">Pruebas</span>
           <button type="button" disabled={ocupado || !puedeProbar} onClick={() => setModal("probar")} className={CLASE_PRIMARIO}
-            title={puedeProbar ? "" : "Se prueba en En definición o En prueba, con tipo documental y al menos una regla activa."}>
+            title={puedeProbar ? "" : "Se prueba en En definición o En prueba, con al menos una regla activa."}>
             <FlaskConical className="w-3.5 h-3.5" /> Probar reglas
           </button>
         </div>
@@ -269,7 +292,8 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
       </div>
 
       {modal === "agregar" && (
-        <AgregarReglaModal entidad={requerimiento.tipoEntidad} tipo={tipo} vinculadas={vinculos.map((v) => v.reglaId)}
+        <AgregarReglaModal entidad={requerimiento.tipoEntidad} vinculadas={vinculos.map((v) => v.reglaId)}
+          verificacionesUsadas={verificacionesUsadas}
           onCerrar={() => setModal(null)}
           onAgregar={(regla, severidad) =>
             ejecutar(() => reglaIAService.agregarRegla(id, { reglaId: regla.id, severidad }), `Regla «${regla.nombre}» agregada.`)} />
@@ -285,6 +309,7 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
       )}
       {modal === "nueva" && (
         <ReglaModal verificaciones={verificaciones} entidadInicial={requerimiento.tipoEntidad} onCerrar={() => setModal(null)}
+          verificacionesUsadas={verificacionesUsadas}
           onGuardada={(regla) => {
             setModal(null);
             silencioso(() => reglaIAService.agregarRegla(id, { reglaId: regla.id, severidad: "bloqueante" }),
@@ -303,7 +328,7 @@ export const ReglasIARequerimiento = ({ requerimientoId }) => {
               <h3 className="text-sm font-bold text-carbon-dark truncate">{pruebaVista.archivoNombre}</h3>
               <button type="button" onClick={() => setPruebaVista(null)} className={CLASE_SECUNDARIO}>Cerrar</button>
             </div>
-            <ResultadoPrueba prueba={pruebaVista} campos={tipo?.campos || []} />
+            <ResultadoPrueba prueba={pruebaVista} campos={pruebaVista.camposSolicitados || tipo?.campos || camposIA} />
           </div>
         </div>
       )}

@@ -158,6 +158,20 @@ export const BloqueValidar = ({
       )}
       {estadoIA && !iaDisponible && <p className="text-[11px] text-amber-700">La IA no está configurada o faltan los precios del modelo.</p>}
       {error && <p className="text-xs text-red-600">{error}</p>}
+      {vista?.leida.noLeidos?.length > 0 && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 space-y-1">
+          <p className="font-semibold">
+            {vista.leida.noLeidos.length === 1 ? "1 archivo no se pudo leer y no se incluye" : `${vista.leida.noLeidos.length} archivos no se pudieron leer y no se incluyen`}.
+          </p>
+          <p>
+            Suele pasar con archivos de OneDrive o SharePoint que están «solo en línea»: en el Explorador, haga clic derecho en la
+            carpeta y elija «Mantener siempre en este dispositivo», y vuelva a validar.
+          </p>
+          <p className="text-amber-700/80 break-all">
+            {vista.leida.noLeidos.slice(0, 5).map((a) => a.ruta).join(" · ")}{vista.leida.noLeidos.length > 5 ? " …" : ""}
+          </p>
+        </div>
+      )}
 
       {progreso && (
         <div className="space-y-1.5">

@@ -285,10 +285,20 @@ class ExpedienteService {
         actor.email;
 
     const expedienteRef = db.collection(expedienteRepository.COLLECTION).doc();
-    await expedienteRef.set(this.datosCabecera({
+    // Cabecera y primer registro del historial de estados ("Creado", con
+    // fecha y usuario) en un solo lote.
+    const lote = db.batch();
+    lote.set(expedienteRef, this.datosCabecera({
       participacionId, proyectoId, empresaId, mandanteId,
       perfilParticipacionId, creadoPorId: actor.uid || null, creadoPorNombre,
     }));
+    lote.set(expedienteEstadoRepository.nuevaRef(),
+        expedienteEstadoRepository.datos({
+          expediente: {id: expedienteRef.id, mandanteId, estado: null},
+          estadoNuevo: "creado", origen: "creacion",
+          actorUid: actor.uid || null, actorNombre: creadoPorNombre,
+        }));
+    await lote.commit();
 
     let cambios = null;
     try {

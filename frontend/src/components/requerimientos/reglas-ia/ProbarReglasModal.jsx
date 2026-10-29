@@ -142,7 +142,7 @@ export const ProbarReglasModal = ({ config, verificaciones, onProbada, onCerrar 
           <FlaskConical className="w-5 h-5 text-primary" />
           <div className="min-w-0 mr-auto">
             <h3 id="probar-reglas-titulo" className="text-sm font-bold text-carbon-dark">Probar reglas</h3>
-            <p className="text-[11px] text-slate-500">{requerimiento.nombre} · {tipo?.nombre}</p>
+            <p className="text-[11px] text-slate-500">{requerimiento.nombreCorto || requerimiento.nombre}{tipo ? ` · ${tipo.nombre}` : ""}</p>
           </div>
           <button type="button" onClick={onCerrar} disabled={probando} aria-label="Cerrar" className="text-slate-400 hover:text-slate-600 disabled:opacity-50"><X className="w-4 h-4" /></button>
         </div>
@@ -151,7 +151,7 @@ export const ProbarReglasModal = ({ config, verificaciones, onProbada, onCerrar 
           <ErrorBanner message={error} />
           {prueba ? (
             <>
-              <ResultadoPrueba prueba={prueba} campos={tipo?.campos || []} />
+              <ResultadoPrueba prueba={prueba} campos={prueba.camposSolicitados || tipo?.campos || config.camposIA || []} />
               <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => setPrueba(null)} className={CLASE_SECUNDARIO}>Probar otra vez</button>
                 <button type="button" onClick={onCerrar} className={CLASE_PRIMARIO}>Listo</button>

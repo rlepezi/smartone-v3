@@ -16,6 +16,12 @@ const ROLES_LECTURA = [
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
 
 router.get("/", requireRole(ROLES_LECTURA), requerimientoController.list);
+// Ubicación en la plantilla de estructura (selector del formulario):
+// ?mandanteId=&tipoEntidad=. Antes de "/:id".
+router.get(
+    "/ubicaciones-plantilla", requireRole(ROLES_LECTURA),
+    requerimientoController.ubicacionesPlantilla,
+);
 router.get(
     "/:id", requireRole(ROLES_LECTURA), requerimientoController.getById,
 );

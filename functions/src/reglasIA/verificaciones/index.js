@@ -4,7 +4,9 @@ const {
 const {
   vigenteAFecha, vigenteHastaFinProyecto, antiguedadMaxima,
 } = require("./fechas");
-const {cumple, noCumple, noDeterminable, valorDe} = require("./comunes");
+const {
+  cumple, noCumple, noDeterminable, valorDe, claveTexto,
+} = require("./comunes");
 
 // Registro de verificaciones determinísticas: la IA solo extrae los campos y
 // el código verifica. Cada una es una función pura
@@ -53,6 +55,81 @@ function clasesAceptadas(campos, contexto, parametros) {
     cumple(`Clase ${calzan.join(", ")} aceptada.`) :
     noCumple(`Clases ${leidas.join(", ")}; se requiere ` +
         `${aceptadas.join(" o ")}.`);
+}
+
+/**
+ * Se presentó el documento: la regla solo se evalúa sobre un archivo
+ * revisado, así que su sola presencia cumple. Para requisitos donde basta
+ * con que el documento exista (p. ej. un listado).
+ * @return {{resultado: string, detalle: string}} Resultado.
+ */
+function archivoPresente() {
+  return cumple("Se presentó el documento.");
+}
+
+/**
+ * El documento se tomó de una carpeta del repositorio (no se adjuntó a mano)
+ * y, si se indican nombres, la carpeta que lo contiene incluye alguno de
+ * ellos (sin distinguir mayúsculas ni tildes). Aquí la ausencia de la
+ * carpeta ES lo que se verifica (no_cumple).
+ * @param {Object} campos No se usa.
+ * @param {Object} contexto {rutaArchivo}: ruta relativa del archivo dentro de
+ *     la carpeta vinculada, o null si se adjuntó a mano.
+ * @param {Object} parametros {nombres: Array<string>} (opcional).
+ * @return {{resultado: string, detalle: string}} Resultado.
+ */
+function carpetaPresente(campos, contexto, parametros) {
+  const ruta = String(contexto?.rutaArchivo || "").split("\\").join("/");
+  if (!ruta) {
+    return noCumple("El documento no proviene de la carpeta del " +
+        "repositorio (se adjuntó a mano).");
+  }
+  const partes = ruta.split("/").filter(Boolean);
+  const carpeta = partes.slice(0, -1).join("/");
+  const nombres = (parametros?.nombres || []).filter(Boolean);
+  if (!nombres.length) {
+    return cumple(carpeta ? `El documento está en la carpeta ${carpeta}.` :
+      "El documento está en la carpeta vinculada.");
+  }
+  const enRuta = claveTexto(carpeta);
+  const calza = nombres.find((n) => claveTexto(n) &&
+    ` ${enRuta} `.includes(` ${claveTexto(n)} `));
+  if (calza) return cumple(`El documento está en la carpeta ${carpeta}.`);
+  return noCumple(carpeta ?
+    `El documento está en ${carpeta}; se esperaba una carpeta ` +
+      `${nombres.join(" o ")}.` :
+    `El documento no está en una carpeta ${nombres.join(" o ")}.`);
+}
+
+/**
+ * Un campo extraído tiene el valor esperado: igual a alguno de los valores
+ * o los contiene (sin distinguir mayúsculas ni tildes).
+ * @param {Object} campos Campos extraídos.
+ * @param {Object} contexto No se usa.
+ * @param {Object} parametros {campo, modo: "igual" | "contiene", valores}.
+ * @return {{resultado: string, detalle: string}} Resultado.
+ */
+function campoValor(campos, contexto, parametros) {
+  const clave = parametros?.campo;
+  const esperados = (parametros?.valores || []).map(claveTexto)
+      .filter(Boolean);
+  if (!clave || !esperados.length) {
+    return noDeterminable("Falta indicar el campo o los valores esperados.");
+  }
+  const valor = valorDe(campos, clave);
+  if (valor === null) {
+    return noDeterminable(`No se pudo leer el campo ${clave}.`);
+  }
+  const leido = claveTexto(Array.isArray(valor) ? valor.join(" ") : valor);
+  const contiene = parametros.modo === "contiene";
+  const i = esperados.findIndex((e) => (contiene ?
+    ` ${leido} `.includes(` ${e} `) : leido === e));
+  const lista = (parametros.valores || []).join(", ");
+  return i >= 0 ?
+    cumple(`${clave}: «${valor}» ${contiene ? "contiene" : "es"} ` +
+        `${parametros.valores[i]}.`) :
+    noCumple(`${clave}: «${valor}»; se esperaba que ${contiene ?
+      "contuviera" : "fuera"} ${lista}.`);
 }
 
 const TODAS = ["persona", "empresa", "recurso"];
@@ -135,6 +212,43 @@ const VERIFICACIONES = {
     campos: ["patente"], contexto: ["patente"], entidades: ["recurso"],
     parametros: {}, verificar: coincidePatente,
   },
+  archivo_presente: {
+    nombre: "Validar existencia del archivo",
+    descripcion: "Se presentó el documento (basta con que exista; no " +
+        "verifica su contenido).",
+    campos: [], contexto: [], entidades: TODAS, parametros: {},
+    verificar: archivoPresente,
+  },
+  carpeta_presente: {
+    nombre: "Validar existencia de la carpeta",
+    descripcion: "El documento se tomó de una carpeta del repositorio (no " +
+        "se adjuntó a mano) y, si se indica, esa carpeta tiene el nombre " +
+        "esperado.",
+    campos: [], contexto: [], entidades: TODAS,
+    parametros: {
+      nombres: {tipo: "lista", etiqueta: "Nombre de la carpeta (opcional, " +
+        "p. ej. MUTUALIDAD)", requerido: false, default: null},
+    },
+    verificar: carpetaPresente,
+  },
+  campo_valor: {
+    nombre: "Campo con valor esperado",
+    descripcion: "Un dato del documento es igual a (o contiene) alguno de " +
+        "los valores indicados, sin distinguir mayúsculas ni tildes.",
+    campos: [], contexto: [], entidades: TODAS,
+    parametros: {
+      campo: {tipo: "campo", etiqueta: "Campo", requerido: true,
+        default: null},
+      modo: {tipo: "opcion", etiqueta: "Comparación", requerido: true,
+        default: "igual", opciones: [
+          {valor: "igual", etiqueta: "Es igual a"},
+          {valor: "contiene", etiqueta: "Contiene"},
+        ]},
+      valores: {tipo: "lista", etiqueta: "Valores esperados (p. ej. " +
+        "SUPERVISOR, JEFE DE OBRA)", requerido: true, default: null},
+    },
+    verificar: campoValor,
+  },
   coincide_empresa: {
     nombre: "Empleador coincide con la empresa",
     descripcion: "El RUT del empleador del documento coincide con la " +
@@ -206,14 +320,14 @@ function validarParametros(clave, parametros) {
 }
 
 /**
- * Campos que necesita una regla determinística (campo_presente: el del
- * parámetro).
+ * Campos que necesita una regla determinística (campo_presente y
+ * campo_valor: el del parámetro).
  * @param {string} clave Verificación.
  * @param {Object} parametros Parámetros ya validados.
  * @return {Array<string>} Claves de campo.
  */
 function camposDe(clave, parametros) {
-  if (clave === "campo_presente") {
+  if (clave === "campo_presente" || clave === "campo_valor") {
     return parametros?.campo ? [parametros.campo] : [];
   }
   return [...(VERIFICACIONES[clave]?.campos || [])];

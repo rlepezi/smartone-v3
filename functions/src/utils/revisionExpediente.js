@@ -1,9 +1,8 @@
 const {clasificarVencimiento} = require("./vencimientos");
 const {similitudNombres} = require("./estructuraCalce");
 const {coincideNombre, normalizarRun} = require("../services/reglasService");
-const {
-  ESTADOS_IA_ELEGIBLES, seccionHabilitada, documentoHabilitado,
-} = require("./alcanceValidacion");
+const {seccionHabilitada, documentoHabilitado} = require("./alcanceValidacion");
+const {ubicacionRequerimiento} = require("./ubicacionRequerimiento");
 
 // Revisiones IA dentro de un Expediente: funciones PURAS para decidir qué
 // requerimientos pueden revisarse con IA y el estado de cada celda de la
@@ -16,6 +15,8 @@ const MOTIVOS_NO_ELEGIBLE = {
   documento_deshabilitado: "Documento deshabilitado en la plantilla",
   dato_sensible: "Dato sensible",
   solo_reglas: "Se revisa con “Revisar con IA” en la evaluación",
+  seccion_sin_documentos: "Vinculado a una sección sin documentos en la " +
+      "plantilla",
 };
 
 /**
@@ -39,48 +40,36 @@ function documentosDeTipo(plantilla, codigo) {
 }
 
 /**
- * Elegibilidad de un requerimiento para revisarse con IA. Cadena:
- * requerimiento.tipoDocumentalId → tipo activo con estadoIA piloto/activo →
- * documento HABILITADO de la plantilla con ese código → no sensible. En
- * carpeta libre (sin plantilla) basta con el tipo.
- * @param {Object} entrada {requerimiento, tipo (tipo documental o null),
- *     plantilla (o null), libre}.
+ * Elegibilidad de un requerimiento para revisarse con IA, según su
+ * ubicación (ubicacionRequerimiento: 1° mapeo del Expediente, 2° vínculo de
+ * la plantilla, 3° tipo documental, sin caída entre niveles). En carpeta
+ * libre (sin plantilla) basta con el tipo. El tipo documental sale del
+ * documento de la plantilla vinculado; el guardado es solo respaldo.
+ * @param {Object} entrada {requerimiento, tipo (tipo GUARDADO o null),
+ *     tiposPorCodigo (catálogo por código), plantilla (o null), libre, mapeo
+ *     (del repositorio documental), tipoEntidad (por defecto, el del
+ *     requerimiento)}.
  * @return {{elegible: boolean, motivo: ?string, tipo: ?Object,
- *     documentoPlantilla: ?{nombre: string, seccion: string}}} Resultado.
+ *     documentoPlantilla: ?{nombre: string, seccion: string}, nivel: ?string,
+ *     ruta: ?string, documentos: Object[]}} Resultado.
  */
 function elegibilidadRequerimiento({requerimiento, tipo, plantilla,
-  libre = false}) {
-  const base = {tipo: tipo ? {id: tipo.id, codigo: tipo.codigo,
-    estado: tipo.estado, estadoIA: tipo.estadoIA} : null,
-  documentoPlantilla: null};
-  const no = (motivo, extra = {}) =>
-    ({...base, ...extra, elegible: false, motivo});
-  if (!requerimiento || !requerimiento.tipoDocumentalId || !tipo) {
-    return no("sin_tipo");
-  }
-  if (tipo.estado !== "activo" ||
-      !ESTADOS_IA_ELEGIBLES.includes(tipo.estadoIA)) {
-    return no("tipo_inactivo");
-  }
-  // Tipo creado para las reglas por requerimiento: sin extracción por carpeta.
-  if (tipo.soloReglas) return no("solo_reglas");
-  if (libre) return {...base, elegible: true, motivo: null};
-  const docs = documentosDeTipo(plantilla, tipo.codigo);
-  if (!docs.length) return no("no_en_plantilla");
-  const habilitados = docs.filter((d) => d.habilitado);
-  const elegido = habilitados.find((d) => !d.documento.datosSensibles) ||
-      habilitados[0] || docs[0];
-  const documentoPlantilla = {
-    nombre: elegido.documento.nombre,
-    seccion: elegido.seccion.nombre || elegido.seccion.clave,
+  libre = false, mapeo = null, tipoEntidad = null, tiposPorCodigo = null}) {
+  const u = ubicacionRequerimiento({requerimiento, tipo, plantilla, mapeo,
+    libre, tiposPorCodigo, tipoEntidad: tipoEntidad ||
+      requerimiento?.tipoEntidad || "persona"});
+  const primero = u.documentos[0] || null;
+  const t = u.tipo;
+  return {
+    tipo: t ? {id: t.id, codigo: t.codigo, estado: t.estado,
+      estadoIA: t.estadoIA} : null,
+    origenTipo: u.origenTipo,
+    documentoPlantilla: primero ? {
+      nombre: primero.documento || primero.seccion, seccion: primero.seccion,
+    } : null,
+    elegible: u.elegible, motivo: u.motivo,
+    nivel: u.nivel, ruta: u.ruta, documentos: u.documentos,
   };
-  if (!habilitados.length) {
-    return no("documento_deshabilitado", {documentoPlantilla});
-  }
-  if (elegido.documento.datosSensibles) {
-    return no("dato_sensible", {documentoPlantilla});
-  }
-  return {...base, documentoPlantilla, elegible: true, motivo: null};
 }
 
 /**
@@ -166,14 +155,16 @@ function calzarPersona(entidad, personas) {
  * @param {Object} entrada {empresa (plan), personas (del Expediente),
  *     codigos (Set de tipos documentales pedidos), libre, validados (Map
  *     personaId → Set de códigos ya validados), todosValidados (Set de
- *     personaId con todo lo pedido validado), omitirValidados}.
+ *     personaId con todo lo pedido validado), omitirValidados, admitir
+ *     (opcional: (archivo) => boolean; por defecto, su tipo está en
+ *     codigos)}.
  * @return {{empresa: Object, personasSinCarpeta: Object[],
  *     carpetasSinPersona: Object[], omitidosValidados: number,
  *     personasPorEntidad: Object}} Plan ajustado y avisos.
  */
 function ajustarPlanAExpediente({empresa, personas, codigos, libre = false,
   validados = new Map(), todosValidados = new Set(),
-  omitirValidados = false}) {
+  omitirValidados = false, admitir = null}) {
   const calcePorEntidad = new Map();
   const carpetasSinPersona = [];
   empresa.entidades.forEach((e) => {
@@ -196,7 +187,8 @@ function ajustarPlanAExpediente({empresa, personas, codigos, libre = false,
         entidadCarpeta: a.entidadCarpeta || null});
       return false;
     };
-    if (!libre && !codigos.has(a.tipoDocumentalCodigo)) {
+    if (!libre && !(admitir ? admitir(a) :
+        codigos.has(a.tipoDocumentalCodigo))) {
       return excluir("no_solicitado");
     }
     const calce = calcePorEntidad.get(a.entidadClave);

@@ -30,27 +30,66 @@ const metaDe = (file, ruta) => ({
   ultimaModificacion: file.lastModified ? new Date(file.lastModified).toISOString() : null,
 });
 
-// Árbol desde un handle (showDirectoryPicker o carpeta predeterminada).
+// Mensaje en español para un error del navegador al leer una carpeta local (NotFoundError: se
+// movió, se renombró o se eliminó; NotAllowedError: sin permiso).
+export const mensajeErrorCarpeta = (error, nombre) => {
+  if (error?.name === "NotFoundError") {
+    return `No se encontró la carpeta «${nombre}»: se movió, se renombró o se eliminó. Vuelva a elegirla.`;
+  }
+  if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+    return `El navegador no dio permiso para leer la carpeta «${nombre}». Confirme el acceso.`;
+  }
+  return error?.message || "No se pudo leer la carpeta.";
+};
+
+// ¿La carpeta del handle sigue existiendo? false solo ante NotFoundError (se movió o se borró).
+export const existeCarpeta = async (handle) => {
+  try {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of handle.entries()) break;
+    return true;
+  } catch (error) {
+    return error?.name !== "NotFoundError";
+  }
+};
+
+// Árbol desde un handle (showDirectoryPicker o carpeta predeterminada). Un archivo o subcarpeta
+// que el navegador no puede leer (p. ej. archivos de OneDrive "solo en línea", temporales de Office
+// o algo borrado durante la lectura) se omite y queda en `noLeidos` [{ ruta, nombre }], en vez de
+// abortar toda la lectura. Si la carpeta raíz ya no existe, lanza un error en español.
 export const leerArbol = async (raiz) => {
   const archivos = new Map();
+  const noLeidos = [];
   const recorrer = async (handle, nodo, nivel) => {
     for await (const [nombre, entrada] of handle.entries()) {
       if (esOculto(nombre)) continue;
       const ruta = unir(nodo.ruta, nombre);
       if (entrada.kind === "file") {
-        const file = await entrada.getFile();
-        nodo.archivos.push(metaDe(file, ruta));
-        archivos.set(ruta, file);
+        try {
+          const file = await entrada.getFile();
+          nodo.archivos.push(metaDe(file, ruta));
+          archivos.set(ruta, file);
+        } catch {
+          noLeidos.push({ ruta, nombre });
+        }
       } else if (nivel < MAX_PROFUNDIDAD) {
         const hijo = nodoVacio(nombre, ruta);
-        nodo.carpetas.push(hijo);
-        await recorrer(entrada, hijo, nivel + 1);
+        try {
+          await recorrer(entrada, hijo, nivel + 1);
+          nodo.carpetas.push(hijo);
+        } catch {
+          noLeidos.push({ ruta, nombre: `${nombre}/` });
+        }
       }
     }
   };
   const arbol = nodoVacio(raiz.name, "");
-  await recorrer(raiz, arbol, 1);
-  return { arbol, archivos, carpetaRaizNombre: raiz.name };
+  try {
+    await recorrer(raiz, arbol, 1);
+  } catch (error) {
+    throw Object.assign(new Error(mensajeErrorCarpeta(error, raiz.name)), { codigo: error?.name || null });
+  }
+  return { arbol, archivos, carpetaRaizNombre: raiz.name, noLeidos };
 };
 
 // Árbol desde <input type="file" webkitdirectory> (respaldo): cada File trae

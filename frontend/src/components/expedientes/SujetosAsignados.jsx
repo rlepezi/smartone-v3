@@ -6,6 +6,7 @@ import {
 import { IngresarRecursoModal } from "./IngresarRecursoModal";
 import { ResumenCumplimientoLista } from "../shared/ResumenCumplimientoLista";
 import { BadgeAcreditacion } from "../shared/BadgeAcreditacion";
+import { evaluadosDe } from "../../utils/cumplimientoCalculos";
 import { PatenteChip } from "../shared/PatenteChip";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
@@ -276,7 +277,7 @@ export const SujetosAsignados = ({
                           ? <PatenteChip valor={i.busqueda} tipo={i.tipoIdentificacion} /> : i.busqueda}
                       </td>
                       <td className="px-3 py-3 text-center font-semibold text-slate-700 tabular-nums">{i.requerimientos}</td>
-                      <td className="px-3 py-3"><BadgeAcreditacion pct={i.avancePct} sinEtiqueta umbrales={umbralesAcreditacion} /></td>
+                      <td className="px-3 py-3"><BadgeAcreditacion pct={i.avancePct} sinEtiqueta umbrales={umbralesAcreditacion} sinEvaluar={evaluadosDe(i.resumen) === 0} /></td>
                       <td className="px-3 py-3"><InsigniaEstado estado={i.estado} /></td>
                     </tr>
                   );
@@ -306,7 +307,7 @@ export const SujetosAsignados = ({
             <p className="text-sm font-bold text-carbon-dark break-words">{seleccionado.nombre}</p>
             <div className="flex flex-wrap items-center gap-2">
               <InsigniaEstado estado={seleccionado.estado} />
-              <BadgeAcreditacion pct={seleccionado.avancePct} umbrales={umbralesAcreditacion} />
+              <BadgeAcreditacion pct={seleccionado.avancePct} umbrales={umbralesAcreditacion} sinEvaluar={evaluadosDe(seleccionado.resumen) === 0} />
             </div>
           </div>
 

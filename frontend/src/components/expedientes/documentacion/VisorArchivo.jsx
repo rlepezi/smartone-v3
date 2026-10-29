@@ -3,6 +3,7 @@ import { ExternalLink, Maximize2, Search, ZoomIn, ZoomOut } from "lucide-react";
 import { rutsEnTexto } from "../../../utils/rutEnTexto";
 import { claveTexto } from "../../../utils/carpetasSujetos";
 import { esImagen, esPdf, extensionDe } from "../../../utils/repositorioDocumental";
+import { VistaPlanilla } from "./VistaPlanilla";
 
 const CLASE_RUT = "rut-detectado bg-amber-100 ring-1 ring-amber-300 rounded px-0.5 cursor-pointer hover:bg-amber-200";
 const CLASE_FILA = "fila-persona-encontrada";
@@ -90,7 +91,8 @@ const marcarBusqueda = (contenedor, termino) => {
 
 // Visor de solo lectura de un archivo de la carpeta del expediente (lo usan el modal de "Crear desde
 // carpeta" y el panel de documentos): .docx renderizado a HTML con docx-preview (import dinámico),
-// PDF en iframe, imágenes con zoom; el resto, "Abrir en pestaña nueva". En .docx, opcionalmente:
+// PDF en iframe, imágenes con zoom, planillas Excel/CSV como tabla (VistaPlanilla); el resto,
+// "Abrir en pestaña nueva". En .docx, opcionalmente:
 // RUT válidos clickeables (`onRut`) y ubicación de la fila de `nombreBuscado`, con su RUT único como
 // sugerencia (`onSugerenciaRut`; nunca se rellena solo).
 // `mostrarNombre`: false cuando quien lo usa ya muestra el nombre (panel de documentos).
@@ -106,6 +108,9 @@ export const VisorArchivo = ({ archivo, nombreBuscado = "", onRut, onSugerenciaR
   const [pdfListo, setPdfListo] = useState(false);
   const nombre = archivo?.name || "";
   const esDocx = extensionDe(nombre) === "docx";
+  // Planillas: .xlsx/.xlsm (exceljs) y .csv; las .xls antiguas no se pueden leer en el navegador.
+  const esPlanilla = ["xlsx", "xlsm", "csv"].includes(extensionDe(nombre));
+  const esXlsAntiguo = extensionDe(nombre) === "xls";
 
   // Otro archivo: zoom y búsqueda vuelven a cero.
   const [archivoPrevio, setArchivoPrevio] = useState(archivo);
@@ -216,6 +221,8 @@ export const VisorArchivo = ({ archivo, nombreBuscado = "", onRut, onSugerenciaR
           {estado === "error" && <p className="p-4 text-xs text-red-600">No se pudo mostrar este documento Word. Ábralo en una pestaña nueva.</p>}
           <div ref={contenedorRef} onClick={alClickContenedor} className="visor-docx p-3 text-[13px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:px-1" />
         </div>
+      ) : esPlanilla ? (
+        <VistaPlanilla archivo={archivo} />
       ) : esPdf(nombre) ? (
         <div className="relative flex-1 min-h-[20rem] flex flex-col">
           {(!url || !pdfListo) && (
@@ -231,7 +238,11 @@ export const VisorArchivo = ({ archivo, nombreBuscado = "", onRut, onSugerenciaR
         </div>
       ) : (
         <div className="m-auto text-center space-y-2 p-6">
-          <p className="text-xs text-slate-500">Vista previa no disponible para este formato.</p>
+          <p className="text-xs text-slate-500">
+            {esXlsAntiguo
+              ? "Formato Excel antiguo (.xls): no se puede mostrar aquí. Ábralo en una pestaña nueva o guárdelo como .xlsx."
+              : "Vista previa no disponible para este formato."}
+          </p>
           {url && (
             <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-carbon-dark hover:bg-slate-50">
               <ExternalLink className="w-3.5 h-3.5" /> Abrir en pestaña nueva

@@ -107,6 +107,50 @@ class RevisionRequerimientoIAService {
   }
 
   /**
+   * Pauta de validación de cada requerimiento del expediente, para el ícono
+   * IA de la planilla y el panel "modo requerimiento": estado IA, tipo
+   * documental y reglas ACTIVAS en su orden (con severidad, parámetros
+   * efectivos e instrucción). Solo lectura: la ven todos los que leen el
+   * expediente (las reglas también guían la revisión manual).
+   * @param {string} expedienteId ID del expediente.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<{pautas: Object}>} {pautas: {requerimientoId: {estadoIA,
+   *     tipo, reglas}}}.
+   */
+  async pautas(expedienteId, actor) {
+    const expediente = await expedienteService.getExpedienteById(
+        expedienteId, actor);
+    const instancias = await expedienteRequerimientoRepository
+        .listByExpediente(expedienteId, "activo");
+    const reqs = await requerimientoRepository.getByIds(
+        [...new Set(instancias.map((i) => i.requerimientoId))]);
+    const pautas = {};
+    // Tipo de cada requerimiento: el del documento de la plantilla vinculado
+    // (catálogo y plantilla se leen una vez).
+    const datosTipo = await requerimientoReglaIAService._datosTipo(
+        expediente.mandanteId);
+    await Promise.all(reqs.map(async (req) => {
+      const [tipo, items] = await Promise.all([
+        requerimientoReglaIAService._tipo(req, datosTipo),
+        requerimientoReglaIAService._vinculos(req.id),
+      ]);
+      const reglas = requerimientoReglaIAService._aplicables(items)
+          .map((i) => i.snapshot)
+          .sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999))
+          .map((s) => ({vinculoId: s.vinculoId, reglaId: s.reglaId,
+            nombre: s.nombre, tipo: s.tipo, severidad: s.severidad,
+            verificacion: s.verificacion, parametros: s.parametros || {},
+            instruccionIA: s.instruccionIA || null}));
+      pautas[req.id] = {
+        estadoIA: estadoIADe(req),
+        tipo: tipo ? {codigo: tipo.codigo, nombre: tipo.nombre} : null,
+        reglas,
+      };
+    }));
+    return {pautas};
+  }
+
+  /**
    * Estado para la planilla: qué requerimientos del expediente tienen la IA
    * habilitada y la última propuesta pendiente de cada requisito.
    * @param {string} expedienteId ID del expediente.
@@ -195,7 +239,7 @@ class RevisionRequerimientoIAService {
         actor});
     const r = await requerimientoReglaIAService.ejecutarReglas(req, piezas,
         contexto, async (f) => consumo(await revisionRepository.create({...base,
-          tipoDocumentalId: f.tipo.id, reglasSnapshot: f.snapshot,
+          tipoDocumentalId: f.tipo?.id || null, reglasSnapshot: f.snapshot,
           camposExtraidos: null, resultadosReglas: [],
           resultadoPropuesto: null, observacionesPropuestas: null,
           propuestaEvaluacion: null, modelo: f.modelo,
@@ -216,7 +260,8 @@ class RevisionRequerimientoIAService {
       estado: "descartada", motivoDescarte: "reemplazada",
       resueltaAt: FieldValue.serverTimestamp(), resueltaBy: actor.uid})));
     const revision = await revisionRepository.create({...base,
-      tipoDocumentalId: r.tipo.id, reglasSnapshot: r.snapshot,
+      tipoDocumentalId: r.tipo?.id || null,
+      camposSolicitados: r.camposSolicitados, reglasSnapshot: r.snapshot,
       camposExtraidos: r.camposExtraidos, resultadosReglas: r.resultadosReglas,
       resultadoPropuesto: r.resultadoPropuesto,
       observacionesPropuestas: propuesta.observaciones,

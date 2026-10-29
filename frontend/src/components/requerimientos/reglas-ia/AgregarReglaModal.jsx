@@ -8,20 +8,19 @@ import { CLASE_INPUT, CLASE_PRIMARIO } from "../../configuracion-ia/estilos";
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
 
 // Motivo por el que una regla no se puede usar en este requerimiento, o null.
-const incompatibilidad = (regla, entidad, tipo, vinculadas) => {
+const incompatibilidad = (regla, entidad, vinculadas, verificacionesUsadas) => {
   if (vinculadas.includes(regla.id)) return "Ya está en el requerimiento.";
-  if (!(regla.entidades || []).includes(entidad)) return `No aplica a ${etiquetaEntidad(entidad)}.`;
-  if (tipo) {
-    const claves = new Set(tipo.campos.map((c) => c.clave));
-    const falta = (regla.camposRequeridos || []).find((c) => !claves.has(c));
-    if (falta) return `Requiere el campo ${falta}, que ${tipo.nombre} no extrae.`;
+  if (regla.tipo === "deterministica" && regla.verificacion && verificacionesUsadas.includes(regla.verificacion)) {
+    return "El requerimiento ya tiene una regla con esta verificación.";
   }
+  if (!(regla.entidades || []).includes(entidad)) return `No aplica a ${etiquetaEntidad(entidad)}.`;
   return null;
 };
 
-// "Agregar desde biblioteca": reglas activas, las compatibles primero (entidad del requerimiento y
-// campos que extrae su tipo documental). Se elige la severidad al agregar.
-export const AgregarReglaModal = ({ entidad, tipo, vinculadas, onAgregar, onCerrar }) => {
+// "Agregar desde biblioteca": reglas activas, las compatibles primero (entidad del requerimiento).
+// Los campos que la regla necesita se suman solos a lo que lee la IA. Se elige la severidad al agregar.
+// `verificacionesUsadas`: verificaciones determinísticas que el requerimiento ya usa (no se repiten).
+export const AgregarReglaModal = ({ entidad, vinculadas, verificacionesUsadas = [], onAgregar, onCerrar }) => {
   const [reglas, setReglas] = useState(null);
   const [error, setError] = useState(null);
   const [texto, setTexto] = useState("");
@@ -39,7 +38,7 @@ export const AgregarReglaModal = ({ entidad, tipo, vinculadas, onAgregar, onCerr
   const t = texto.trim().toLowerCase();
   const lista = (reglas || [])
     .filter((r) => !t || `${r.nombre} ${r.descripcion || ""}`.toLowerCase().includes(t))
-    .map((r) => ({ ...r, motivo: incompatibilidad(r, entidad, tipo, vinculadas) }))
+    .map((r) => ({ ...r, motivo: incompatibilidad(r, entidad, vinculadas, verificacionesUsadas) }))
     .sort((a, b) => Number(Boolean(a.motivo)) - Number(Boolean(b.motivo)) || a.nombre.localeCompare(b.nombre, "es"));
 
   const agregar = async (regla) => {

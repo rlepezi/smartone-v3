@@ -284,7 +284,7 @@ export const TabEstructura = () => {
         </Tarjeta>
       ) : (
         <>
-          <AlcancePanel alcance={alcance} />
+          <AlcancePanel alcance={alcance} nombreRequerimiento={nombreReq} />
 
           <Tarjeta
             titulo={`${plantilla.nombre} · versión ${plantilla.version}`}

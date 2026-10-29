@@ -1499,6 +1499,8 @@ class AcreditacionService {
       return {
         requerimientoId: r.requerimientoId,
         nombre: r.nombre,
+        // El asistente muestra el nombre corto (el largo, de tooltip).
+        nombreCorto: r.nombreCorto || r.nombre,
         estado: ev ? "reutilizado" : "pendiente",
         vigenteHasta: millis ? new Date(millis).toISOString() : null,
       };

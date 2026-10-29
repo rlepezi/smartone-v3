@@ -4,6 +4,8 @@ const expedienteController = require("../controllers/expedienteController");
 const vencimientoController = require("../controllers/vencimientoController");
 const revisionExpedienteController =
     require("../controllers/revisionExpedienteController");
+const revisionRequerimientoIAController =
+    require("../controllers/revisionRequerimientoIAController");
 const repositorioDocumentalController =
     require("../controllers/repositorioDocumentalController");
 const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
@@ -81,6 +83,13 @@ router.get(
     "/:id/revisiones-ia/propuestas",
     requireRole(ROLES_LECTURA),
     revisionExpedienteController.propuestas,
+);
+// Pauta de validación (reglas activas y estado IA) de cada requerimiento:
+// la ven todos los que leen el expediente; guía también la revisión manual.
+router.get(
+    "/:id/revisiones-ia/pautas",
+    requireRole(ROLES_LECTURA),
+    revisionRequerimientoIAController.pautas,
 );
 router.get(
     "/:id/revisiones-ia/matriz",

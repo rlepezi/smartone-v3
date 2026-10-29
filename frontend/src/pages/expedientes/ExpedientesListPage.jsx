@@ -12,7 +12,7 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { mandanteService } from "../../services/mandanteService";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { formatFecha } from "../../utils/fechas";
-import { porcentajeCumplimiento, resumenDeExpedientes } from "../../utils/cumplimientoCalculos";
+import { porcentajeCumplimiento, resumenDeExpedientes, evaluadosDe } from "../../utils/cumplimientoCalculos";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { FilterBar } from "../../components/shared/FilterBar";
@@ -303,7 +303,7 @@ export const ExpedientesListPage = () => {
                 </td>
                 <td className="py-4 px-4">
                   {/* % con su nivel según los umbrales del Mandante del Expediente. */}
-                  <BadgeAcreditacion pct={pct} umbrales={mandantesInfo[item.mandanteId]?.umbrales} />
+                  <BadgeAcreditacion pct={pct} umbrales={mandantesInfo[item.mandanteId]?.umbrales} sinEvaluar={evaluadosDe(item.resumen) === 0} />
                 </td>
                 <td className="py-4 px-4 text-slate-600 font-medium">
                   <p>{formatFecha(item.createdAt)}</p>

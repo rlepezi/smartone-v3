@@ -114,10 +114,14 @@ export const resolverUmbrales = (umbrales) => {
 
 // Nivel de acreditación según el % de cumplimiento y los umbrales del Mandante (por defecto: 100 %
 // Acreditada en verde, desde 85 % Aceptable en amarillo, bajo 85 % Rechazada en rojo). Sin nada
-// evaluable (null) no hay nivel.
-export const nivelAcreditacion = (pct, umbrales = null) => {
+// evaluable (null) no hay nivel. `sinEvaluar`: hay requisitos pero ninguno evaluado (p. ej. un
+// expediente recién creado): "Pendiente" en naranjo, no "Rechazada" por un 0 % que aún no es tal.
+export const nivelAcreditacion = (pct, umbrales = null, sinEvaluar = false) => {
   if (pct === null || pct === undefined) {
     return { etiqueta: null, caja: "bg-slate-50 border-slate-200", texto: "text-slate-400", icono: "text-slate-400" };
+  }
+  if (sinEvaluar) {
+    return { etiqueta: "Pendiente", caja: "bg-orange-50 border-orange-300", texto: "text-orange-700", icono: "text-orange-500" };
   }
   const { acreditada, aceptable } = resolverUmbrales(umbrales);
   if (pct >= acreditada) return { etiqueta: "Acreditada", caja: "bg-emerald-50 border-emerald-300", texto: "text-emerald-700", icono: "text-emerald-600" };

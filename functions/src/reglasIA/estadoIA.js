@@ -42,8 +42,8 @@ function estadoTrasCambio(actual) {
  * Valida una transición manual.
  * @param {string} actual Estado actual.
  * @param {string} destino Estado pedido.
- * @param {{tieneTipo: boolean, reglasActivas: number,
- *     pruebaVigente: boolean}} condiciones Condiciones.
+ * @param {{reglasActivas: number, pruebaVigente: boolean}} condiciones
+ *     Condiciones (el tipo documental es opcional: no se exige).
  * @return {?string} Mensaje de error, o null si procede.
  */
 function errorTransicion(actual, destino, condiciones) {
@@ -56,7 +56,6 @@ function errorTransicion(actual, destino, condiciones) {
     if (actual !== "en_definicion") {
       return "Solo se pasa a En prueba desde En definición.";
     }
-    if (!condiciones.tieneTipo) return "Asigne primero un tipo documental.";
     if (!(condiciones.reglasActivas > 0)) {
       return "Agregue al menos una regla activa.";
     }

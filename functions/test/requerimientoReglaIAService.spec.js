@@ -13,6 +13,9 @@ jest.mock("../src/repositories/requerimientoRepository", () => ({
 jest.mock("../src/repositories/tipoDocumentalRepository", () => ({
   getById: jest.fn(), list: jest.fn(),
 }));
+jest.mock("../src/repositories/plantillaEstructuraRepository", () => ({
+  getActiva: jest.fn().mockResolvedValue(null),
+}));
 jest.mock("../src/repositories/reglaIARepository", () => ({
   getById: jest.fn(), getByIds: jest.fn(),
 }));
@@ -52,6 +55,8 @@ const pruebaReglaIARepository =
 const bitacoraLogger = require("../src/utils/bitacoraLogger");
 const modeloReglasIAService =
     require("../src/services/modeloReglasIAService");
+const plantillaEstructuraRepository =
+    require("../src/repositories/plantillaEstructuraRepository");
 const servicio = require("../src/services/requerimientoReglaIAService");
 
 const ACTOR = {uid: "u1", rol: "superadmin", email: "demo@ejemplo.cl"};
@@ -83,14 +88,38 @@ beforeEach(() => {
 });
 
 describe("vincular reglas", () => {
-  it("rechaza una regla cuyo campo el tipo no extrae", async () => {
-    requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([]);
-    reglaIARepository.getByIds.mockResolvedValue([]);
+  it("acepta una regla cuyo campo el tipo no extrae: se suma a lo que " +
+      "lee la IA", async () => {
+    const vinculo = {id: "v9", requerimientoId: "r1", reglaId: "g-emi",
+      orden: 1, severidad: "bloqueante", parametros: {}, activa: true};
+    requerimientoReglaRepository.listByRequerimiento
+        .mockResolvedValueOnce([]).mockResolvedValue([vinculo]);
+    reglaIARepository.getByIds.mockResolvedValue([REGLA_EMISION]);
     reglaIARepository.getById.mockResolvedValue(REGLA_EMISION);
-    await expect(servicio.agregarRegla("r1", {reglaId: "g-emi"}, ACTOR))
-        .rejects.toThrow("La regla Antigüedad requiere el campo " +
-          "fechaEmision, que el tipo Cédula no extrae.");
-    expect(requerimientoReglaRepository.create).not.toHaveBeenCalled();
+    requerimientoReglaRepository.create.mockResolvedValue(vinculo);
+    const r = await servicio.agregarRegla("r1", {reglaId: "g-emi"}, ACTOR);
+    expect(requerimientoReglaRepository.create).toHaveBeenCalled();
+    expect(r.vinculos[0].alertas).toEqual([]);
+    // Tipo solo GUARDADO (respaldo): sus campos no se suman.
+    expect(r.tipo.origen).toBe("guardado");
+    expect(r.camposIA.map((c) => c.clave)).toEqual(["fechaEmision", "titulo"]);
+  });
+
+  it("el tipo sale del documento de la plantilla vinculado y sus campos " +
+      "se suman a los de las reglas", async () => {
+    req = {...req, tipoDocumentalId: null};
+    plantillaEstructuraRepository.getActiva.mockResolvedValueOnce({
+      secciones: [{clave: "personal", tipo: "entidades", entidad: "persona",
+        documentos: [{clave: "ci", nombre: "Cédula",
+          tipoDocumentalCodigo: "CEDULA_CL", requerimientoId: "r1"}]}]});
+    requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([
+      {id: "v9", requerimientoId: "r1", reglaId: "g-emi", orden: 1,
+        severidad: "bloqueante", parametros: {}, activa: true}]);
+    reglaIARepository.getByIds.mockResolvedValue([REGLA_EMISION]);
+    const r = await servicio.obtener("r1", ACTOR);
+    expect(r.tipo).toMatchObject({codigo: "CEDULA_CL", origen: "plantilla"});
+    expect(r.camposIA.map((c) => c.clave))
+        .toEqual(["rut", "fechaVencimiento", "fechaEmision", "titulo"]);
   });
 
   it("la primera regla pasa de Sin reglas a En definición y queda en la " +
@@ -177,4 +206,53 @@ describe("probar", () => {
     req.estadoIA = "habilitado";
     await expect(servicio.probar("r1", {}, ACTOR)).rejects.toThrow(/En prueba/);
   });
+
+  it("sin tipo documental: los campos salen de las reglas y el documento " +
+      "esperado es el requerimiento", async () => {
+    req = {...req, estadoIA: "en_definicion", tipoDocumentalId: null,
+      nombreCorto: "Cédula"};
+    requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([
+      {id: "v1", reglaId: "g-rut", orden: 1, severidad: "bloqueante",
+        parametros: {}, activa: true}]);
+    reglaIARepository.getByIds.mockResolvedValue([REGLA_RUT]);
+    modeloReglasIAService.evaluar.mockResolvedValue({
+      camposExtraidos: {rut: {valor: "11111111-1", confianza: 0.99},
+        titulo: {valor: "Cédula", confianza: 0.9}},
+      interpretativas: [], tokensEntrada: 100, tokensSalida: 20,
+      intentos: 1, latenciaMs: 300,
+    });
+    pruebaReglaIARepository.create.mockImplementation(async (d) =>
+      ({id: "p2", ...d}));
+    const p = await servicio.probar("r1", {
+      archivos: [{nombre: "ci.jpg", mime: "image/jpeg",
+        contenidoBase64: Buffer.from("x").toString("base64")}],
+      contexto: {rut: "11.111.111-1"},
+    }, ACTOR);
+    const llamada = modeloReglasIAService.evaluar.mock.calls[0][0];
+    expect(llamada.tipo.nombre).toBe("Cédula");
+    expect(llamada.campos.map((c) => c.clave)).toEqual(["rut", "titulo"]);
+    expect(p.tipoDocumentalId).toBeNull();
+    expect(p.camposSolicitados).toHaveLength(2);
+    expect(p.resultadoPropuesto.resultado).toBe("cumple");
+  });
+});
+
+describe("camposEfectivos", () => {
+  const {camposEfectivos} = require("../src/reglasIA/camposEfectivos");
+  it("une los del tipo y los de las reglas, sin repetir, con el título",
+      () => {
+        const campos = camposEfectivos(
+            {campos: [{clave: "rut", etiqueta: "RUT del tipo", tipo: "rut"}]},
+            [{camposRequeridos: ["rut", "fechaVencimiento"]},
+              {camposRequeridos: ["cargo"]}]);
+        expect(campos).toEqual([
+          {clave: "rut", etiqueta: "RUT del tipo", tipo: "rut"},
+          {clave: "fechaVencimiento", etiqueta: "Fecha de vencimiento",
+            tipo: "fecha"},
+          {clave: "cargo", etiqueta: "cargo", tipo: "texto"},
+          {clave: "titulo", etiqueta: "Título del documento", tipo: "texto"},
+        ]);
+        expect(camposEfectivos(null, []).map((c) => c.clave))
+            .toEqual(["titulo"]);
+      });
 });

@@ -43,6 +43,25 @@ class RequerimientoController {
   }
 
   /**
+   * Opciones de ubicación en la plantilla de estructura (selector del
+   * formulario de Requerimiento).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async ubicacionesPlantilla(req, res, next) {
+    try {
+      const {mandanteId, tipoEntidad} = req.query;
+      const data = await requerimientoService.opcionesUbicacionPlantilla(
+          {mandanteId, tipoEntidad}, req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Crea un requerimiento junto con su aplicabilidad (una transacción).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

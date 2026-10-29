@@ -26,10 +26,17 @@ const {snapshotRegla, aplicarReglas} = require("../reglasIA/prueba");
 const {calcularResultadoPropuesto} = require("../reglasIA/resultado");
 const {validarParametros} = require("../reglasIA/verificaciones");
 const {aFechaIso} = require("../reglasIA/verificaciones/comunes");
+const {camposEfectivos} = require("../reglasIA/camposEfectivos");
+const {tipoDeRequerimiento} = require("../utils/ubicacionRequerimiento");
+const plantillaEstructuraRepository =
+    require("../repositories/plantillaEstructuraRepository");
 
 const SEVERIDADES = ["bloqueante", "advertencia"];
 const ETIQUETA_ENTIDAD = {persona: "Persona", empresa: "Empresa",
   recurso: "Maquinaria"};
+// Los campos del tipo se suman a los de las reglas SOLO si el tipo sale del
+// documento de la plantilla vinculado (no del guardado de respaldo).
+const tipoDePlantilla = (tipo) => (tipo?.origen === "plantilla" ? tipo : null);
 const MIMES_PRUEBA = ["image/jpeg", "image/png", "image/webp",
   "application/pdf"];
 // Límites de "Probar reglas": el mismo tope por archivo que el motor de
@@ -87,14 +94,38 @@ class RequerimientoReglaIAService {
   }
 
   /**
-   * Tipo documental del requerimiento (con defaults), o null.
+   * Catálogo de tipos y plantilla activa del Mandante, para resolver el tipo
+   * de uno o varios requerimientos con una sola lectura.
+   * @param {?string} mandanteId Mandante.
+   * @return {Promise<{tipos: Object[], plantilla: ?Object}>} Datos.
+   */
+  async _datosTipo(mandanteId) {
+    const [tipos, plantilla] = await Promise.all([
+      tipoDocumentalRepository.list(),
+      mandanteId ? plantillaEstructuraRepository.getActiva(mandanteId)
+          .catch(() => null) : null,
+    ]);
+    return {tipos, plantilla};
+  }
+
+  /**
+   * Tipo documental del requerimiento (con defaults y `origen`), o null. Sale
+   * del documento de la plantilla activa vinculado a él (origen
+   * "plantilla"); el guardado en el requerimiento es solo respaldo (origen
+   * "guardado"). Sin ninguno, no tiene tipo (no es error).
    * @param {Object} req Requerimiento.
+   * @param {?Object} [datos] _datosTipo ya leídos (varios requerimientos del
+   *     mismo Mandante).
    * @return {Promise<?Object>} Tipo.
    */
-  async _tipo(req) {
-    if (!req.tipoDocumentalId) return null;
-    const t = await tipoDocumentalRepository.getById(req.tipoDocumentalId);
-    return t ? conDefaults(t) : null;
+  async _tipo(req, datos = null) {
+    const {tipos, plantilla} = datos || await this._datosTipo(req.mandanteId);
+    const {tipo, origen} = tipoDeRequerimiento({requerimiento: req, plantilla,
+      tipoEntidad: req.tipoEntidad || "persona",
+      tiposPorCodigo: new Map(tipos.map((t) => [t.codigo, t])),
+      tipoGuardado: req.tipoDocumentalId ?
+        tipos.find((t) => t.id === req.tipoDocumentalId) || null : null});
+    return tipo ? {...conDefaults(tipo), origen} : null;
   }
 
   /**
@@ -116,28 +147,14 @@ class RequerimientoReglaIAService {
   }
 
   /**
-   * Error si el tipo no extrae algún campo que la regla necesita.
-   * @param {Object} snapshot Regla aplicada (snapshotRegla).
-   * @param {?Object} tipo Tipo documental.
-   * @return {?string} Mensaje o null.
-   */
-  _errorCampos(snapshot, tipo) {
-    if (!tipo) return null;
-    const claves = new Set(tipo.campos.map((c) => c.clave));
-    const falta = snapshot.camposRequeridos.find((c) => !claves.has(c));
-    return falta ? `La regla ${snapshot.nombre} requiere el campo ${falta}, ` +
-      `que el tipo ${tipo.nombre} no extrae` : null;
-  }
-
-  /**
-   * Alertas de un vínculo (regla inactiva, entidad o campos incompatibles,
-   * parámetros inválidos).
+   * Alertas de un vínculo (regla inactiva, entidad incompatible, parámetros
+   * inválidos). Los campos que la regla necesita no generan alerta: se
+   * agregan solos a lo que la IA extrae (camposEfectivos).
    * @param {Object} item {vinculo, regla, snapshot}.
    * @param {Object} req Requerimiento.
-   * @param {?Object} tipo Tipo documental.
    * @return {Array<string>} Alertas.
    */
-  _alertas({regla, snapshot}, req, tipo) {
+  _alertas({regla, snapshot}, req) {
     if (!regla) return ["La regla ya no existe en la biblioteca."];
     const alertas = [];
     if (regla.estado !== "activa") {
@@ -148,8 +165,6 @@ class RequerimientoReglaIAService {
           `${ETIQUETA_ENTIDAD[req.tipoEntidad]}.`);
     }
     if (snapshot.error) alertas.push(snapshot.error);
-    const campos = this._errorCampos(snapshot, tipo);
-    if (campos) alertas.push(`${campos}.`);
     return alertas;
   }
 
@@ -187,10 +202,7 @@ class RequerimientoReglaIAService {
    */
   async _registrarCambio(req, actor, accion, detalle, extra = {}) {
     const anterior = estadoIADe(req);
-    let {estado, aviso} = estadoTrasCambio(anterior);
-    if (extra.tipoDocumentalId === null && estado === "en_prueba") {
-      estado = "en_definicion";
-    }
+    const {estado, aviso} = estadoTrasCambio(anterior);
     await requerimientoRepository.update(req.id, {...extra, estadoIA: estado,
       reglasIAActualizadasAt: FieldValue.serverTimestamp(),
       updatedBy: actor.uid});
@@ -257,10 +269,12 @@ class RequerimientoReglaIAService {
   async obtener(id, actor) {
     this._exigirSuperadmin(actor);
     const req = await this._requerimiento(id);
-    const [tipo, items, tipos, pruebas] = await Promise.all([
-      this._tipo(req), this._vinculos(id), tipoDocumentalRepository.list(),
+    const [datosTipo, items, pruebas] = await Promise.all([
+      this._datosTipo(req.mandanteId), this._vinculos(id),
       pruebaReglaIARepository.listByRequerimiento(id, ULTIMAS_PRUEBAS),
     ]);
+    const tipos = datosTipo.tipos;
+    const tipo = await this._tipo(req, datosTipo);
     const estadoIA = estadoIADe(req);
     const vinculos = items.map((i) => ({
       ...i.vinculo, createdAt: aISO(i.vinculo.createdAt),
@@ -273,12 +287,12 @@ class RequerimientoReglaIAService {
         estado: i.regla.estado, version: i.regla.version} : null,
       parametrosEfectivos: i.snapshot?.parametros || {},
       camposRequeridos: i.snapshot?.camposRequeridos || [],
-      alertas: this._alertas(i, req, tipo),
+      alertas: this._alertas(i, req),
     }));
     const aplicables = this._aplicables(items);
     const ultima = pruebas.find((p) => !p.error) || null;
     const condiciones = {
-      tieneTipo: Boolean(tipo), reglasActivas: aplicables.length,
+      reglasActivas: aplicables.length,
       pruebaVigente: this._pruebaVigente(req, ultima),
     };
     const transiciones = {};
@@ -290,10 +304,15 @@ class RequerimientoReglaIAService {
         nombreCorto: req.nombreCorto || null, tipoEntidad: req.tipoEntidad,
         mandanteId: req.mandanteId || null, estadoIA,
         tipoDocumentalId: req.tipoDocumentalId || null,
+        modeloPreferidoIA: req.modeloPreferidoIA || null,
         reglasIAActualizadasAt: aISO(req.reglasIAActualizadasAt)},
+      // Lo que la IA leerá al revisar: los campos de las reglas aplicables
+      // (más los del tipo, si sale del documento de la plantilla).
+      camposIA: camposEfectivos(tipoDePlantilla(tipo),
+          aplicables.map((i) => i.snapshot)),
       tipo: tipo ? {id: tipo.id, codigo: tipo.codigo, nombre: tipo.nombre,
         estadoIA: tipo.estadoIA, entidades: tipo.entidades,
-        campos: tipo.campos} : null,
+        campos: tipo.campos, origen: tipo.origen} : null,
       tiposDisponibles: tipos.filter((t) =>
         disponibleParaIA(t, req.tipoEntidad)).map((t) => {
         const c = conDefaults(t);
@@ -308,8 +327,8 @@ class RequerimientoReglaIAService {
   }
 
   /**
-   * Asigna (o quita, con null) el tipo documental. Los vínculos activos
-   * deben poder usarlo: el tipo debe extraer los campos de sus reglas.
+   * Asigna (o quita, con null) el tipo documental, que es OPCIONAL: sus
+   * campos se suman a los que piden las reglas.
    * @param {string} id ID del requerimiento.
    * @param {?string} tipoDocumentalId Tipo, o null.
    * @param {Object} actor Usuario autenticado.
@@ -331,15 +350,40 @@ class RequerimientoReglaIAService {
             `para ${ETIQUETA_ENTIDAD[req.tipoEntidad]}.`);
       }
       tipo = conDefaults(t);
-      const errores = this._aplicables(await this._vinculos(id))
-          .map((i) => this._errorCampos(i.snapshot, tipo)).filter(Boolean);
-      if (errores.length) throw new AppError(400, `${errores.join(". ")}.`);
     }
     const aviso = await this._registrarCambio(req, actor,
         "tipo_documental_ia", {
           tipoAnterior: req.tipoDocumentalId || null, tipoNuevo: nuevoId,
           tipoNombre: tipo?.nombre || null,
         }, {tipoDocumentalId: nuevoId});
+    return {...await this.obtener(id, actor), aviso};
+  }
+
+  /**
+   * Modelo de IA del requerimiento (null = el del tipo, si hay, o el modelo
+   * por defecto). Debe tener precios configurados.
+   * @param {string} id ID del requerimiento.
+   * @param {?string} modelo Modelo, o null.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Configuración actualizada (+ aviso).
+   */
+  async asignarModelo(id, modelo, actor) {
+    this._exigirSuperadmin(actor);
+    const req = await this._requerimiento(id);
+    const nuevo = modelo ? String(modelo).trim() : null;
+    if ((req.modeloPreferidoIA || null) === nuevo) {
+      return this.obtener(id, actor);
+    }
+    if (nuevo) {
+      const params = await aiConfigService.obtenerParametros();
+      if (costoService.faltanPrecios(params.preciosPorModelo, nuevo)) {
+        throw new AppError(400, `El modelo ${nuevo} no tiene precios ` +
+            "configurados.");
+      }
+    }
+    const aviso = await this._registrarCambio(req, actor, "modelo_ia", {
+      modeloAnterior: req.modeloPreferidoIA || null, modeloNuevo: nuevo,
+    }, {modeloPreferidoIA: nuevo});
     return {...await this.obtener(id, actor), aviso};
   }
 
@@ -392,9 +436,6 @@ class RequerimientoReglaIAService {
       throw new AppError(409, `La regla ${regla.nombre} ya está en este ` +
           "requerimiento.");
     }
-    const errorCampos = this._errorCampos(
-        snapshotRegla({id: null, ...datos}, regla), tipo);
-    if (errorCampos) throw new AppError(400, `${errorCampos}.`);
     const orden = items.reduce((m, i) => Math.max(m, i.vinculo.orden ?? 0),
         0) + 1;
     return requerimientoReglaRepository.create({
@@ -446,9 +487,6 @@ class RequerimientoReglaIAService {
         throw new AppError(400, `La regla ${regla.nombre} está inactiva en ` +
             "la biblioteca.");
       }
-      const errorCampos = this._errorCampos(snapshotRegla(final, regla),
-          await this._tipo(req));
-      if (errorCampos) throw new AppError(400, `${errorCampos}.`);
     }
     const editados = Object.keys(cambios).filter((k) =>
       JSON.stringify(cambios[k]) !== JSON.stringify(vinculo[k] ?? null));
@@ -571,7 +609,6 @@ class RequerimientoReglaIAService {
     const config = await this.obtener(id, actor);
     const actual = config.requerimiento.estadoIA;
     const error = errorTransicion(actual, destino, {
-      tieneTipo: Boolean(config.tipo),
       reglasActivas: config.vinculos.filter((v) => v.activa &&
         v.regla?.estado === "activa").length,
       pruebaVigente: config.pruebaVigente,
@@ -703,18 +740,16 @@ class RequerimientoReglaIAService {
    *     el vigente del modelo, para el registro de consumo.
    */
   async ejecutarReglas(req, piezas, contexto, alFallar) {
+    // El tipo documental es opcional: los campos salen de las reglas (más los
+    // del tipo, si hay) y el documento esperado es el requerimiento.
     const tipo = await this._tipo(req);
-    if (!tipo) throw new AppError(409, "Asigne primero un tipo documental.");
-    if (!tipo.campos.length) {
-      throw new AppError(409, `El tipo ${tipo.nombre} no tiene campos ` +
-          "definidos.");
-    }
     const aplicables = this._aplicables(await this._vinculos(req.id));
     if (!aplicables.length) {
       throw new AppError(409, "Agregue al menos una regla activa.");
     }
     const params = await aiConfigService.obtenerParametros();
-    const modelo = tipo.modeloPreferido || params.modeloPorDefecto;
+    const modelo = req.modeloPreferidoIA || tipo?.modeloPreferido ||
+      params.modeloPorDefecto;
     if (costoService.faltanPrecios(params.preciosPorModelo, modelo)) {
       throw new AppError(409, aiConfigService.MENSAJE_SIN_PRECIOS ||
           "Configura los precios del modelo.");
@@ -723,12 +758,14 @@ class RequerimientoReglaIAService {
     const snapshot = aplicables.map((i) => i.snapshot);
     const interpretativas = snapshot.filter((r) =>
       r.tipo === "interpretativa");
+    const campos = camposEfectivos(tipoDePlantilla(tipo), snapshot);
     const costo = (e, s) => costoService.calcular(params.preciosPorModelo,
         modelo, e, s);
     let respuesta;
     try {
-      respuesta = await modeloReglasIAService.evaluar({piezas, tipo,
-        campos: tipo.campos, interpretativas, modelo});
+      respuesta = await modeloReglasIAService.evaluar({piezas,
+        tipo: {nombre: req.nombreCorto || req.nombre || tipo?.nombre},
+        campos, interpretativas, modelo});
     } catch (error) {
       if (error.tokens) {
         const {tokensEntrada, tokensSalida} = error.tokens;
@@ -739,10 +776,14 @@ class RequerimientoReglaIAService {
       }
       throw error;
     }
+    // La ruta del archivo (carpeta_presente) sale de las piezas, no del
+    // contexto que envía el cliente.
     const resultadosReglas = aplicarReglas(snapshot,
-        respuesta.camposExtraidos, respuesta.interpretativas, contexto);
+        respuesta.camposExtraidos, respuesta.interpretativas,
+        {...contexto, rutaArchivo: piezas[0]?.rutaRelativa || null});
     return {
       tipo, snapshot, modelo, umbralConfianza: params.umbralConfianzaReglas,
+      camposSolicitados: campos,
       camposExtraidos: respuesta.camposExtraidos, resultadosReglas,
       resultadoPropuesto: calcularResultadoPropuesto(resultadosReglas,
           {umbralConfianza: params.umbralConfianzaReglas}),
@@ -814,14 +855,17 @@ class RequerimientoReglaIAService {
       actor});
     const r = await this.ejecutarReglas(req, piezas, contexto, async (f) =>
       consumo(await pruebaReglaIARepository.create({...base,
-        tipoDocumentalId: f.tipo.id,
-        tipoDocumentalNombre: f.tipo.nombre, reglasSnapshot: f.snapshot,
+        tipoDocumentalId: f.tipo?.id || null,
+        tipoDocumentalNombre: f.tipo?.nombre || null,
+        reglasSnapshot: f.snapshot,
         modelo: f.modelo, error: f.mensaje, camposExtraidos: null,
         resultadosReglas: [], resultadoPropuesto: null,
         tokensEntrada: f.tokensEntrada, tokensSalida: f.tokensSalida,
         costoEstimado: f.costoEstimado}), f));
     const prueba = await pruebaReglaIARepository.create({...base,
-      tipoDocumentalId: r.tipo.id, tipoDocumentalNombre: r.tipo.nombre,
+      tipoDocumentalId: r.tipo?.id || null,
+      tipoDocumentalNombre: r.tipo?.nombre || null,
+      camposSolicitados: r.camposSolicitados,
       reglasSnapshot: r.snapshot, modelo: r.modelo,
       umbralConfianza: r.umbralConfianza, error: null,
       camposExtraidos: r.camposExtraidos, resultadosReglas: r.resultadosReglas,

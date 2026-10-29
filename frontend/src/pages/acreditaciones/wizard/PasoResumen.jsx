@@ -5,7 +5,6 @@ import {
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { nombresPerfiles } from "../../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
-import { etiquetaTipoEntidad } from "../../../services/requerimientoService";
 import { CLASE_RESALTADO, REF_FECHA_INICIO } from "../asistenteNavegacion";
 import { DateInput } from "../../../components/ui/DateInput";
 import { textoRepositorio } from "../../../utils/repositorioDocumental";
@@ -77,7 +76,7 @@ const DetalleModal = ({ titulo, onCerrar, children }) => (
 // recalcula nada por su cuenta. `onIrAPaso` recibe el id interno del paso (2 Empresa … 5 Asignaciones).
 export const PasoResumen = ({
   empresaSel, proyectoSel, perfilSel, seleccion,
-  fechaInicio, onFechaInicioChange, preview, requisitosPerfil,
+  fechaInicio, onFechaInicioChange, preview,
   ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, problemas = [], onCorregir, repositorio = null,
 }) => {
   const [detalle, setDetalle] = useState(null); // "personas" | "maquinarias" | "traslados" | "requisitos"
@@ -165,18 +164,19 @@ export const PasoResumen = ({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-sage-lighter text-sage-darker border border-sage-light">5 pasos completados</span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            {yaHayProgreso ? "En proceso" : "Revisión pendiente"}
-          </span>
+          {/* Solo al reintentar una creación que quedó a medias. */}
+          {yaHayProgreso && (
+            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">En proceso</span>
+          )}
         </div>
       </div>
 
       {pendientes > 0 && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-          <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs">
+          <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-slate-400" />
           <span>
-            La acreditación se creará con {pendientes} {pendientes === 1 ? "requisito pendiente" : "requisitos pendientes"}.
-            Podrás completarlos posteriormente desde el expediente.
+            La acreditación se creará con {pendientes} {pendientes === 1 ? "requerimiento" : "requerimientos"} por evaluar.
+            Se evalúan desde el expediente.
           </span>
         </div>
       )}
@@ -263,34 +263,31 @@ export const PasoResumen = ({
       {/* Bloque 3 — Estado del expediente */}
       <Tarjeta
         titulo="Estado del expediente"
-        accion={<span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">Pendiente</span>}
+        accion={<span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">Por evaluar</span>}
       >
         {totalReq === null ? (
           <p className="text-xs text-slate-400">Sin datos de requisitos todavía: vuelve al paso anterior.</p>
         ) : (
           <>
             <div className="flex items-end justify-between gap-3">
-              <p className="text-2xl font-black text-carbon-dark">
-                {cubiertos} <span className="text-sm font-semibold text-slate-400">de {totalReq} requisitos cubiertos</span>
+              <p className="text-base font-bold text-carbon-dark">
+                {totalReq} {totalReq === 1 ? "requerimiento se generará" : "requerimientos se generarán"} en este expediente
               </p>
-              <span className="text-sm font-black text-primary">{pct}%</span>
+              {cubiertos > 0 && <span className="text-xs font-bold text-sage-dark whitespace-nowrap">{pct}% se reutilizará</span>}
             </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${pct}%` }} />
-            </div>
+            <p className="text-xs text-slate-500">
+              {cubiertos} {cubiertos === 1 ? "cubierto" : "cubiertos"} por documentación vigente · {pendientes} por evaluar
+            </p>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="p-3 rounded-xl bg-sage-lighter/60 border border-sage-light">
                 <p className="text-lg font-black text-sage-darker">{cubiertos}</p>
                 <p className="text-[11px] font-semibold text-sage-darker">Cubiertos por reutilización</p>
               </div>
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
-                <p className="text-lg font-black text-amber-700">{pendientes}</p>
-                <p className="text-[11px] font-semibold text-amber-700">Pendientes por completar</p>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-lg font-black text-slate-600">{pendientes}</p>
+                <p className="text-[11px] font-semibold text-slate-500">Por evaluar</p>
               </div>
             </div>
-            <button type="button" onClick={() => setDetalle("requisitos")} className="text-[11px] font-bold text-primary hover:text-primary-dark">
-              Ver requisitos →
-            </button>
           </>
         )}
       </Tarjeta>
@@ -398,43 +395,6 @@ export const PasoResumen = ({
               </li>
             ))}
           </ul>
-        </DetalleModal>
-      )}
-      {detalle === "requisitos" && (
-        <DetalleModal titulo="Requisitos del expediente" onCerrar={() => setDetalle(null)}>
-          {preview && (
-            <div className="space-y-2">
-              {[
-                { key: "empresa", label: "Empresa" },
-                { key: "personas", label: "Personas" },
-                { key: "maquinarias", label: "Maquinarias" },
-              ].map(({ key, label }) => {
-                const b = preview[key];
-                if (!b || b.total === 0) return null;
-                return (
-                  <div key={key} className="flex items-center justify-between text-xs p-3 rounded-xl border border-slate-100">
-                    <span className="font-bold text-carbon-dark">{label}</span>
-                    <span className="text-slate-500">
-                      {b.total} requisitos · <b className="text-sage-dark">{b.reutilizables} cubiertos</b> · <b className="text-amber-600">{b.total - b.reutilizables} pendientes</b>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {Array.isArray(requisitosPerfil) && requisitosPerfil.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Requisitos del Perfil {perfilSel?.nombre}</p>
-              <ul className="space-y-1">
-                {requisitosPerfil.map((r) => (
-                  <li key={r.requerimientoId} className="flex items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5">
-                    <span className="font-medium">{r.nombreCorto || r.nombre}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">{etiquetaTipoEntidad(r.tipoEntidad)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </DetalleModal>
       )}
     </div>

@@ -50,7 +50,7 @@ describe("calcularResultadoPropuesto", () => {
 });
 
 describe("estado IA del requerimiento", () => {
-  const ok = {tieneTipo: true, reglasActivas: 1, pruebaVigente: true};
+  const ok = {reglasActivas: 1, pruebaVigente: true};
   it("default sin_reglas (sin migración)", () => {
     expect(estadoIADe({})).toBe("sin_reglas");
     expect(estadoIADe({estadoIA: "en_prueba"})).toBe("en_prueba");
@@ -62,10 +62,9 @@ describe("estado IA del requerimiento", () => {
         .toEqual({estado: "en_definicion", aviso: AVISO_VUELVE_A_DEFINICION});
     expect(estadoTrasCambio("en_prueba").estado).toBe("en_prueba");
   });
-  it("en_definicion → en_prueba exige tipo y una regla activa", () => {
+  it("en_definicion → en_prueba exige una regla activa (el tipo " +
+      "documental es opcional)", () => {
     expect(errorTransicion("en_definicion", "en_prueba", ok)).toBeNull();
-    expect(errorTransicion("en_definicion", "en_prueba",
-        {...ok, tieneTipo: false})).toMatch(/tipo documental/);
     expect(errorTransicion("en_definicion", "en_prueba",
         {...ok, reglasActivas: 0})).toMatch(/regla activa/);
   });

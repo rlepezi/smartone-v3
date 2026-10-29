@@ -9,6 +9,7 @@ import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import { ordenarPerfilesParticipacion } from "../../utils/ordenPerfiles";
 import { Tabs } from "../shared/Tabs";
 import { ReglasIARequerimiento } from "./reglas-ia/ReglasIARequerimiento";
+import { CampoUbicacionPlantilla } from "./CampoUbicacionPlantilla";
 
 const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
 const CLASE_LABEL = "block text-xs font-semibold text-gray-700 mb-1.5";
@@ -33,9 +34,12 @@ const ordenados = (ids) => (Array.isArray(ids) ? [...ids].sort() : ids);
 //  - `onPerfilRecursoCreado()`: se creó un Perfil de Recurso desde el estado vacío.
 //  - `mostrarReglasIA`: pestaña "Reglas IA" al editar (solo superadmin). Sus cambios se guardan al
 //    momento, aparte del formulario.
+// "Ubicación en la estructura de carpetas" (documentos de la plantilla activa) se envía como
+// `ubicacionPlantilla` solo si cambió: el backend la guarda en la plantilla (nueva versión) en la
+// misma transacción que el requerimiento.
 export const RequerimientoModal = ({
   mandante, tipoEntidad, perfilesParticipacion, perfilesRecurso, requerimiento = null,
-  preseleccion = {}, onGuardado, onCerrar, onPerfilRecursoCreado, mostrarReglasIA = false,
+  preseleccion = {}, onGuardado, onCerrar, onPerfilRecursoCreado, mostrarReglasIA = false, pestanaInicial = "datos",
 }) => {
   const esEdicion = Boolean(requerimiento);
   const esEmpresa = tipoEntidad === "empresa";
@@ -60,6 +64,11 @@ export const RequerimientoModal = ({
   } : DATOS_VACIOS);
 
   const [contexto, setContexto] = useState(contextoInicial);
+  // Ubicación en la plantilla: { inicial, actual } (claves "seccion|documento"), o null mientras
+  // carga o sin plantilla activa. `versionUbicacion` recarga el campo tras "Guardar y continuar".
+  const [ubicacion, setUbicacion] = useState(null);
+  const [versionUbicacion, setVersionUbicacion] = useState(0);
+  const cambioUbicacion = Boolean(ubicacion) && !iguales([...ubicacion.actual].sort(), [...ubicacion.inicial].sort());
   const [datos, setDatos] = useState(datosIniciales);
   const [estado, setEstado] = useState(requerimiento?.estado || "activo");
   // Foto de lo último guardado (o de la apertura): base del aviso de cambios sin guardar.
@@ -70,7 +79,7 @@ export const RequerimientoModal = ({
   const [toast, setToast] = useState(null);
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const conReglasIA = esEdicion && mostrarReglasIA;
-  const [pestana, setPestana] = useState("datos");
+  const [pestana, setPestana] = useState(pestanaInicial === "reglas" && esEdicion && mostrarReglasIA ? "reglas" : "datos");
   // Al cerrar tras usar "Reglas IA", el listado recarga (badge de estado IA).
   const [tocoReglas, setTocoReglas] = useState(false);
   const cerrar = () => {
@@ -78,7 +87,7 @@ export const RequerimientoModal = ({
     onCerrar();
   };
 
-  const hayCambios = !iguales(
+  const hayCambios = cambioUbicacion || !iguales(
     { contexto: { ...contexto, perfilRecursoIds: ordenados(contexto.perfilRecursoIds), perfilParticipacionIds: ordenados(contexto.perfilParticipacionIds) }, datos, estado },
     { contexto: { ...foto.contexto, perfilRecursoIds: ordenados(foto.contexto.perfilRecursoIds), perfilParticipacionIds: ordenados(foto.contexto.perfilParticipacionIds) }, datos: foto.datos, estado: foto.estado },
   );
@@ -166,6 +175,12 @@ export const RequerimientoModal = ({
         perfilParticipacionIds: contexto.perfilParticipacionIds,
         perfilRecursoIds: esEmpresa ? null : contexto.perfilRecursoIds,
       },
+      ...(cambioUbicacion ? {
+        ubicacionPlantilla: ubicacion.actual.map((k) => {
+          const [seccionClave, documentoClave] = k.split("|");
+          return { seccionClave, documentoClave: documentoClave || null };
+        }),
+      } : {}),
     };
     try {
       const guardado = esEdicion
@@ -177,6 +192,8 @@ export const RequerimientoModal = ({
         setToast(`Requerimiento ${payload.nombreCorto} guardado`);
         setDatos(DATOS_VACIOS);
         setFoto({ contexto, datos: DATOS_VACIOS, estado: "activo" });
+        setUbicacion(null);
+        setVersionUbicacion((v) => v + 1);
         setErrores({});
         nombreRef.current?.focus();
       } else {
@@ -228,7 +245,7 @@ export const RequerimientoModal = ({
         )}
         {pestana === "reglas" && conReglasIA ? (
           <div className="flex-1 min-h-0 overflow-y-auto p-5">
-            <ReglasIARequerimiento requerimientoId={requerimiento.id} />
+            <ReglasIARequerimiento requerimientoId={requerimiento.id} onIrADatos={() => setPestana("datos")} />
           </div>
         ) : (
         <form onSubmit={alEnviar} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
@@ -251,6 +268,20 @@ export const RequerimientoModal = ({
                 {etiquetaTipoEntidad(tipoEntidad)}
               </div>
               <p className="text-[11px] text-slate-400 mt-1">Heredado de la pestaña seleccionada</p>
+            </div>
+
+            <div>
+              <label className={CLASE_LABEL}>Ubicación en la estructura de carpetas</label>
+              <CampoUbicacionPlantilla
+                key={versionUbicacion}
+                mandanteId={mandante.id}
+                tipoEntidad={tipoEntidad}
+                requerimientoId={requerimiento?.id || null}
+                valor={ubicacion?.actual || null}
+                disabled={guardando}
+                onCargado={(claves) => setUbicacion({ inicial: claves, actual: claves })}
+                onChange={(claves) => setUbicacion((u) => ({ ...u, actual: claves }))}
+              />
             </div>
 
             <div>

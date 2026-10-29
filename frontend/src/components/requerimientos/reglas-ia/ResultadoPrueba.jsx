@@ -6,7 +6,7 @@ const pct = (x) => (typeof x === "number" ? `${Math.round(x * 100)}%` : "—");
 
 // Resultado de una prueba de reglas: propuesta final (con motivos), tabla por regla y campos
 // extraídos con su confianza. Solo lectura.
-export const ResultadoPrueba = ({ prueba, campos = [] }) => {
+export const ResultadoPrueba = ({ prueba, campos = prueba?.camposSolicitados || [] }) => {
   if (prueba.error) {
     return (
       <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-xs text-red-700">

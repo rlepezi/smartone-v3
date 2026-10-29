@@ -5,16 +5,26 @@ import { leerDosNiveles } from "../../../services/fuentes/carpetaLocal";
 import { useCarpetaExpediente } from "../../../hooks/useCarpetaExpediente";
 import { formatFecha } from "../../../utils/fechas";
 import { ConfiguracionRepositorio } from "./ConfiguracionRepositorio";
+import { SelectorCarpetaEmpresa } from "./SelectorCarpetaEmpresa";
+import { useCarpetaBase } from "../../../hooks/useCarpetaBase";
+import { Toast } from "../../shared/Toast";
 
 // Pestaña "Documentación" del Expediente: dónde está su documentación (carpeta local o SharePoint).
 // La carpeta local se vincula en cada equipo (el navegador recuerda el acceso; en SmartOne solo
 // queda su nombre); es la misma carpeta que usa la pestaña Revisiones IA. Con la carpeta vinculada
 // se muestra el mapeo de carpetas (personal y maquinarias) y la estructura de primer y segundo nivel.
 // `empresa`: la del expediente; la carpeta debe ser suya (si no, advertencia y no se guarda).
-export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado, empresa = null }) => {
+// La carpeta local se elige entre las subcarpetas de la carpeta principal del Mandante (y se vincula
+// sola si hay una única de la empresa); el selector del navegador queda como alternativa.
+export const TabDocumentacion = ({ expedienteId, usuarioId, mandanteId, datos, onActualizado, empresa = null, puedeConfigurarBase = false }) => {
   const repo = datos?.repositorioDocumental || null;
   const puedeEditar = Boolean(datos?.puedeEditar);
-  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio: onActualizado, empresa });
+  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, {
+    onRepositorio: onActualizado, empresa, mandanteId,
+    configurada: repo?.tipo === "local" ? repo.etiqueta : null,
+    autoVincular: repo?.tipo !== "sharepoint", puedeGuardar: puedeEditar,
+  });
+  const base = useCarpetaBase(usuarioId, mandanteId);
   const [error, setError] = useState(null);
   const [niveles, setNiveles] = useState(null);
 
@@ -72,6 +82,17 @@ export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado
         error={error || carpeta.error}
         empresa={empresa}
         carpetaRechazada={carpeta.rechazada}
+        selectorLocal={(
+          <SelectorCarpetaEmpresa
+            base={base}
+            empresa={empresa}
+            seleccionada={carpeta.handle?.name || null}
+            onElegir={async (nombre) => carpeta.vincularHandle(await base.subcarpeta(nombre))}
+            onManual={carpeta.vincular}
+            puedeConfigurarBase={puedeConfigurarBase}
+            autoElegir={false}
+          />
+        )}
       >
         {carpeta.lista && (
           <div className="space-y-2 pt-2 border-t border-slate-100">
@@ -96,6 +117,7 @@ export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado
         )}
       </ConfiguracionRepositorio>
       {!puedeEditar && <p className="text-[11px] text-slate-400">Solo lectura: su rol no puede cambiar el repositorio documental.</p>}
+      <Toast mensaje={carpeta.avisoAuto} onCerrar={carpeta.limpiarAvisoAuto} />
     </div>
   );
 };

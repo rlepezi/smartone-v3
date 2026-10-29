@@ -14,7 +14,11 @@ const CLASE_BUSCAR = "w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rou
 //  - onElegir(nombre): vincula esa subcarpeta.
 //  - onManual: elegir con el selector del navegador (otra ubicación).
 //  - puedeConfigurarBase: muestra el enlace a Fuentes documentales.
-export const SelectorCarpetaEmpresa = ({ base, empresa, seleccionada, onElegir, onManual, puedeConfigurarBase = false }) => {
+//  - autoElegir: en false no vincula sola la única coincidencia (lo hace quien la usa).
+//  - onAutoElegida(nombre): avisa que se vinculó sola (para el toast).
+export const SelectorCarpetaEmpresa = ({
+  base, empresa, seleccionada, onElegir, onManual, puedeConfigurarBase = false, autoElegir = true, onAutoElegida,
+}) => {
   const [busqueda, setBusqueda] = useState("");
   const [verTodas, setVerTodas] = useState(false);
   const [eligiendo, setEligiendo] = useState(null);
@@ -34,13 +38,14 @@ export const SelectorCarpetaEmpresa = ({ base, empresa, seleccionada, onElegir, 
     }
   };
 
-  // Una sola coincidencia y nada elegido: se vincula sola (una vez por Empresa).
-  const unica = !seleccionada && coincidentes.length === 1 ? coincidentes[0].nombre : null;
+  // UNA sola subcarpeta que pasa la validación estricta y nada elegido: se vincula sola (una vez por
+  // Empresa). Con 0 o 2+ coincidencias queda la lista para elegir.
+  const unica = autoElegir && !seleccionada && coincidentes.length === 1 ? coincidentes[0].nombre : null;
   useEffect(() => {
     if (!unica || autoelegida.current) return;
     autoelegida.current = true;
-    onElegir(unica);
-  }, [unica, onElegir]);
+    Promise.resolve(onElegir(unica)).then(() => onAutoElegida?.(unica)).catch(() => {});
+  }, [unica, onElegir, onAutoElegida]);
 
   if (base.cargando) return <p className="text-xs text-slate-400">Buscando la carpeta principal...</p>;
 

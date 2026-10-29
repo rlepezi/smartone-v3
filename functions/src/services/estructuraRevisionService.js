@@ -19,6 +19,9 @@ const {
 } = require("../utils/estructuraPlan");
 const {calcularAlcance} = require("../utils/alcanceValidacion");
 const {ajustarPlanAExpediente} = require("../utils/revisionExpediente");
+const {
+  requerimientoDeArchivo, requerimientosVinculados, tipoDeRequerimiento,
+} = require("../utils/ubicacionRequerimiento");
 const {clasificarVencimiento, hoySantiago} = require("../utils/vencimientos");
 const expedienteService = require("./expedienteService");
 const configRevisionExpedienteRepository =
@@ -197,7 +200,7 @@ class EstructuraRevisionService {
    *     omitidosValidados, personasPorEntidad}.
    */
   async _planExpediente({plan, cabecera, mandanteId, expedienteId,
-    requerimientoIds, omitirValidados, libre}, actor) {
+    requerimientoIds, omitirValidados, libre, plantilla = null}, actor) {
     const expediente = await expedienteService.getExpedienteById(
         expedienteId, actor);
     if (expediente.mandanteId !== mandanteId) {
@@ -229,9 +232,17 @@ class EstructuraRevisionService {
       empresaRepository.getById(expediente.empresaId),
     ]);
     const tipoPorId = new Map(tiposDocumentales.map((t) => [t.id, t]));
-    const codigoPorRequerimiento = new Map(requerimientos
-        .filter((r) => tipoPorId.get(r.tipoDocumentalId))
-        .map((r) => [r.id, tipoPorId.get(r.tipoDocumentalId).codigo]));
+    const tiposPorCodigo = new Map(tiposDocumentales.map((t) =>
+      [t.codigo, t]));
+    // Tipo de cada requerimiento: el del documento de la plantilla vinculado
+    // a él; el guardado en el requerimiento es solo respaldo.
+    const codigoPorRequerimiento = new Map(requerimientos.map((r) =>
+      [r.id, tipoDeRequerimiento({requerimiento: r,
+        plantilla: libre ? null : plantilla,
+        tipoEntidad: r.tipoEntidad || "persona", tiposPorCodigo,
+        tipoGuardado: tipoPorId.get(r.tipoDocumentalId) || null})
+          .tipo?.codigo || null])
+        .filter(([, codigo]) => codigo));
     const personas = await personaRepository.getByIds(
         [...new Set(participantes.map((p) => p.personaId))]);
     const {validados, todosValidados} = validadosDe(
@@ -240,10 +251,25 @@ class EstructuraRevisionService {
         codigoPorRequerimiento);
     const principal = plan.empresas.find((e) => !e.esSubcontrato) ||
         plan.empresas[0];
+    // A la IA va solo lo que algún requerimiento pedido recibirá (misma
+    // precedencia que la consolidación): el archivo de un documento
+    // vinculado en la plantilla, si su requerimiento está pedido; uno sin
+    // vínculo, si hay un pedido de su tipo que no esté vinculado.
+    const vinculados = requerimientosVinculados(plantilla);
+    const pedidosDeTipo = (codigo) => [...codigoPorRequerimiento]
+        .filter(([, c]) => c === codigo).map(([id]) => id);
+    const admitir = (a) => {
+      const r = requerimientoDeArchivo(plantilla, a.seccionClave,
+          a.documentoClave);
+      const deTipo = pedidosDeTipo(a.tipoDocumentalCodigo);
+      return r ? deTipo.includes(r) :
+        deTipo.some((id) => !vinculados.has(id));
+    };
     const ajuste = ajustarPlanAExpediente({
       empresa: principal, personas,
       codigos: new Set(codigoPorRequerimiento.values()), libre,
       validados, todosValidados, omitirValidados,
+      admitir: plantilla ? admitir : null,
     });
     const empresaPlan = {
       ...ajuste.empresa,
@@ -342,8 +368,8 @@ class EstructuraRevisionService {
     }
     if (expedienteId) {
       return this._planExpediente({plan, cabecera, mandanteId, expedienteId,
-        requerimientoIds, omitirValidados: omitirValidados === true, libre},
-      actor);
+        requerimientoIds, omitirValidados: omitirValidados === true, libre,
+        plantilla}, actor);
     }
 
     const empresasMandante = await empresaRepository.getByIds(

@@ -56,9 +56,6 @@ export const reglaIAService = {
     return (await apiClient(`${REQ}/${id}`)).data;
   },
 
-  async asignarTipo(id, tipoDocumentalId) {
-    return (await apiClient(`${REQ}/${id}/tipo`, { method: "PUT", body: { tipoDocumentalId } })).data;
-  },
 
   // estadoIA: "en_definicion" | "en_prueba" | "habilitado".
   async cambiarEstadoIA(id, estadoIA) {
@@ -92,5 +89,29 @@ export const reglaIAService = {
   // datos: { archivos: [{ nombre, rutaRelativa, mime, contenidoBase64, parte }], contexto }.
   async probar(id, datos) {
     return (await apiClient(`${REQ}/${id}/probar`, { method: "POST", body: datos })).data;
+  },
+
+  // Modelo de IA del requerimiento (null = el del tipo, si hay, o el modelo por defecto).
+  async asignarModelo(id, modelo) {
+    return (await apiClient(`${REQ}/${id}/modelo`, { method: "PUT", body: { modelo } })).data;
+  },
+
+  // Reglas sugeridas [{ verificacion, nombre, etiqueta }] → agregadas al requerimiento como
+  // bloqueantes: se reutiliza la regla activa de la biblioteca con esa verificación (sin listas
+  // propias, p. ej. carpeta_presente con nombres de carpeta) o, si no hay, se crea.
+  async agregarSugeridas(requerimiento, sugeridas) {
+    const id = requerimiento.id;
+    const biblioteca = await this.listar({ tipo: "deterministica", entidad: requerimiento.tipoEntidad, estado: "activa" });
+    const sinListas = (b) => !Object.values(b.parametros || {}).some((v) => Array.isArray(v) && v.length);
+    let config = null;
+    for (const r of sugeridas) {
+      const regla = biblioteca.find((b) => b.verificacion === r.verificacion && sinListas(b))
+        || await this.crear({
+          nombre: r.nombre, descripcion: r.etiqueta, tipo: "deterministica",
+          verificacion: r.verificacion, entidades: [requerimiento.tipoEntidad], parametros: {},
+        });
+      config = await this.agregarRegla(id, { reglaId: regla.id, severidad: "bloqueante" });
+    }
+    return config || this.obtenerRequerimiento(id);
   },
 };

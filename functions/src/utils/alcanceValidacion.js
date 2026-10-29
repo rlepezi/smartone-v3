@@ -110,6 +110,9 @@ function calcularAlcance(plantilla, tiposDocumentales) {
             seccionClave: s.clave, seccionNombre: s.nombre, nivel,
             entidad: nivel === "documento" ? s.entidad || null : null,
             documentoClave: d.clave, documentoNombre: d.nombre,
+            // Requerimiento vinculado en la plantilla (documento sobre
+            // sección), como en ubicacionRequerimiento.
+            requerimientoId: d.requerimientoId || s.requerimientoId || null,
             obligatorio: Boolean(d.obligatorio), multiple: Boolean(d.multiple),
             modalidad, motivoModalidad,
             tipoDocumental: tipo ? {codigo: tipo.codigo, nombre: tipo.nombre,

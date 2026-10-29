@@ -3,10 +3,16 @@ const requerimientoRepository =
 const perfilRequerimientoRepository =
     require("../repositories/perfilRequerimientoRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
+const plantillaEstructuraRepository =
+    require("../repositories/plantillaEstructuraRepository");
+const usuarioRepository = require("../repositories/usuarioRepository");
 const perfilRequerimientoService = require("./perfilRequerimientoService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {TIPOS_ENTIDAD} = require("../utils/aplicabilidadRequerimiento");
 const {claveNombre} = require("../utils/nombreRequerimiento");
+const {
+  opcionesUbicacion, aplicarUbicacionRequerimiento,
+} = require("../utils/ubicacionRequerimiento");
 const AppError = require("../utils/AppError");
 
 // Catálogo oficial de tipos de entidad: fuente única de verdad, espejada a
@@ -22,6 +28,7 @@ const ESTADOS_VALIDOS = ["activo", "inactivo"];
 const NOMBRE_MAX = 200;
 const NOMBRE_CORTO_MAX = 40;
 const DESCRIPCION_MAX = 2000;
+const MAX_UBICACIONES = 50;
 
 // Roles cuyo acceso queda siempre acotado a su propio Mandante.
 const ROLES_ALCANCE_FORZADO = ["mandante_admin", "mandante_lector"];
@@ -248,6 +255,116 @@ class RequerimientoService {
   }
 
   /**
+   * Valida la ubicación en la plantilla pedida para un requerimiento:
+   * [{seccionClave, documentoClave (null: sección sin documentos)}].
+   * @param {*} valor Valor recibido.
+   * @return {Array<{seccionClave: string, documentoClave: ?string}>}
+   *     Selección normalizada.
+   */
+  _validarSeleccionUbicacion(valor) {
+    if (!Array.isArray(valor) || valor.length > MAX_UBICACIONES ||
+        valor.some((x) => !x || typeof x.seccionClave !== "string" ||
+          (x.documentoClave !== null && x.documentoClave !== undefined &&
+            typeof x.documentoClave !== "string"))) {
+      throw new AppError(400, "La ubicación en la estructura de carpetas " +
+          "no es válida.");
+    }
+    return valor.map((x) => ({seccionClave: x.seccionClave,
+      documentoClave: x.documentoClave || null}));
+  }
+
+  /**
+   * Operación sobre la plantilla activa para guardar la ubicación de un
+   * requerimiento EN LA MISMA transacción (requerimientoRepository.
+   * guardarAtomico): aplica la selección sobre la plantilla leída en la
+   * transacción y sube su versión. Sin plantilla activa, una selección no
+   * vacía es un 409; una vacía no hace nada.
+   * @param {Object} entrada {mandanteId, requerimientoId, tipoEntidad,
+   *     seleccion, actor}.
+   * @return {Promise<?{operacion: Object, resultado: Object}>} Operación
+   *     (resultado.cambios se completa al guardar), o null.
+   */
+  async _ubicacionPlantilla({mandanteId, requerimientoId, tipoEntidad,
+    seleccion, actor}) {
+    const activa = await plantillaEstructuraRepository.getActiva(mandanteId);
+    if (!activa) {
+      if (seleccion.length) {
+        throw new AppError(409, "El Mandante no tiene una plantilla de " +
+            "estructura activa: no se puede indicar la ubicación.");
+      }
+      return null;
+    }
+    const usuario = await usuarioRepository.getById(actor.uid)
+        .catch(() => null);
+    const nombre = usuario ?
+      `${usuario.nombre || ""} ${usuario.apellido || ""}`.trim() : "";
+    const autor = {uid: actor.uid, nombre: nombre || actor.email || actor.uid};
+    const resultado = {plantillaId: activa.id, version: null, cambios: null};
+    const operacion = {
+      id: activa.id,
+      aplicar: (actual) => {
+        if (!actual || actual.estado !== "activa") {
+          throw Object.assign(new Error("La plantilla cambió."),
+              {codigo: "PLANTILLA_CAMBIO"});
+        }
+        const r = aplicarUbicacionRequerimiento(actual, requerimientoId,
+            tipoEntidad, seleccion);
+        resultado.cambios = r.cambios;
+        const hay = r.cambios.agregados.length + r.cambios.quitados.length +
+            r.cambios.movidos.length > 0;
+        if (!hay) return null;
+        resultado.version = (actual.version || 1) + 1;
+        return {secciones: r.secciones, version: resultado.version,
+          updatedBy: autor};
+      },
+    };
+    return {operacion, resultado};
+  }
+
+  /**
+   * Bitácora del cambio de ubicación (en la plantilla), si lo hubo.
+   * @param {Object} entrada {mandanteId, requerimientoId, ubicacion, actor}.
+   * @return {Promise<void>}
+   */
+  async _registrarUbicacion({mandanteId, requerimientoId, ubicacion, actor}) {
+    const r = ubicacion?.resultado;
+    if (!r?.version) return;
+    await bitacoraLogger.registrarEvento({
+      mandanteId, entidad: "plantillasEstructura", entidadId: r.plantillaId,
+      accion: "ubicacion_requerimiento", actor,
+      detalle: {requerimientoId, version: r.version, ...r.cambios},
+    });
+  }
+
+  /**
+   * Opciones del selector "Ubicación en la estructura de carpetas": los
+   * documentos (y secciones sin documentos) de la plantilla activa del
+   * Mandante para ese tipo de entidad, con el requerimiento al que hoy están
+   * vinculados. Sin plantilla activa: {plantilla: null, opciones: []}.
+   * @param {{mandanteId: ?string, tipoEntidad: string}} filtros Filtros.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} {plantilla, opciones}.
+   */
+  async opcionesUbicacionPlantilla({mandanteId, tipoEntidad}, actor) {
+    const id = this._mandanteDe(actor, mandanteId);
+    if (!TIPOS_ENTIDAD.includes(tipoEntidad)) {
+      throw new AppError(400, "Tipo de entidad no válido.");
+    }
+    const activa = await plantillaEstructuraRepository.getActiva(id);
+    if (!activa) return {plantilla: null, opciones: []};
+    const opciones = opcionesUbicacion(activa, tipoEntidad);
+    const nombres = new Map((await requerimientoRepository.getByIds(
+        [...new Set(opciones.map((o) => o.requerimientoId).filter(Boolean))],
+    )).map((r) => [r.id, r.nombreCorto || r.nombre]));
+    return {
+      plantilla: {id: activa.id, nombre: activa.nombre,
+        version: activa.version || 1},
+      opciones: opciones.map((o) => ({...o, requerimientoNombre:
+        o.requerimientoId ? nombres.get(o.requerimientoId) || null : null})),
+    };
+  }
+
+  /**
    * Ejecuta el guardado atómico y traduce sus errores.
    * @param {Object} operacion Operación de requerimientoRepository.
    * @param {string} nombre Nombre del Requerimiento (para el mensaje).
@@ -267,6 +384,13 @@ class RequerimientoService {
       }
       if (err.codigo === "NO_ENCONTRADO") {
         throw new AppError(404, "Requerimiento no encontrado.");
+      }
+      if (err.codigo === "UBICACION_INVALIDA") {
+        throw new AppError(400, err.message);
+      }
+      if (err.codigo === "PLANTILLA_CAMBIO") {
+        throw new AppError(409, "La plantilla de estructura cambió o se " +
+            "desactivó mientras guardaba. Vuelva a abrir el requerimiento.");
       }
       throw err;
     }
@@ -329,6 +453,11 @@ class RequerimientoService {
     const plan = await this._planVinculos(
         {id: ref.id, ...datos}, aplicabilidad, [], actor,
     );
+    // Ubicación en la plantilla de estructura: misma transacción.
+    const ubicacion = datosEntrada.ubicacionPlantilla !== undefined ?
+      await this._ubicacionPlantilla({mandanteId, requerimientoId: ref.id,
+        tipoEntidad, actor, seleccion: this._validarSeleccionUbicacion(
+            datosEntrada.ubicacionPlantilla)}) : null;
 
     await this._guardar({
       ref,
@@ -338,7 +467,10 @@ class RequerimientoService {
       claveLiberar: null,
       escribirVinculos: (tx) =>
         perfilRequerimientoRepository.escribirCambiosEn(tx, plan),
+      plantilla: ubicacion?.operacion || null,
     }, nombre);
+    await this._registrarUbicacion({mandanteId, requerimientoId: ref.id,
+      ubicacion, actor});
 
     await bitacoraLogger.registrarEvento({
       mandanteId,
@@ -422,6 +554,12 @@ class RequerimientoService {
       );
     }
 
+    // Ubicación en la plantilla de estructura: misma transacción.
+    const ubicacion = entrada.ubicacionPlantilla !== undefined ?
+      await this._ubicacionPlantilla({mandanteId, requerimientoId: id,
+        tipoEntidad, actor, seleccion: this._validarSeleccionUbicacion(
+            entrada.ubicacionPlantilla)}) : null;
+
     // Índice de nombre: la clave se ocupa solo mientras está activo.
     const claveAnterior = existente.estado === "activo" ?
         claveNombre(mandanteId, tipoEntidad, existente.nombre) : null;
@@ -437,7 +575,10 @@ class RequerimientoService {
       claveLiberar: cambiaClave ? claveAnterior : null,
       escribirVinculos: plan ? (tx) =>
         perfilRequerimientoRepository.escribirCambiosEn(tx, plan) : null,
+      plantilla: ubicacion?.operacion || null,
     }, final.nombre);
+    await this._registrarUbicacion({mandanteId, requerimientoId: id,
+      ubicacion, actor});
 
     const cambioEstado = cambios.estado !== undefined &&
         cambios.estado !== existente.estado;

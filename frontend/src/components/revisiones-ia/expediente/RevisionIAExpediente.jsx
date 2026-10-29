@@ -110,9 +110,9 @@ export const RevisionIAExpediente = ({ expediente, usuarioId, rol, onEvaluarManu
           mandanteId={expediente.mandanteId}
           usuarioId={usuarioId}
           config={config}
-          coincidencia={datos.coincidenciaEmpresa}
-          empresaNombre={datos.empresa?.razonSocial}
+          empresa={datos.empresa}
           puedeEditar={puedeEditar}
+          puedeConfigurarBase={puedeConfigurar}
           onGuardar={guardar}
           onAcceso={setHandle}
         />

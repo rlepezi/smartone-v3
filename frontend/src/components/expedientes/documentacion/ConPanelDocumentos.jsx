@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderOpen, PanelRightClose, X } from "lucide-react";
 import { CLAVE_PANEL_ABIERTO } from "./estilos";
 import { PanelDocumentosContexto, CLAVE_PANEL_EXPANDIDO } from "./panelDocumentosContexto";
@@ -31,6 +31,7 @@ export const ConPanelDocumentos = ({ panel, children }) => {
   const [expandido, setExpandido] = useState(() => leer(CLAVE_PANEL_EXPANDIDO, false));
   const [ancho, setAncho] = useState(esAncho);
   const [archivoAbierto, setArchivoAbierto] = useState(null);
+  const [requerimientoActivo, setRequerimientoActivo] = useState(null);
 
   useEffect(() => {
     const alCambiar = () => setAncho(esAncho());
@@ -42,6 +43,15 @@ export const ConPanelDocumentos = ({ panel, children }) => {
     setAbierto(valor);
     guardar(CLAVE_PANEL_ABIERTO, valor);
   };
+  const abrirRequerimiento = useCallback((datos) => {
+    setRequerimientoActivo(datos || null);
+    if (datos) {
+      setAbierto(true);
+      guardar(CLAVE_PANEL_ABIERTO, true);
+    }
+  }, []);
+  const actualizarRequerimiento = useCallback((datos) => setRequerimientoActivo((actual) =>
+    (actual && datos && actual.instancia.id === datos.instancia.id ? datos : actual)), []);
   const contexto = useMemo(() => ({
     expandible: ancho,
     expandido: ancho && expandido,
@@ -51,7 +61,10 @@ export const ConPanelDocumentos = ({ panel, children }) => {
     }),
     archivoAbierto,
     informarArchivo: setArchivoAbierto,
-  }), [ancho, expandido, archivoAbierto]);
+    requerimientoActivo,
+    abrirRequerimiento,
+    actualizarRequerimiento,
+  }), [ancho, expandido, archivoAbierto, requerimientoActivo, abrirRequerimiento, actualizarRequerimiento]);
 
   const botonAbrir = (
     <button type="button" onClick={() => cambiar(true)} aria-expanded={false}

@@ -16,6 +16,11 @@ const requerimientoRepository =
     require("../repositories/requerimientoRepository");
 const empresaRepository = require("../repositories/empresaRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
+const plantillaEstructuraRepository =
+    require("../repositories/plantillaEstructuraRepository");
+const {
+  requerimientoDeArchivo, tipoDeRequerimiento, requerimientosVinculados,
+} = require("../utils/ubicacionRequerimiento");
 const reglas = require("./reglasService");
 const requerimientoReglaIAService = require("./requerimientoReglaIAService");
 const resultadoCompletitudRepository =
@@ -106,7 +111,8 @@ class ConsolidacionService {
    * @return {Promise<Object>} {estadoEnlace, persona, enlacesPorTipo}.
    */
   async _enlazar({mandanteId, runCarpeta, runDocumento, tipos,
-    personaSugeridaId = null, expedienteId = null, requerimientoIds = null}) {
+    personaSugeridaId = null, expedienteId = null, requerimientoIds = null,
+    vinculos = null}) {
     const enlacesPorTipo = {};
     tipos.forEach((t) => {
       enlacesPorTipo[t.codigo] = [];
@@ -197,8 +203,10 @@ class ConsolidacionService {
             i.expedienteId === expediente.id &&
             (!requerimientoIds ||
               requerimientoIds.includes(i.requerimientoId)) &&
-            tipo.id && requerimientoPorId.get(i.requerimientoId)
-                ?.tipoDocumentalId === tipo.id);
+            tipo.id && this._esDeTipo(
+                requerimientoPorId.get(i.requerimientoId), tipo,
+                vinculos?.plantilla || null) &&
+            this._ubicadoEn(vinculos, tipo.codigo, i.requerimientoId));
           if (coinciden.length === 0) {
             enlacesPorTipo[tipo.codigo].push({
               ...base, requerimientoId: null, expedienteRequerimientoId: null,
@@ -224,6 +232,73 @@ class ConsolidacionService {
         runDocumento && personaPorRun ? "confirmado" : "sin_confirmar",
       persona, enlacesPorTipo,
     };
+  }
+
+  /**
+   * El requerimiento es del tipo: el tipo sale del documento de la
+   * plantilla vinculado a él (el primero con tipo); sin vínculo con tipo,
+   * del tipo guardado en el requerimiento (respaldo).
+   * @param {?Object} requerimiento Requerimiento.
+   * @param {Object} tipo Tipo ({id, codigo}).
+   * @param {?Object} plantilla Plantilla de la sesión (null en libre).
+   * @return {boolean} Si corresponde.
+   */
+  _esDeTipo(requerimiento, tipo, plantilla) {
+    if (!requerimiento) return false;
+    const {codigos} = tipoDeRequerimiento({requerimiento, plantilla,
+      tipoEntidad: requerimiento.tipoEntidad || "persona"});
+    return codigos.length ? codigos[0] === tipo.codigo :
+      requerimiento.tipoDocumentalId === tipo.id;
+  }
+
+  /**
+   * ¿Los archivos de este tipo están en la ubicación del requerimiento?
+   * Precedencia de ubicacionRequerimiento, sin caída: un requerimiento
+   * vinculado en la plantilla (documento o sección) solo recibe los
+   * archivos de sus documentos vinculados; uno sin vínculo, los archivos
+   * del tipo que no están vinculados a otro requerimiento. Sin plantilla
+   * (carpeta libre) rige solo el tipo.
+   * @param {?{porTipo: Object, vinculados: Set<string>}} vinculos Vínculos
+   *     de los archivos de la entidad.
+   * @param {string} codigo Tipo documental.
+   * @param {string} requerimientoId Requerimiento de la instancia.
+   * @return {boolean} Si se enlaza.
+   */
+  _ubicadoEn(vinculos, codigo, requerimientoId) {
+    if (!vinculos) return true;
+    const v = vinculos.porTipo[codigo] || {etiquetados: new Set(),
+      sinEtiqueta: false};
+    return vinculos.vinculados.has(requerimientoId) ?
+      v.etiquetados.has(requerimientoId) : v.sinEtiqueta;
+  }
+
+  /**
+   * Requerimiento vinculado en la plantilla a cada archivo procesado, por
+   * tipo: {porTipo: {codigo: {etiquetados: Set, sinEtiqueta}}, vinculados}.
+   * null en carpeta libre o sin plantilla.
+   * @param {Object} sesion Sesión.
+   * @param {Object} porTipo Procesamientos por tipo.
+   * @return {Promise<?Object>} Vínculos.
+   */
+  async _vinculosPlantilla(sesion, porTipo) {
+    if (sesion.modoEstructura === "libre" || !sesion.plantillaId) return null;
+    const plantilla = await plantillaEstructuraRepository
+        .getById(sesion.plantillaId).catch(() => null);
+    if (!plantilla) return null;
+    const salida = {};
+    Object.entries(porTipo).forEach(([codigo, lista]) => {
+      const etiquetados = new Set();
+      let sinEtiqueta = false;
+      lista.forEach((p) => {
+        const r = requerimientoDeArchivo(plantilla, p.seccionClave,
+            p.documentoClave);
+        if (r) etiquetados.add(r);
+        else sinEtiqueta = true;
+      });
+      salida[codigo] = {etiquetados, sinEtiqueta};
+    });
+    return {porTipo: salida, vinculados: requerimientosVinculados(plantilla),
+      plantilla};
   }
 
   /**
@@ -337,6 +412,7 @@ class ConsolidacionService {
           sesion.personasPorEntidad?.[entidadClave] || null,
       expedienteId: expedienteId || sesion.expedienteId || null,
       requerimientoIds: sesion.requerimientoIds || null,
+      vinculos: await this._vinculosPlantilla(sesion, porTipo),
     });
 
     const existentes = await resultadoRevisionRepository.listBySesionEntidad(

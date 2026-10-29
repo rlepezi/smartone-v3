@@ -41,7 +41,6 @@ const FilaMandante = ({ mandante }) => (
 
 export const ResumenAcreditacionPanel = ({
   mandanteSel = null, empresaSel, proyectoSel, perfilSel, seleccion = [],
-  mostrarRequerimientos = false, preview = null, cargandoPreview = false,
   mostrarExpediente = false, requisitosTotal = null, reutilizadosEmpresa = null,
   mostrarDocumentacion = false, documentacion = null, proyectoActualId = null,
   repositorio, // { tipo, etiqueta, url } | null; undefined = no mostrar la fila
@@ -54,9 +53,6 @@ export const ResumenAcreditacionPanel = ({
   ).length;
   const desglose = (tipo, total) => (total > 0 ? `${total - enOtroProyecto(tipo)} disponibles · ${enOtroProyecto(tipo)} en otro proyecto` : null);
 
-  const pct = preview && preview.total?.total > 0 ?
-      Math.round((preview.total.reutilizables / preview.total.total) * 100) :
-      0;
 
   return (
     <div className="space-y-4">
@@ -119,7 +115,7 @@ export const ResumenAcreditacionPanel = ({
                 <span className="text-xs font-semibold text-slate-400 ml-1.5">de {documentacion.total} requisitos</span>
               </p>
               <p className="text-[11px] text-slate-400">
-                {documentacion.total - documentacion.reutilizables} quedarían pendientes de completar.
+                {documentacion.total - documentacion.reutilizables} quedarían por evaluar.
               </p>
             </>
           )}
@@ -151,35 +147,11 @@ export const ResumenAcreditacionPanel = ({
                 <p className="text-[11px] font-semibold text-carbon-dark">
                   {reutilizadosEmpresa} de {requisitosTotal} requisitos cubiertos por reutilización a nivel Empresa
                 </p>
-                <p className="text-[11px] text-slate-400">Documentación pendiente de completar</p>
+                <p className="text-[11px] text-slate-400">{requisitosTotal - reutilizadosEmpresa} por evaluar en el expediente</p>
               </>
             )}
           </div>
         </>
-      )}
-
-      {mostrarRequerimientos && (
-        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-card space-y-3">
-          <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
-            Requerimientos
-          </h3>
-          {cargandoPreview ? (
-            <p className="text-[11px] text-slate-400 text-center py-4">Calculando...</p>
-          ) : preview ? (
-            <div className="p-4 rounded-xl bg-primary-lighter/50 border border-primary/20 text-center space-y-1">
-              <p className="text-2xl font-black text-primary">{pct}%</p>
-              <p className="text-[11px] font-semibold text-primary-dark">
-                {preview.total.reutilizables} de {preview.total.total} Requerimientos se reutilizarán
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Total {preview.total.total} · Cubiertos {preview.total.reutilizables} · Pendientes por completar{" "}
-                {preview.total.total - preview.total.reutilizables}
-              </p>
-            </div>
-          ) : (
-            <p className="text-[11px] text-slate-400 text-center py-4">Sin datos todavía.</p>
-          )}
-        </div>
       )}
 
       <div className="flex items-start gap-2.5 p-4 rounded-2xl bg-primary-lighter/50 border border-primary/20 text-[11px] text-primary-dark">

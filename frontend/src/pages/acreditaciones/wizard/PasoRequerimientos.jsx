@@ -12,20 +12,26 @@ const BLOQUES = [
 
 // Lista documento a documento de una entidad: mismos datos (`requisitos`) que produjo el
 // preview para los conteos, sin ninguna consulta ni cálculo adicional.
-const ListaRequisitos = ({ requisitos = [] }) => (
+// Estado de cada requisito: "Por evaluar" (gris, lo normal al crear) o "Reutilizado · vence …"
+// (verde); ámbar solo si la documentación reutilizada vence antes del término del proyecto.
+const ListaRequisitos = ({ requisitos = [], fechaTermino = null }) => (
   requisitos.length === 0 ? (
     <p className="text-[11px] text-slate-400 italic">Sin requisitos para esta entidad.</p>
   ) : (
     <ul className="space-y-1">
       {requisitos.map((r) => (
         <li key={r.requerimientoId} className="flex items-center justify-between gap-3 text-[11px] bg-white border border-slate-100 rounded-lg px-2.5 py-1.5">
-          <span className="font-medium text-slate-700">{r.nombre}</span>
-          {r.estado === "reutilizado" ? (
-            <span className="font-bold text-sage-dark whitespace-nowrap">
-              Reutilizado{r.vigenteHasta ? ` · Vigente hasta ${formatFecha(r.vigenteHasta)}` : " · Sin vencimiento"}
+          <span className="font-medium text-slate-700" title={r.nombre}>{r.nombreCorto || r.nombre}</span>
+          {r.estado !== "reutilizado" ? (
+            <span className="font-semibold text-slate-400 whitespace-nowrap">Por evaluar</span>
+          ) : fechaTermino && r.vigenteHasta && String(r.vigenteHasta).slice(0, 10) < String(fechaTermino).slice(0, 10) ? (
+            <span className="font-bold text-amber-600 whitespace-nowrap" title={`Vence el ${formatFecha(r.vigenteHasta)}; el proyecto termina el ${formatFecha(fechaTermino)}`}>
+              Reutilizado · vence {formatFecha(r.vigenteHasta)}, antes del término del proyecto
             </span>
           ) : (
-            <span className="font-bold text-amber-600 whitespace-nowrap">Pendiente</span>
+            <span className="font-bold text-sage-dark whitespace-nowrap">
+              Reutilizado · {r.vigenteHasta ? `vence ${formatFecha(r.vigenteHasta)}` : "sin vencimiento"}
+            </span>
           )}
         </li>
       ))}
@@ -38,7 +44,8 @@ const ListaRequisitos = ({ requisitos = [] }) => (
 // hasta el momento, y cuántos quedarán pre-cumplidos por reutilización documental — mismo motor y
 // misma regla de vigencia que usa Reemplazar Acreditación (reutilizacionDocumentalService en el
 // backend). Paso puramente informativo: el usuario solo avanza.
-export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInicio, seleccion, empresaNombre, onCargado }) => {
+// `fechaTerminoProyecto`: si existe, la documentación reutilizada que vence antes se marca en ámbar.
+export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInicio, seleccion, empresaNombre, onCargado, fechaTerminoProyecto = null }) => {
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -93,8 +100,8 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
         <h3 className="text-sm font-bold text-gray-900">Requerimientos aplicables</h3>
         <p className="text-xs text-gray-500 mt-0.5">
           Calculados automáticamente para la Empresa, el Perfil elegido y las Personas/Maquinarias
-          seleccionadas — los que tengan documentación vigente quedarán pre-cumplidos por reutilización,
-          sin intervención manual.
+          seleccionadas. Al crear el expediente lo normal es que estén por evaluar; los que tengan
+          documentación vigente se reutilizan sin intervención manual.
         </p>
       </div>
 
@@ -104,14 +111,19 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
         <p className="text-xs text-slate-400 py-8 text-center">Calculando...</p>
       ) : preview ? (
         <>
-          <div className="p-5 rounded-2xl bg-primary-lighter/50 border border-primary/20 text-center">
-            <p className="text-3xl font-black text-primary">
-              {preview.total.total > 0 ? Math.round((preview.total.reutilizables / preview.total.total) * 100) : 0}%
+          <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-1">
+            <p className="text-base font-bold text-carbon-dark">
+              {preview.total.total} {preview.total.total === 1 ? "requerimiento se generará" : "requerimientos se generarán"} en este expediente
             </p>
-            <p className="text-xs font-semibold text-primary-dark mt-1">
-              {preview.total.reutilizables} de {preview.total.total} Requerimientos quedarán pre-cumplidos por
-              reutilización documental
+            <p className="text-xs text-slate-500">
+              {preview.total.reutilizables} {preview.total.reutilizables === 1 ? "cubierto" : "cubiertos"} por documentación vigente
+              {" · "}{preview.total.total - preview.total.reutilizables} por evaluar
             </p>
+            {preview.total.reutilizables > 0 && (
+              <p className="text-xs font-bold text-sage-dark">
+                {Math.round((preview.total.reutilizables / preview.total.total) * 100)}% se reutilizará
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -132,11 +144,12 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
                     <Icon className="w-4 h-4 text-primary" />
                     <p className="text-xs font-bold text-carbon-dark">{label}</p>
                   </div>
-                  <p className="text-xs text-slate-600">{bloque.total} Requerimientos</p>
-                  <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-                    <span className="text-sage-dark font-bold">{bloque.reutilizables} reutilizados</span>
-                    <span className="text-amber-600 font-bold">{bloque.total - bloque.reutilizables} pendientes</span>
-                  </div>
+                  <p className="text-xs text-slate-500">
+                    {bloque.total} {bloque.total === 1 ? "requerimiento" : "requerimientos"} · {bloque.total - bloque.reutilizables} por evaluar
+                  </p>
+                  {bloque.reutilizables > 0 && (
+                    <p className="mt-1 text-[11px] font-bold text-sage-dark">{bloque.reutilizables} reutilizados</p>
+                  )}
                   <button
                     type="button"
                     onClick={() => setModal({ titulo: `Requisitos — ${label}`, entidades: entidadesDe(key) })}
@@ -158,8 +171,8 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
                     <tr className="bg-slate-50 border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                       <th className="py-2.5 px-3 w-8" />
                       <th className="py-2.5 px-3">Entidad</th>
-                      <th className="py-2.5 px-3">Reutilizables</th>
-                      <th className="py-2.5 px-3">Pendientes</th>
+                      <th className="py-2.5 px-3">Reutilizados</th>
+                      <th className="py-2.5 px-3">Por evaluar</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -175,13 +188,13 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
                               <p className="font-semibold text-carbon-dark">{f.nombre}</p>
                               <p className="text-[10px] text-slate-400">{f.bloque}</p>
                             </td>
-                            <td className="py-2.5 px-3 font-bold text-sage-dark">{f.reutilizables} de {f.total}</td>
-                            <td className="py-2.5 px-3 font-bold text-amber-600">{f.total - f.reutilizables}</td>
+                            <td className={`py-2.5 px-3 ${f.reutilizables > 0 ? "font-bold text-sage-dark" : "text-slate-400"}`}>{f.reutilizables} de {f.total}</td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-500">{f.total - f.reutilizables}</td>
                           </tr>
                           {abierta && (
                             <tr className="bg-slate-50/50">
                               <td colSpan={4} className="px-4 py-3">
-                                <ListaRequisitos requisitos={f.requisitos} />
+                                <ListaRequisitos requisitos={f.requisitos} fechaTermino={fechaTerminoProyecto} />
                               </td>
                             </tr>
                           )}
@@ -213,7 +226,7 @@ export const PasoRequerimientos = ({ empresaId, perfilParticipacionId, fechaInic
               {modal.entidades.map((e) => (
                 <div key={e.clave} className="space-y-1.5">
                   {modal.entidades.length > 1 && <p className="text-xs font-bold text-carbon-dark">{e.nombre}</p>}
-                  <ListaRequisitos requisitos={e.requisitos} />
+                  <ListaRequisitos requisitos={e.requisitos} fechaTermino={fechaTerminoProyecto} />
                 </div>
               ))}
               {modal.entidades.length === 0 && <p className="text-xs text-slate-400">Sin entidades seleccionadas.</p>}

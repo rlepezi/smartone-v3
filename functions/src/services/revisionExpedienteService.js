@@ -27,8 +27,8 @@ const sesionRevisionRepository =
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {aFecha, hoySantiago} = require("../utils/vencimientos");
 const {
-  similitudNombres, extraerNombreEmpresa,
-} = require("../utils/estructuraCalce");
+  validarCarpetaEmpresa, mensajeCarpetaNoCoincide,
+} = require("../utils/carpetaEmpresa");
 const {
   MOTIVOS_NO_ELEGIBLE, elegibilidadRequerimiento, calcularEstadoCelda,
   motivoFueraDeLote,
@@ -43,7 +43,6 @@ const ROLES_EDITAN = ["superadmin", "evaluador", "mandante_admin"];
 const ROLES_EVALUAN = ["superadmin", "evaluador"];
 const MAX_LOTE = 200;
 // Bajo esta similitud, la carpeta "no parece" de la Empresa del Expediente.
-const UMBRAL_CARPETA_EMPRESA = 0.5;
 const ORDEN_NIVEL = {empresa: 0, persona: 1, recurso: 2};
 
 const aISO = (v) => aFecha(v)?.toISOString() || null;
@@ -56,24 +55,6 @@ const nombrePersona = (p) => `${p?.nombre || ""} ${p?.apellido || ""}`.trim();
  * módulo independiente; acá solo se lee y se configura.
  */
 class RevisionExpedienteService {
-  /**
-   * Similitud entre la carpeta y la Empresa del Expediente.
-   * @param {?string} carpetaNombre Nombre de la carpeta.
-   * @param {?Object} empresa Empresa.
-   * @return {?{similitud: number, corresponde: boolean,
-   *     nombreDetectado: string}} Coincidencia, o null sin carpeta.
-   */
-  _coincidenciaEmpresa(carpetaNombre, empresa) {
-    if (!carpetaNombre || !empresa) return null;
-    const {nombreEmpresa} = extraerNombreEmpresa(carpetaNombre);
-    const similitud = Math.max(
-        similitudNombres(nombreEmpresa, empresa.razonSocial),
-        similitudNombres(nombreEmpresa, empresa.nombreFantasia),
-    );
-    return {similitud, corresponde: similitud >= UMBRAL_CARPETA_EMPRESA,
-      nombreDetectado: nombreEmpresa};
-  }
-
   /**
    * Requerimientos del Expediente (de sus instancias activas) con su
    * elegibilidad para IA.
@@ -93,6 +74,7 @@ class RevisionExpedienteService {
         [...new Set(instancias.map((i) => i.requerimientoId))],
     )).map((r) => [r.id, r]));
     const tipoPorId = new Map(tipos.map((t) => [t.id, t]));
+    const tiposPorCodigo = new Map(tipos.map((t) => [t.codigo, t]));
     const libre = config?.modoEstructura === "libre";
     const habilitados = new Set(config?.requerimientosIA || []);
     const porRequerimiento = new Map();
@@ -113,8 +95,12 @@ class RevisionExpedienteService {
       const requerimiento = catalogo.get(r.requerimientoId) || null;
       const tipo = requerimiento?.tipoDocumentalId ?
         tipoPorId.get(requerimiento.tipoDocumentalId) || null : null;
+      // Ubicación con precedencia: mapeo del Expediente (Empresa), vínculo de
+      // la plantilla y tipo documental. El tipo sale del documento vinculado
+      // en la plantilla; el guardado (tipo) es respaldo.
       const el = elegibilidadRequerimiento({requerimiento, tipo, plantilla,
-        libre});
+        libre, tipoEntidad: r.tipoEntidad, tiposPorCodigo,
+        mapeo: config?.repositorioDocumental?.mapeo || null});
       return {
         ...r,
         estadoIA: requerimiento?.estadoIA || "sin_reglas",
@@ -123,6 +109,12 @@ class RevisionExpedienteService {
         motivoTexto: el.motivo ? MOTIVOS_NO_ELEGIBLE[el.motivo] : null,
         tipo: el.tipo,
         documentoPlantilla: el.documentoPlantilla,
+        // Para el panel de documentos: de dónde sale la ubicación y cuál es.
+        ubicacion: {nivel: el.nivel, ruta: el.ruta,
+          documentos: el.documentos.map((d) => ({
+            seccionClave: d.seccionClave, seccion: d.seccion,
+            documentoClave: d.documentoClave, documento: d.documento,
+          }))},
         habilitadoIA: el.elegible && habilitados.has(r.requerimientoId),
       };
     }).sort((a, b) =>
@@ -137,7 +129,7 @@ class RevisionExpedienteService {
    * @param {string} expedienteId ID del Expediente.
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object>} {config, plantilla, empresa,
-   *     coincidenciaEmpresa, requerimientos, resumen, puedeEditar}.
+   *     requerimientos, resumen, puedeEditar}.
    */
   async obtenerConfig(expedienteId, actor) {
     const expediente = await expedienteService.getExpedienteById(
@@ -176,10 +168,10 @@ class RevisionExpedienteService {
       } : null,
       plantilla: plantilla ? {id: plantilla.id, nombre: plantilla.nombre,
         version: plantilla.version} : null,
+      // Con el RUT: el frontend valida la carpeta con validarCarpetaEmpresa.
       empresa: empresa ? {id: empresa.id, razonSocial: empresa.razonSocial,
-        nombreFantasia: empresa.nombreFantasia || null} : null,
-      coincidenciaEmpresa: this._coincidenciaEmpresa(config?.carpetaNombre,
-          empresa),
+        nombreFantasia: empresa.nombreFantasia || null,
+        rut: empresa.rut || null} : null,
       requerimientos,
       resumen: {
         total: requerimientos.length,
@@ -193,8 +185,10 @@ class RevisionExpedienteService {
 
   /**
    * Guarda la fuente, la carpeta (solo su nombre) y los requerimientos
-   * habilitados para IA (solo elegibles). Deja el cambio en la Bitácora,
-   * con aviso si la carpeta no parece de la Empresa del Expediente.
+   * habilitados para IA (solo elegibles). Deja el cambio en la Bitácora.
+   * La carpeta debe ser de la Empresa del Expediente (validarCarpetaEmpresa,
+   * la misma regla que el repositorio documental); si no, 400. Una carpeta
+   * "libre" (sin estructura) nunca escribe el repositorio documental.
    * @param {string} expedienteId ID del Expediente.
    * @param {Object} payload {fuente, carpetaNombre, modoEstructura,
    *     requerimientosIA}.
@@ -232,6 +226,15 @@ class RevisionExpedienteService {
             "Indique solo el nombre de la carpeta, sin ruta.");
       }
     }
+    const cambioCarpeta = carpetaNombre !== (previa?.carpetaNombre || null);
+    const empresa = await empresaRepository.getById(expediente.empresaId);
+    if (cambioCarpeta && carpetaNombre) {
+      const v = validarCarpetaEmpresa(carpetaNombre, empresa);
+      if (!v.valida) {
+        throw new AppError(400, mensajeCarpetaNoCoincide(carpetaNombre,
+            empresa, v.terminosBuscados));
+      }
+    }
     const config = {...previa, modoEstructura};
     const {requerimientos, plantilla} =
         await this._requerimientos(expediente, config);
@@ -251,12 +254,13 @@ class RevisionExpedienteService {
     const usuario = await usuarioRepository.getById(actor.uid)
         .catch(() => null);
     // Repositorio documental (pestaña Documentación): la carpeta local es
-    // la misma; si cambió aquí, se refleja allá (una sola fuente).
+    // la misma; si cambió aquí, se refleja allá (una sola fuente). Una
+    // carpeta libre no es la carpeta de la empresa: no lo toca.
     const nombreActor = usuario ? nombrePersona(usuario) :
       actor.email || actor.uid;
-    const cambioCarpeta = carpetaNombre !== (previa?.carpetaNombre || null);
     const repoPrevio = previa?.repositorioDocumental || null;
-    const repositorioDocumental = !cambioCarpeta ? repoPrevio :
+    const escribeRepositorio = cambioCarpeta && modoEstructura !== "libre";
+    const repositorioDocumental = !escribeRepositorio ? repoPrevio :
       carpetaNombre ? {tipo: "local", etiqueta: carpetaNombre, url: null,
         mapeo: repoPrevio?.mapeo || null,
         updatedAt: new Date(), updatedBy: actor.uid,
@@ -272,9 +276,6 @@ class RevisionExpedienteService {
       updatedBy: actor.uid,
       updatedByNombre: nombreActor,
     });
-    const empresa = await empresaRepository.getById(expediente.empresaId);
-    const coincidencia = carpetaNombre !== (previa?.carpetaNombre || null) ?
-      this._coincidenciaEmpresa(carpetaNombre, empresa) : null;
     await bitacoraLogger.registrarEvento({
       mandanteId: expediente.mandanteId,
       entidad: "expediente",
@@ -285,10 +286,6 @@ class RevisionExpedienteService {
         fuente, carpetaNombre, modoEstructura, requerimientosIA,
         ...(cambioCarpeta ? {carpetaAnterior: previa?.carpetaNombre || null} :
           {}),
-        ...(coincidencia && !coincidencia.corresponde ? {
-          advertencia: "carpeta_no_corresponde_empresa",
-          similitud: Math.round(coincidencia.similitud * 100) / 100,
-        } : {}),
       },
     });
     return this.obtenerConfig(expedienteId, actor);

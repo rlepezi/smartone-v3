@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { OrigenEvaluacion } from "./OrigenEvaluacion";
 import { PropuestaIAPendiente } from "./PropuestaIAPendiente";
 import { revisionExpedienteService } from "../../services/revisionExpedienteService";
@@ -10,12 +10,12 @@ import {
   Paperclip,
   PieChart,
   Search,
-  Sparkles,
+  Bot,
   UploadCloud,
   X,
 } from "lucide-react";
 import { revisionRequerimientoIAService } from "../../services/revisionRequerimientoIAService";
-import { RevisarConIARequisito } from "./RevisarConIARequisito";
+import { usePanelDocumentos } from "./documentacion/panelDocumentosContexto";
 import { useAuth } from "../../contexts/AuthContext";
 import { expedienteService } from "../../services/expedienteService";
 import { proyectoService } from "../../services/proyectoService";
@@ -142,7 +142,12 @@ export const PlanillaEvaluacion = ({
   // "Revisar con IA" por requerimiento (reglas IA): superadmin y evaluador.
   const puedeRevisarIA = ["superadmin", "evaluador"].includes(profile?.rol);
   const [estadoIA, setEstadoIA] = useState({ habilitados: new Set(), propuestas: new Map() });
-  const [revisionAbierta, setRevisionAbierta] = useState(null); // instanciaId con el panel abierto
+  // Ícono IA de cada requisito → panel lateral en "modo requerimiento" (solo dentro del panel de
+  // documentos: ConPanelDocumentos). Pauta = reglas activas y estado IA de cada requerimiento.
+  const { requerimientoActivo, abrirRequerimiento, actualizarRequerimiento } = usePanelDocumentos();
+  const [pautas, setPautas] = useState(null);
+  const [versionPautas, setVersionPautas] = useState(0); // recarga tras editar reglas desde el panel
+  const accionesIA = useRef({});
 
   // Modo: normalmente se infiere de qué parámetro de ruta vino (personaId/recursoId), como en
   // EvaluarExpedientePage/RequerimientosProyecto. El Detalle de Expediente en cambio puede tener
@@ -349,6 +354,42 @@ export const PlanillaEvaluacion = ({
   );
   const vigentes = datosSujeto.clave === claveActual ? datosSujeto.evaluaciones : [];
 
+  // ── Modo requerimiento del panel (ícono IA) ──
+  useEffect(() => {
+    if (!abrirRequerimiento) return undefined;
+    let vigente = true;
+    revisionRequerimientoIAService.pautas(expedienteId)
+      .then((d) => { if (vigente) setPautas(d?.pautas || {}); })
+      .catch(() => { if (vigente) setPautas({}); });
+    return () => { vigente = false; };
+  }, [expedienteId, recargarSenal, abrirRequerimiento, versionPautas]);
+  // Otro sujeto (o salir): el panel vuelve al modo documentos (el checklist se reinicia).
+  useEffect(() => {
+    abrirRequerimiento?.(null);
+    return () => abrirRequerimiento?.(null);
+  }, [claveActual, abrirRequerimiento]);
+  const activoId = requerimientoActivo?.instancia.id || null;
+  const instanciaActiva = activoId ? items.find((i) => i.id === activoId) || null : null;
+  const propuestaActiva = activoId ? estadoIA.propuestas.get(activoId) || null : null;
+  const aplicadaActiva = Boolean(propuestaActiva) && respuestas[activoId]?.revisionIAId === propuestaActiva?.id;
+  const pautaActiva = instanciaActiva ? pautas?.[instanciaActiva.requerimientoId] || null : null;
+  const datosPanelIA = (r) => {
+    const propuesta = estadoIA.propuestas.get(r.id) || null;
+    return {
+      instancia: { id: r.id, requerimientoId: r.requerimientoId, nombre: r.nombre, nombreCorto: r.nombreCorto },
+      pauta: pautas?.[r.requerimientoId] || null,
+      propuesta,
+      aplicada: Boolean(propuesta) && respuestas[r.id]?.revisionIAId === propuesta.id,
+      puedeRevisar: puedeRevisarIA && !soloLectura,
+      acciones: accionesIA,
+    };
+  };
+  // Mantiene al día el panel abierto (nueva propuesta, aplicada, pauta cargada).
+  useEffect(() => {
+    if (instanciaActiva && actualizarRequerimiento) actualizarRequerimiento(datosPanelIA(instanciaActiva));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propuestaActiva, aplicadaActiva, pautaActiva, soloLectura]);
+
   // Precarga de "respuestas" (el formulario en memoria, por instancia) a partir de la evaluación
   // vigente de cada instancia — puro cálculo en cliente, sin red.
   useEffect(() => {
@@ -396,6 +437,25 @@ export const PlanillaEvaluacion = ({
       [requerimientoId]: { ...prev[requerimientoId], fechaVencimiento },
     }));
   };
+
+  // Acciones del panel sobre el requisito activo ("Aplicar propuesta" solo llena el formulario).
+  useEffect(() => {
+    accionesIA.current = {
+      revisada: (rev) => conPropuesta(activoId, rev),
+      aplicar: (rev) => { if (instanciaActiva) aplicarPropuesta(instanciaActiva, rev); },
+      descartada: () => {
+        conPropuesta(activoId, null);
+        setRespuestas((prev) => ({ ...prev, [activoId]: { ...prev[activoId], revisionIAId: undefined } }));
+      },
+      recargarPautas: () => setVersionPautas((v) => v + 1),
+      // Checklist manual: decisión del evaluador (deja de ser la propuesta IA aplicada).
+      aplicarChecklist: ({ resultado, observaciones }) => {
+        if (!activoId) return;
+        handleResultadoChange(activoId, resultado);
+        setRespuestas((prev) => ({ ...prev, [activoId]: { ...prev[activoId], observaciones, revisionIAId: undefined } }));
+      },
+    };
+  });
 
   // Evidencia enlazada a ESTA instancia (el enlace ya identifica al sujeto: nunca aparece la de
   // otra Persona en la misma exigencia).
@@ -992,11 +1052,17 @@ export const PlanillaEvaluacion = ({
                   // "Cumple" sin documento: la justificación es obligatoria.
                   const conJustificacion = pideJustificacion(r.id);
                   const faltaJustificacion = conJustificacion && intentoGuardar && !(respuesta.observaciones || "").trim();
-                  const conIA = puedeRevisarIA && !soloLectura && estadoIA.habilitados.has(r.requerimientoId);
-                  const propuestaIA = estadoIA.propuestas.get(r.id) || null;
+                  // Ícono IA: en color con la IA habilitada; gris con reglas; gris claro sin reglas.
+                  const pauta = pautas?.[r.requerimientoId] || null;
+                  const iconoIA = pauta?.estadoIA === "habilitado"
+                    ? { clase: "text-primary hover:bg-primary-lighter", texto: "Validación IA disponible" }
+                    : pauta?.reglas?.length
+                      ? { clase: "text-slate-500 hover:bg-slate-100", texto: "Ver reglas de validación (IA no habilitada)" }
+                      : { clase: "text-slate-300 opacity-70 hover:bg-slate-50", texto: "Este requerimiento no tiene reglas de validación definidas" };
+                  const filaActiva = activoId === r.id;
                   return (
                     <React.Fragment key={r.id}>
-                    <tr data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO}`}>
+                    <tr data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO} ${filaActiva ? "bg-primary-lighter/40" : ""}`}>
                       <td className="py-3 pr-3 text-slate-400 font-semibold">{index + 1}</td>
                       <td className="py-3 pr-3 max-w-xs">
                         <div className="flex items-start gap-1.5">
@@ -1013,14 +1079,7 @@ export const PlanillaEvaluacion = ({
                             </a>
                           )}
                         </div>
-                        {conIA && (
-                          <button type="button" onClick={() => setRevisionAbierta(revisionAbierta === r.id ? null : r.id)}
-                            aria-expanded={revisionAbierta === r.id}
-                            className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-primary/30 bg-primary-lighter text-[10px] font-bold text-primary-dark hover:bg-primary-lighter/70">
-                            <Sparkles className="w-3 h-3" /> {propuestaIA ? "Propuesta IA" : "Revisar con IA"}
-                            {respuesta.revisionIAId && <span className="text-sage-darker">· aplicada</span>}
-                          </button>
-                        )}
+                        {respuesta.revisionIAId && <p className="mt-1 text-[10px] font-bold text-sage-darker">Propuesta IA aplicada</p>}
                         {!r.requiereVencimiento && respuesta.fechaVencimiento && (
                           // El Requerimiento dejó de pedir vencimiento: la fecha registrada se conserva,
                           // pero ya no es obligatoria y las nuevas evaluaciones no la piden.
@@ -1075,20 +1134,23 @@ export const PlanillaEvaluacion = ({
                         </td>
                       ))}
                       <td className="py-3 pl-3 min-w-[220px]">
-                        {conJustificacion && (
-                          <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Justificación *</label>
-                        )}
                         <textarea
                           value={respuesta.observaciones}
                           disabled={soloLectura}
                           onChange={(e) => handleObservacionesChange(r.id, e.target.value)}
                           placeholder={conJustificacion
-                            ? "Justificación obligatoria (ej. verificado en terreno el …)"
+                            ? "Justificación obligatoria * (ej. verificado en terreno el …)"
                             : "Si tienes algún comentario, escríbelo aquí"}
                           rows={2}
                           aria-invalid={faltaJustificacion}
+                          aria-label={conJustificacion ? "Justificación obligatoria" : "Observaciones"}
+                          title={conJustificacion ? "Justificación obligatoria: Cumple sin documento adjunto" : undefined}
+                          // Sin rótulo extra (no cambia el alto de la fila): obligatoria y vacía, en ámbar;
+                          // al intentar guardar sin ella, en rojo.
                           className={`w-full px-2.5 py-1.5 rounded-lg border text-xs resize-y disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
-                            faltaJustificacion ? "border-red-400 bg-red-50/30" : "border-slate-200"
+                            faltaJustificacion ? "border-red-400 bg-red-50/30"
+                              : conJustificacion && !(respuesta.observaciones || "").trim() ? "border-amber-300 bg-amber-50/50 placeholder:text-amber-700/70"
+                                : "border-slate-200"
                           }`}
                         />
                         {faltaJustificacion && (
@@ -1100,7 +1162,22 @@ export const PlanillaEvaluacion = ({
                           <p className="mt-1 text-[10px] font-semibold text-slate-400">Verificación documental</p>
                         )}
                       </td>
-                      <td className="py-3 pl-2 text-right">
+                      <td className="py-3 pl-2 text-right whitespace-nowrap">
+                        {abrirRequerimiento && (
+                          <button
+                            type="button"
+                            title={iconoIA.texto}
+                            aria-label={`Revisión IA de ${r.nombreCorto || r.nombre}: ${iconoIA.texto}`}
+                            aria-pressed={filaActiva}
+                            onClick={() => abrirRequerimiento(filaActiva ? null : datosPanelIA(r))}
+                            className={`relative p-1.5 rounded-lg ${iconoIA.clase} ${filaActiva ? "ring-2 ring-primary/30" : ""}`}
+                          >
+                            <Bot className="w-4 h-4" />
+                            {estadoIA.propuestas.has(r.id) && (
+                              <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white" aria-hidden="true" />
+                            )}
+                          </button>
+                        )}
                         {puedeAdjuntar && (
                           <button
                             type="button"
@@ -1113,25 +1190,6 @@ export const PlanillaEvaluacion = ({
                         )}
                       </td>
                     </tr>
-                    {conIA && revisionAbierta === r.id && (
-                      <tr>
-                        <td colSpan={8} className="pb-4">
-                          <RevisarConIARequisito
-                            expedienteId={expedienteId}
-                            instancia={r}
-                            propuesta={propuestaIA}
-                            aplicada={Boolean(propuestaIA) && respuesta.revisionIAId === propuestaIA.id}
-                            onRevisada={(rev) => conPropuesta(r.id, rev)}
-                            onAplicar={(rev) => aplicarPropuesta(r, rev)}
-                            onDescartada={() => {
-                              conPropuesta(r.id, null);
-                              setRespuestas((prev) => ({ ...prev, [r.id]: { ...prev[r.id], revisionIAId: undefined } }));
-                            }}
-                            onCerrar={() => setRevisionAbierta(null)}
-                          />
-                        </td>
-                      </tr>
-                    )}
                     </React.Fragment>
                   );
                 })}

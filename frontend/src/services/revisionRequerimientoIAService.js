@@ -10,6 +10,12 @@ export const revisionRequerimientoIAService = {
     return (await apiClient(`${BASE}/expedientes/${expedienteId}/estado`)).data;
   },
 
+  // Pauta de validación de cada requerimiento del expediente (todos los que leen el expediente):
+  // { pautas: { requerimientoId: { estadoIA, tipo: { codigo, nombre } | null, reglas: [...] } } }.
+  async pautas(expedienteId) {
+    return (await apiClient(`/expedientes/${expedienteId}/revisiones-ia/pautas`)).data;
+  },
+
   // filtros: { estado, resultado } → revisiones del expediente (más reciente primero).
   async listar(expedienteId, filtros = {}) {
     const q = new URLSearchParams(Object.entries(filtros).filter(([, v]) => v)).toString();

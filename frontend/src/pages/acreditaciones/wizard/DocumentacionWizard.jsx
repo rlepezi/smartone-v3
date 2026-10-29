@@ -1,8 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { ConfiguracionRepositorio } from "../../../components/expedientes/documentacion/ConfiguracionRepositorio";
 import { SelectorCarpetaEmpresa } from "../../../components/expedientes/documentacion/SelectorCarpetaEmpresa";
 import { useCarpetaBase } from "../../../hooks/useCarpetaBase";
+import { Toast } from "../../../components/shared/Toast";
 import { etiquetaDeUrl, MAPEO_VACIO } from "../../../utils/repositorioDocumental";
 
 // Paso Empresa de Nueva Acreditación: sección opcional para dejar configurada desde ya la carpeta
@@ -13,6 +14,9 @@ import { etiquetaDeUrl, MAPEO_VACIO } from "../../../utils/repositorioDocumental
 // `empresa`: la elegida; la carpeta debe ser suya (si no, advertencia y el asistente no avanza).
 export const DocumentacionWizard = ({ valor, carpeta, onCambiar, empresa, usuarioId, mandanteId, puedeConfigurarBase }) => {
   const base = useCarpetaBase(usuarioId, mandanteId);
+  const [aviso, setAviso] = useState(null);
+  const cerrarAviso = useCallback(() => setAviso(null), []);
+  const avisarAuto = useCallback((nombre) => setAviso(`Se vinculó automáticamente la carpeta «${nombre}» (única de la empresa en la carpeta principal).`), []);
 
   const aplicar = useCallback((reg) => {
     if (!reg) return;
@@ -57,9 +61,11 @@ export const DocumentacionWizard = ({ valor, carpeta, onCambiar, empresa, usuari
             onElegir={elegirSubcarpeta}
             onManual={vincular}
             puedeConfigurarBase={puedeConfigurarBase}
+            onAutoElegida={avisarAuto}
           />
         )}
       />
+      <Toast mensaje={aviso} onCerrar={cerrarAviso} />
     </section>
   );
 };

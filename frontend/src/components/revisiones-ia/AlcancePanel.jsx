@@ -23,7 +23,9 @@ export const ResumenAlcance = ({ resumen }) => (
 // Panel "Alcance de validación": qué documentos se tomarán en cuenta en la revisión, con su
 // modalidad (Validación IA / Solo completitud / Sensible), tipo documental, reglas y advertencias.
 // `compacto`: versión de solo lectura para Nueva revisión, con el enlace "Editar alcance".
-export const AlcancePanel = ({ alcance, compacto = false, abierto = true, puedeEditar = false }) => {
+// `nombreRequerimiento` (Map id → nombre, opcional): agrega la columna del requerimiento vinculado
+// en la plantilla a cada documento.
+export const AlcancePanel = ({ alcance, compacto = false, abierto = true, puedeEditar = false, nombreRequerimiento = null }) => {
   if (!alcance) return null;
   return (
     <details open={abierto} className="rounded-2xl border border-primary/20 bg-white [&_summary::-webkit-details-marker]:hidden">
@@ -63,6 +65,7 @@ export const AlcancePanel = ({ alcance, compacto = false, abierto = true, puedeE
                   <th className="px-3 py-2">Modalidad</th>
                   <th className="px-3 py-2">Tipo documental</th>
                   {!compacto && <th className="px-3 py-2">Reglas</th>}
+                  {nombreRequerimiento && <th className="px-3 py-2">Requerimiento</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -89,6 +92,9 @@ export const AlcancePanel = ({ alcance, compacto = false, abierto = true, puedeE
                             {!d.reglas.length && <span className="text-slate-300">—</span>}
                           </span>
                         </td>
+                      )}
+                      {nombreRequerimiento && (
+                        <td className="px-3 py-2 text-slate-600">{d.requerimientoId ? nombreRequerimiento.get(d.requerimientoId) || "Requerimiento" : <span className="text-slate-300">—</span>}</td>
                       )}
                     </tr>
                   );

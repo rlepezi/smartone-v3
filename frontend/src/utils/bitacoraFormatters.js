@@ -76,6 +76,17 @@ export const describirEvento = (registro) => {
     if (accion === "inicio_faena_quitado") return "Inicio en faena quitado (corrección)";
     if (accion === "requerimiento_agregado") return "Requerimiento agregado al Expediente";
     if (accion === "requerimiento_quitado") return "Requerimiento quitado del Expediente";
+    if (accion === "repositorio_documental_actualizado") {
+      if (!detalle?.nuevo) return "Documentación desvinculada";
+      if (detalle?.anterior && detalle.anterior.etiqueta === detalle.nuevo.etiqueta) return "Mapeo de carpetas actualizado";
+      return `Documentación vinculada: «${detalle.nuevo.etiqueta}»`;
+    }
+    if (accion === "carpeta_sujeto_actualizada") {
+      const sujeto = detalle?.tipo === "recurso" ? "maquinaria" : "persona";
+      return detalle?.nuevo ? `Carpeta de ${sujeto} asignada: «${detalle.nuevo}»` : `Carpeta de ${sujeto} quitada`;
+    }
+    if (accion === "revision_ia_configurada") return "Revisiones IA configuradas";
+    if (accion === "revision_ia_aceptar_lote") return "Propuestas IA aceptadas en lote";
   }
 
   if (entidad === "evaluacion" && accion === "creado") {

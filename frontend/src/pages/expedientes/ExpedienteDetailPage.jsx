@@ -25,7 +25,7 @@ import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { describirEvento } from "../../utils/bitacoraFormatters";
-import { formatFecha, formatTiempoRelativo } from "../../utils/fechas";
+import { formatFecha, formatFechaHora, formatTiempoRelativo } from "../../utils/fechas";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
@@ -34,6 +34,7 @@ import { EstadoExpedienteStepper } from "../../components/shared/EstadoExpedient
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { mandanteService } from "../../services/mandanteService";
+import { revisionExpedienteService } from "../../services/revisionExpedienteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import {
   porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio, textoPorcentaje, nivelAcreditacion,
@@ -181,7 +182,7 @@ const PuntosEstado = ({ d }) => (
 // Tarjetas de resumen de la pestaña Empresa, Personas o Recursos: % de cumplimiento (con su nivel
 // de acreditación) y contadores.
 const KpisComponente = ({ d, umbrales }) => {
-  const nivel = nivelAcreditacion(d.avancePct, umbrales);
+  const nivel = nivelAcreditacion(d.avancePct, umbrales, d.evaluados === 0);
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
       <div className={`flex items-center gap-3 p-4 rounded-2xl border ${nivel.caja}`}>
@@ -286,6 +287,22 @@ export const ExpedienteDetailPage = () => {
     repositorioDocumentalService.obtener(id)
       .then((d) => { if (vigente) { setRepositorioDoc(d); setRepositorioDocError(null); } })
       .catch((err) => { if (vigente) setRepositorioDocError(err.message || "No se pudo cargar la documentación del expediente."); });
+    return () => { vigente = false; };
+  }, [id, repositorioDocIntento]);
+
+  // Ubicación de los documentos de cada requerimiento (precedencia: carpeta asignada en el
+  // expediente, vínculo de la plantilla, tipo documental), para el panel de documentos. Si no se
+  // puede leer, el panel sigue funcionando como antes (carpeta asignada o raíz).
+  const [ubicacionesIA, setUbicacionesIA] = useState(null);
+  useEffect(() => {
+    let vigente = true;
+    revisionExpedienteService.obtenerConfig(id)
+      .then((d) => {
+        if (!vigente) return;
+        setUbicacionesIA(Object.fromEntries((d?.requerimientos || []).map((r) => [r.requerimientoId,
+          { ...(r.ubicacion || {}), tipoEntidad: r.tipoEntidad, nombre: r.nombre }])));
+      })
+      .catch(() => { if (vigente) setUbicacionesIA(null); });
     return () => { vigente = false; };
   }, [id, repositorioDocIntento]);
 
@@ -552,6 +569,11 @@ export const ExpedienteDetailPage = () => {
       puedeEditar={puedeConfigurarDocumentos}
       onRepositorio={setRepositorioDoc}
       empresa={empresa}
+      mandanteId={expediente?.mandanteId}
+      ubicaciones={ubicacionesIA}
+      puedeReanalizar={["superadmin", "evaluador", "mandante_admin"].includes(profile?.rol)}
+      proyecto={proyecto}
+      puedeDefinirReglas={profile?.rol === "superadmin"}
       onIrADocumentacion={() => { setRequisitosAbiertos(false); cambiarNivel("documentacion"); }}
       onCarpetaAsignada={() => cargarDatos(true)}
     />
@@ -909,14 +931,14 @@ export const ExpedienteDetailPage = () => {
                           {d.total} requisitos
                         </span>
                         <span className="ml-auto"><PuntosEstado d={d} /></span>
-                        <BadgeAcreditacion pct={d.avancePct} umbrales={mandante?.umbralesAcreditacion} />
+                        <BadgeAcreditacion pct={d.avancePct} umbrales={mandante?.umbralesAcreditacion} sinEvaluar={d.evaluados === 0} />
                         <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <HistorialEstadosExpediente historial={historialEstados} />
+                <HistorialEstadosExpediente historial={historialEstados} expediente={expediente} />
               </>
             )}
 
@@ -959,6 +981,8 @@ export const ExpedienteDetailPage = () => {
                 datos={repositorioDoc}
                 onActualizado={setRepositorioDoc}
                 empresa={empresa}
+                mandanteId={expediente.mandanteId}
+                puedeConfigurarBase={["superadmin", "mandante_admin"].includes(profile?.rol)}
               />
             )}
 
@@ -1097,10 +1121,10 @@ export const ExpedienteDetailPage = () => {
                   <li key={evento.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
                     <div>
                       <p className="font-semibold text-slate-700">{describirEvento(evento)}</p>
-                      <p className="text-[11px] text-slate-400">{evento.actorNombre}</p>
+                      <p className="text-[11px] text-slate-400">{evento.actorNombre || "Sistema"}</p>
                     </div>
-                    <span className="text-[11px] text-slate-400 flex-shrink-0">
-                      {formatTiempoRelativo(evento.createdAt)}
+                    <span className="text-[11px] text-slate-400 flex-shrink-0 text-right" title={formatTiempoRelativo(evento.createdAt)}>
+                      {formatFechaHora(evento.createdAt)}
                     </span>
                   </li>
                 ))}

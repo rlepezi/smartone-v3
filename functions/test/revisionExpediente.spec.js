@@ -7,12 +7,15 @@ const tipoActivo = {id: "t1", codigo: "CEDULA_CL", estado: "activo",
   estadoIA: "piloto"};
 const plantilla = (doc = {}, seccion = {}) => ({
   secciones: [{
-    clave: "personal", nombre: "Carpetas Personales", ...seccion,
+    // Sección de carpetas de personas: el contexto de un requerimiento de
+    // Persona (ver ubicacionRequerimiento).
+    clave: "personal", nombre: "Carpetas Personales", tipo: "entidades",
+    entidad: "persona", ...seccion,
     documentos: [{clave: "ci", nombre: "Cédula de identidad",
       tipoDocumentalCodigo: "CEDULA_CL", ...doc}],
   }],
 });
-const req = {id: "r1", tipoDocumentalId: "t1"};
+const req = {id: "r1", tipoDocumentalId: "t1", tipoEntidad: "persona"};
 
 describe("elegibilidadRequerimiento", () => {
   it("elegible con tipo piloto y documento habilitado", () => {

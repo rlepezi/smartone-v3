@@ -724,6 +724,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             fechaInicio={fechaInicio}
             seleccion={seleccion}
             empresaNombre={empresaSel?.razonSocial}
+            fechaTerminoProyecto={proyectoSel?.fechaTerminoReprogramada || proyectoSel?.fechaTermino || null}
             onCargado={setPreviewRequerimientos}
           />
         )}
@@ -740,7 +741,6 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             progreso={progreso}
             errorEjecucion={errorEjecucion}
             onConfirmar={() => ejecutarAcreditacion(false)}
-            requisitosPerfil={requisitosPerfil}
             onIrAPaso={setStep}
             problemas={problemas}
             onCorregir={irAProblema}
@@ -782,10 +782,12 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
               title={step === 2 && carpetaNoCoincide ? "La carpeta vinculada no corresponde a la empresa seleccionada" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
             >
-              {step === 6 && pendientesRequerimientos > 0 ? `Continuar con ${pendientesRequerimientos} ${pendientesRequerimientos === 1 ? "pendiente" : "pendientes"} →` : step === 6 ? "Continuar →" : "Continuar"}
+              {step === 6 ? "Continuar →" : "Continuar"}
             </button>
             {step === 6 && pendientesRequerimientos > 0 && (
-              <p className="text-[11px] text-slate-400">Podrás completar estos requisitos posteriormente desde el expediente.</p>
+              <p className="text-[11px] text-slate-400">
+                {pendientesRequerimientos} {pendientesRequerimientos === 1 ? "requerimiento quedará" : "requerimientos quedarán"} por evaluar en el expediente.
+              </p>
             )}
           </div>
         </div>
@@ -809,9 +811,6 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
         proyectoSel={proyectoSel}
         perfilSel={perfilSel}
         seleccion={seleccion}
-        mostrarRequerimientos={step >= 6}
-        preview={previewRequerimientos}
-        cargandoPreview={step === 6 && !previewRequerimientos}
         mostrarExpediente={step >= 4 && step < 6}
         requisitosTotal={requisitosPerfil ? requisitosPerfil.length : null}
         reutilizadosEmpresa={previewEmpresa ? previewEmpresa.reutilizables : null}

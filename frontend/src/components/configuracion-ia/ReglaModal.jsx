@@ -17,10 +17,15 @@ const inicial = (regla, entidad) => ({
   camposRequeridos: regla?.camposRequeridos && regla.tipo === "interpretativa" ? regla.camposRequeridos : [],
 });
 
+// Opción del selector de verificación que pasa a una regla interpretativa (validación propia).
+const NUEVA_VALIDACION = "__nueva_validacion__";
+
 // Crear / editar una regla de la biblioteca (solo superadmin). Determinística: verificación del
 // catálogo + parámetros por defecto (formulario desde su esquema). Interpretativa: instrucción en
 // lenguaje natural. Editar una regla en uso pide elegir: nueva versión para todos, o duplicar.
-export const ReglaModal = ({ regla = null, verificaciones, onGuardada, onCerrar, entidadInicial = null }) => {
+// `verificacionesUsadas`: claves de verificación que ya usa el requerimiento desde el que se crea la
+// regla (Reglas IA): aparecen deshabilitadas para no duplicar la misma verificación.
+export const ReglaModal = ({ regla = null, verificaciones, onGuardada, onCerrar, entidadInicial = null, verificacionesUsadas = [] }) => {
   const [datos, setDatos] = useState(() => inicial(regla, entidadInicial));
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
@@ -30,6 +35,12 @@ export const ReglaModal = ({ regla = null, verificaciones, onGuardada, onCerrar,
   const cambiar = (campo, valor) => setDatos((d) => ({ ...d, [campo]: valor }));
 
   const elegirVerificacion = (clave) => {
+    // "Nueva validación": las determinísticas son funciones programadas; una validación propia se
+    // escribe como regla interpretativa (la IA la juzga con la instrucción).
+    if (clave === NUEVA_VALIDACION) {
+      setDatos((d) => ({ ...d, tipo: "interpretativa", verificacion: "", parametros: {} }));
+      return;
+    }
     const v = verificaciones.find((x) => x.clave === clave);
     setDatos((d) => ({
       ...d, verificacion: clave, parametros: {},
@@ -76,7 +87,7 @@ export const ReglaModal = ({ regla = null, verificaciones, onGuardada, onCerrar,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => !guardando && onCerrar()}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40" onClick={() => !guardando && onCerrar()}>
       <form role="dialog" aria-modal="true" aria-labelledby="regla-titulo" onSubmit={alEnviar} onClick={(e) => e.stopPropagation()}
         className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-slate-100">
@@ -108,7 +119,11 @@ export const ReglaModal = ({ regla = null, verificaciones, onGuardada, onCerrar,
               <span className={CLASE_LABEL}>Verificación *</span>
               <select value={datos.verificacion} onChange={(e) => elegirVerificacion(e.target.value)} className={CLASE_INPUT}>
                 <option value="">Seleccione...</option>
-                {verificaciones.map((v) => <option key={v.clave} value={v.clave}>{v.nombre}</option>)}
+                {verificaciones.map((v) => {
+                  const usada = verificacionesUsadas.includes(v.clave) && v.clave !== regla?.verificacion;
+                  return <option key={v.clave} value={v.clave} disabled={usada}>{v.nombre}{usada ? " (ya usada en este requerimiento)" : ""}</option>;
+                })}
+                <option value={NUEVA_VALIDACION}>+ Nueva validación (en lenguaje natural)…</option>
               </select>
               {verificacion && (
                 <span className="block text-[11px] text-slate-500 mt-1">
