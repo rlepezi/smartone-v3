@@ -105,8 +105,10 @@ class CarpetaEmpresaRepository {
           null});
       const ahora = FieldValue.serverTimestamp();
       if (actual) {
+        // Registrada sin proyecto (Mapeo documental): toma el del expediente.
         tx.update(ref, {expedienteId, estado: "activa", updatedAt: ahora,
-          updatedBy: autor});
+          updatedBy: autor,
+          ...(actual.proyectoId ? {} : {proyectoId: expediente.proyectoId})});
       } else {
         tx.set(ref, {...nueva, expedienteId, estado: "activa",
           createdAt: ahora, createdBy: autor, updatedAt: ahora,
@@ -125,6 +127,25 @@ class CarpetaEmpresaRepository {
         anteriorId: refAnterior && docAnterior?.exists ? anteriorId : null};
     });
     return {...r, carpeta: await this.getById(id)};
+  }
+
+  /**
+   * Crea la carpeta con ese ID si no existe (find-or-create en una
+   * transacción, sin duplicados).
+   * @param {string} id ID (idCarpeta).
+   * @param {Object} data Campos.
+   * @return {Promise<{carpeta: Object, creada: boolean}>} Resultado.
+   */
+  async crear(id, data) {
+    const ref = db.collection(COLLECTION).doc(id);
+    const creada = await db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (doc.exists) return false;
+      const ahora = FieldValue.serverTimestamp();
+      tx.create(ref, {...data, createdAt: ahora, updatedAt: ahora});
+      return true;
+    });
+    return {carpeta: await this.getById(id), creada};
   }
 
   /**

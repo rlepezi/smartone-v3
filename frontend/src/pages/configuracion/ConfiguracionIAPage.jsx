@@ -6,7 +6,7 @@ import { Tabs } from "../../components/shared/Tabs";
 import { TabConexion } from "../../components/configuracion-ia/TabConexion";
 import { TabFuentes } from "../../components/configuracion-ia/TabFuentes";
 import { TabTipos } from "../../components/configuracion-ia/TabTipos";
-import { TabEstructura } from "../../components/configuracion-ia/TabEstructura";
+import { TabMapeoDocumental } from "../../components/configuracion-ia/mapeo/TabMapeoDocumental";
 import { TabConsumo } from "../../components/configuracion-ia/TabConsumo";
 import { TabReglas } from "../../components/configuracion-ia/TabReglas";
 
@@ -14,7 +14,9 @@ import { TabReglas } from "../../components/configuracion-ia/TabReglas";
 const PESTANAS = [
   { key: "conexion", label: "Conexión IA", roles: ["superadmin"] },
   { key: "fuentes", label: "Fuentes documentales", roles: ["superadmin", "mandante_admin"] },
-  { key: "estructura", label: "Estructura de carpetas", roles: ["superadmin", "mandante_admin"] },
+  // Mapeo documental (reemplaza a "Estructura de carpetas"; la plantilla queda como "Plantilla
+  // anterior" dentro de ella): superadmin y evaluador.
+  { key: "mapeo", label: "Mapeo documental", roles: ["superadmin", "evaluador"] },
   { key: "tipos", label: "Tipos documentales", roles: ["superadmin"] },
   { key: "reglas", label: "Reglas de revisión", roles: ["superadmin"] },
   // El gasto de IA es información interna de SmartApplication: solo superadmin.
@@ -31,14 +33,15 @@ export const ConfiguracionIAPage = () => {
   if (visibles.length === 0) {
     return <Navigate to="/dashboard" replace state={{ mensaje: "No tiene acceso a la configuración de Inteligencia Artificial." }} />;
   }
-  const pedida = params.get("tab");
+  // Enlaces anteriores a "Estructura de carpetas" abren la plantilla dentro de Mapeo documental.
+  const pedida = params.get("tab") === "estructura" ? "mapeo" : params.get("tab");
   const activa = visibles.some((p) => p.key === pedida) ? pedida : visibles[0].key;
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className={`space-y-6 ${activa === "mapeo" ? "max-w-7xl" : "max-w-6xl"}`}>
       <PageHeader
         title="Inteligencia Artificial"
-        subtitle="Conexión, fuentes documentales, estructura de carpetas, tipos documentales, reglas de revisión y consumo"
+        subtitle="Conexión, fuentes documentales, mapeo documental, tipos documentales, reglas de revisión y consumo"
         icon={BrainCircuit}
         onRefresh={() => window.location.reload()}
       />
@@ -49,7 +52,7 @@ export const ConfiguracionIAPage = () => {
       />
       {activa === "conexion" && <TabConexion />}
       {activa === "fuentes" && <TabFuentes />}
-      {activa === "estructura" && <TabEstructura />}
+      {activa === "mapeo" && <TabMapeoDocumental plantillaAnterior={params.get("tab") === "estructura" || params.get("vista") === "plantilla"} />}
       {activa === "tipos" && <TabTipos />}
       {activa === "reglas" && <TabReglas />}
       {activa === "consumo" && <TabConsumo />}

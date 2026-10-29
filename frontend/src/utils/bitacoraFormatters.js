@@ -93,7 +93,11 @@ export const describirEvento = (registro) => {
 
   if (entidad === "carpetasEmpresa") {
     if (accion === "creado") return `Carpeta de empresa creada: «${detalle?.ruta || ""}»`;
-    if (accion === "actualizado") return "Mapeo de la carpeta de empresa actualizado";
+    if (accion === "registrada") return `Carpeta de empresa registrada: «${detalle?.ruta || ""}»`;
+    if (accion === "actualizado") {
+      const quitadas = (detalle?.requerimientos || []).filter((r) => r.anterior?.length && !r.nuevo?.length).length;
+      return quitadas ? `Mapeo documental: ${quitadas} ${quitadas === 1 ? "asignación quitada" : "asignaciones quitadas"}` : "Mapeo de la carpeta de empresa actualizado";
+    }
   }
 
   if (entidad === "fuentesDocumentales") {

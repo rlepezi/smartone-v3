@@ -4,7 +4,8 @@ import { apiClient } from "../api/apiClient";
 // proyecto), con su mapeo documental. La carpeta del expediente se lee con el resolvedor
 // (repositorioDocumentalService.obtener → { origen, repositorioDocumental, carpetaEmpresa }).
 export const carpetaEmpresaService = {
-  // Carpetas del Mandante (o de una fuente), con empresa, proyecto y expediente.
+  // Carpetas del Mandante (o de una fuente), con empresa, proyecto, expediente y avance
+  // { ubicados, total } del mapeo.
   async listar({ mandanteId, fuenteId } = {}) {
     const params = new URLSearchParams();
     if (mandanteId) params.set("mandanteId", mandanteId);
@@ -32,5 +33,17 @@ export const carpetaEmpresaService = {
   // La carpeta queda libre (conserva su mapeo).
   async desvincular(expedienteId) {
     return (await apiClient(`/expedientes/${expedienteId}/desvincular-carpeta`, { method: "POST" })).data;
+  },
+
+  // Mapeo documental: registra una subcarpeta de la fuente como Carpeta de empresa (sin proyecto).
+  // datos: { mandanteId, ruta, empresaId }.
+  async registrar(datos) {
+    return (await apiClient("/carpetas-empresa/registrar", { method: "POST", body: datos })).data;
+  },
+
+  // Requerimientos asignables de una carpeta: { conExpediente, requerimientos: [{ id, nombre,
+  // nombreCorto }], total }.
+  async requerimientos(id) {
+    return (await apiClient(`/carpetas-empresa/${id}/requerimientos`)).data;
   },
 };

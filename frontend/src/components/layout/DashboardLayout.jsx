@@ -71,7 +71,7 @@ const NAV_GROUPS = [
       { label: "Perfiles de Recurso", path: "/perfiles-recurso", icon: Tags, excludeRoles: ["admin_comercial"] },
       { label: "Requerimientos", path: "/requerimientos", icon: ClipboardCheck, excludeRoles: ["admin_comercial"] },
       { label: "Niveles de acreditación", path: "/configuracion/acreditacion", icon: Gauge, roles: ["superadmin", "mandante_admin"] },
-      { label: "Inteligencia Artificial", path: "/configuracion/ia", icon: BrainCircuit, roles: ["superadmin", "mandante_admin"] },
+      { label: "Inteligencia Artificial", path: "/configuracion/ia", icon: BrainCircuit, roles: ["superadmin", "mandante_admin", "evaluador"] },
     ],
   },
   {

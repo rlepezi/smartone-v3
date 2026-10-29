@@ -89,6 +89,40 @@ class CarpetaEmpresaController {
       next(error);
     }
   }
+
+  /**
+   * Registra una carpeta de la fuente como Carpeta de empresa (sin proyecto).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async registrar(req, res, next) {
+    try {
+      const data = await carpetaEmpresaService.registrar(req.body || {},
+          req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Requerimientos asignables de una carpeta y su total.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async requerimientos(req, res, next) {
+    try {
+      const data = await carpetaEmpresaService.requerimientosAsignables(
+          req.params.id, req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new CarpetaEmpresaController();

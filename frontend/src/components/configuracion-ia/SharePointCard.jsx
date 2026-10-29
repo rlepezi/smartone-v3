@@ -136,7 +136,11 @@ export const SharePointCard = ({ mandanteId, onCambio }) => {
 
   const claveBadge = !fuente ? "no_configurada" : fuente.estado === "inactiva" ? "inactiva" : fuente.estadoConexion || "no_probada";
   const badge = BADGE[claveBadge] || BADGE.no_probada;
-  const claseDe = (campo) => (errores[campo] ? CLASE_INPUT_ERROR : CLASE_INPUT);
+  // Formatos (GUID, URL https de *.sharepoint.com): se validan mientras se escribe en los campos
+  // con contenido y, al guardar, en todos. Con algún error no se puede guardar.
+  const erroresVivos = validar(datos, esNueva);
+  const mostrados = { ...Object.fromEntries(Object.entries(erroresVivos).filter(([k]) => String(datos[k] || "").trim())), ...errores };
+  const claseDe = (campo) => (mostrados[campo] ? CLASE_INPUT_ERROR : CLASE_INPUT);
 
   return (
     <Tarjeta
@@ -151,37 +155,37 @@ export const SharePointCard = ({ mandanteId, onCambio }) => {
       {!cargado ? (
         <div className="h-40 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
       ) : (
-        <form onSubmit={guardar} className="space-y-4">
+        <form onSubmit={guardar} autoComplete="off" className="space-y-4">
           {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
           {aviso && <p role="status" className="text-xs font-semibold text-sage-dark">{aviso}</p>}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Campo id="sp-nombre" etiqueta="Nombre de la fuente *" error={errores.nombre}>
-              <input id="sp-nombre" name="nombre" value={datos.nombre} onChange={cambiar} maxLength={80} placeholder="SharePoint Transemel" className={claseDe("nombre")} />
+            <Campo id="sp-nombre" etiqueta="Nombre de la fuente *" error={mostrados.nombre}>
+              <input id="sp-nombre" autoComplete="off" name="nombre" value={datos.nombre} onChange={cambiar} maxLength={80} placeholder="SharePoint Transemel" className={claseDe("nombre")} />
             </Campo>
-            <Campo id="sp-site" etiqueta="URL del sitio *" error={errores.siteUrl}>
-              <input id="sp-site" name="siteUrl" value={datos.siteUrl} onChange={cambiar} placeholder="https://empresa.sharepoint.com/sites/acreditacion" className={claseDe("siteUrl")} />
+            <Campo id="sp-site" etiqueta="URL del sitio *" error={mostrados.siteUrl}>
+              <input id="sp-site" autoComplete="off" name="siteUrl" value={datos.siteUrl} onChange={cambiar} placeholder="https://empresa.sharepoint.com/sites/acreditacion" className={claseDe("siteUrl")} />
             </Campo>
-            <Campo id="sp-tenant" etiqueta="Tenant ID *" error={errores.tenantId}>
-              <input id="sp-tenant" name="tenantId" value={datos.tenantId} onChange={cambiar} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" className={claseDe("tenantId")} />
+            <Campo id="sp-tenant" etiqueta="Tenant ID *" error={mostrados.tenantId}>
+              <input id="sp-tenant" autoComplete="off" name="tenantId" value={datos.tenantId} onChange={cambiar} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" className={claseDe("tenantId")} />
             </Campo>
-            <Campo id="sp-client" etiqueta="Client ID *" error={errores.clientId}>
-              <input id="sp-client" name="clientId" value={datos.clientId} onChange={cambiar} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" className={claseDe("clientId")} />
+            <Campo id="sp-client" etiqueta="Client ID *" error={mostrados.clientId}>
+              <input id="sp-client" autoComplete="off" name="clientId" value={datos.clientId} onChange={cambiar} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" className={claseDe("clientId")} />
             </Campo>
-            <Campo id="sp-secret" etiqueta={`Client secret${esNueva ? " *" : ""}`} error={errores.clientSecret} ayuda="Se guarda cifrado y no vuelve a mostrarse.">
+            <Campo id="sp-secret" etiqueta={`Client secret${esNueva ? " *" : ""}`} error={mostrados.clientSecret} ayuda="Se guarda cifrado y no vuelve a mostrarse.">
               {!esNueva && !reemplazarSecret ? (
                 <div className="flex items-center gap-2">
                   <code className="px-2.5 py-2 rounded-lg bg-slate-100 text-xs text-slate-700">••••{fuente.secretUltimos4}</code>
                   <button type="button" onClick={() => setReemplazarSecret(true)} className={CLASE_SECUNDARIO}>Reemplazar</button>
                 </div>
               ) : (
-                <input id="sp-secret" name="clientSecret" type="password" autoComplete="off" value={datos.clientSecret} onChange={cambiar} className={claseDe("clientSecret")} />
+                <input id="sp-secret" name="clientSecret" type="password" autoComplete="new-password" value={datos.clientSecret} onChange={cambiar} className={claseDe("clientSecret")} />
               )}
             </Campo>
-            <Campo id="sp-biblioteca" etiqueta="Biblioteca de documentos *" error={errores.biblioteca}>
-              <input id="sp-biblioteca" name="biblioteca" value={datos.biblioteca} onChange={cambiar} className={claseDe("biblioteca")} />
+            <Campo id="sp-biblioteca" etiqueta="Biblioteca de documentos *" error={mostrados.biblioteca}>
+              <input id="sp-biblioteca" autoComplete="off" name="biblioteca" value={datos.biblioteca} onChange={cambiar} className={claseDe("biblioteca")} />
             </Campo>
             <Campo id="sp-ruta" etiqueta="Carpeta base (opcional)" ayuda={datos.rutaBase.trim() ? `Se guardará como "${normalizarRutaBase(datos.rutaBase)}"` : "Ej.: Acreditacion/"}>
-              <input id="sp-ruta" name="rutaBase" value={datos.rutaBase} onChange={cambiar} placeholder="Acreditacion/" className={CLASE_INPUT} />
+              <input id="sp-ruta" autoComplete="off" name="rutaBase" value={datos.rutaBase} onChange={cambiar} placeholder="Acreditacion/" className={CLASE_INPUT} />
             </Campo>
           </div>
 
@@ -199,8 +203,11 @@ export const SharePointCard = ({ mandanteId, onCambio }) => {
             <p className="px-4 pb-3 text-[11px] text-slate-500">SmartOne solo solicita acceso de lectura a los sitios que el administrador autorice.</p>
           </details>
 
+          {Object.keys(erroresVivos).length > 0 && hayCambios && (
+            <p className="text-[11px] text-slate-500">Para guardar, complete los campos obligatorios (*) con el formato indicado.</p>
+          )}
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <button type="submit" disabled={guardando || (!esNueva && !hayCambios)} className={CLASE_PRIMARIO}>
+            <button type="submit" disabled={guardando || (!esNueva && !hayCambios) || Object.keys(erroresVivos).length > 0} className={CLASE_PRIMARIO}>
               {guardando ? "Guardando..." : "Guardar"}
             </button>
             <button type="button" onClick={() => aplicar(fuente)} disabled={guardando || !hayCambios} className={CLASE_SECUNDARIO}>Cancelar</button>

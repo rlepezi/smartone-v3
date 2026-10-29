@@ -144,11 +144,11 @@ function App() {
                         </ProtectedRoute>
                       }
                     />
-                    {/* Configuración → Inteligencia Artificial: superadmin (todas las pestañas) y mandante_admin (Fuentes y Consumo) */}
+                    {/* Configuración → Inteligencia Artificial: superadmin (todas las pestañas), mandante_admin (Fuentes) y evaluador (Mapeo documental) */}
                     <Route
                       path="/configuracion/ia"
                       element={
-                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "evaluador"]}>
                           <ConfiguracionIAPage />
                         </ProtectedRoute>
                       }

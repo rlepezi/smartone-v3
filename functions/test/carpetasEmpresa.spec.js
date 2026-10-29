@@ -41,8 +41,10 @@ jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
       expedienteId ? actual.expedienteId : null;
     await validar({actual, expediente,
       otroExpediente: otroId ? mockDb.expedientes.get(otroId) : null});
-    if (actual) Object.assign(actual, {expedienteId, estado: "activa"});
-    else {
+    if (actual) {
+      Object.assign(actual, {expedienteId, estado: "activa",
+        ...(actual.proyectoId ? {} : {proyectoId: expediente.proyectoId})});
+    } else {
       mockDb.carpetas.set(id, {id, ...nueva, expedienteId,
         estado: "activa"});
     }
@@ -54,6 +56,13 @@ jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
     return {carpeta: mockDb.carpetas.get(id), creada: !actual,
       anteriorId: anteriorId && anteriorId !== id ? anteriorId : null};
   }),
+  crear: jest.fn(async (id, data) => {
+    if (mockDb.carpetas.has(id)) {
+      return {carpeta: mockDb.carpetas.get(id), creada: false};
+    }
+    mockDb.carpetas.set(id, {id, ...data});
+    return {carpeta: mockDb.carpetas.get(id), creada: true};
+  }),
   desvincular: jest.fn(async (expedienteId) => {
     const exp = mockDb.expedientes.get(expedienteId);
     const id = exp.repositorioDocumental?.carpetaEmpresaId || null;
@@ -61,6 +70,19 @@ jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
     exp.repositorioDocumental = {carpetaEmpresaId: null};
     return id;
   }),
+}));
+jest.mock("../src/repositories/requerimientoRepository", () => {
+  const req = (id) => ({id, nombre: `Requerimiento ${id}`,
+    tipoEntidad: id === "rp" ? "persona" : "empresa"});
+  return {
+    getByIds: jest.fn(async (ids) => ids.map(req)),
+    // Requerimientos de Empresa activos del Mandante (sin expediente).
+    list: jest.fn(async () => ["r1", "r2", "r3"].map(req)),
+  };
+});
+jest.mock("../src/repositories/empresaMandanteRepository", () => ({
+  empresaIdsActivas: jest.fn(async (m) => (m === "m1" ? ["emp1", "emp2"] :
+    [])),
 }));
 jest.mock("../src/services/expedienteService", () => ({
   // Mismo alcance que el real: los roles del Mandante solo ven el suyo.
@@ -287,8 +309,11 @@ describe("Carpetas de empresa: vincular", () => {
       ruta: "1. TECNORED"}, ADMIN_M2)).rejects.toMatchObject({status: 404});
     await expect(carpetas.listar({mandanteId: "m1"}, ADMIN_M2))
         .rejects.toMatchObject({status: 403});
-    await expect(carpetas.listar({mandanteId: "m1"}, EVALUADOR))
-        .rejects.toMatchObject({status: 403});
+    // El evaluador lista (Mapeo documental); el mandante_lector no.
+    expect(await carpetas.listar({mandanteId: "m1"}, EVALUADOR))
+        .toEqual([]);
+    await expect(carpetas.listar({}, {uid: "l1", rol: "mandante_lector",
+      mandanteId: "m1"})).rejects.toMatchObject({status: 403});
     await carpetas.vincular({expedienteId: "e1", ruta: "1. TECNORED"},
         ADMIN_M1);
     expect(await carpetas.listar({}, ADMIN_M1)).toHaveLength(1);
@@ -395,5 +420,147 @@ describe("validaciones puras", () => {
     expect(aplicarCambiosMapeo({r1: [{ruta: "../x"}]}, {}, sello).ok)
         .toBe(false);
     expect(aplicarCambiosMapeo({"r/1": []}, {}, sello).ok).toBe(false);
+  });
+});
+
+describe("Entrega 2: mapeo documental", () => {
+  const {validarAsignaciones} = require("../src/utils/carpetasEmpresa");
+  const LECTOR = {uid: "l1", rol: "mandante_lector", mandanteId: "m1"};
+
+  beforeEach(async () => {
+    await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
+        SUPER);
+  });
+  const registrar = (ruta = "1. TECNORED", empresaId = "emp1", actor = SUPER) =>
+    carpetas.registrar({mandanteId: "m1", ruta, empresaId}, actor);
+
+  test("registrar: sin proyecto ni expediente, find-or-create, validación " +
+      "estricta y empresa del Mandante", async () => {
+    const c = await registrar();
+    expect(c).toMatchObject({ruta: "1. TECNORED", empresaId: "emp1",
+      proyectoId: null, expedienteId: null, empresaNombre: "TECNORED S.A."});
+    expect((await registrar()).id).toBe(c.id);
+    expect(mockDb.carpetas.size).toBe(1);
+    await expect(registrar("1. tecnored", "emp2")).rejects.toMatchObject({
+      status: 400});
+    await expect(registrar("17.B-BOSCH", "emp1")).rejects.toMatchObject({
+      status: 400});
+    await expect(registrar("9. OTRA", "emp9")).rejects.toMatchObject({
+      message: "La empresa no está asociada a este Mandante."});
+    expect(bitacoraLogger.registrarEvento).toHaveBeenCalledWith(
+        expect.objectContaining({accion: "registrada"}));
+  });
+
+  test("proyectoId null hasta vincular; al vincular toma el del " +
+      "expediente; otro proyecto se rechaza", async () => {
+    const c = await registrar();
+    const v = await carpetas.vincular({expedienteId: "e1",
+      ruta: "1. TECNORED"}, SUPER);
+    expect(v.id).toBe(c.id);
+    expect(mockDb.carpetas.get(c.id).proyectoId).toBe("p1");
+    await carpetas.desvincular("e1", SUPER);
+    await expect(carpetas.vincular({expedienteId: "e3",
+      ruta: "1. TECNORED"}, SUPER)).rejects.toMatchObject({status: 400,
+      message: expect.stringContaining("Cada proyecto usa su propia")});
+  });
+
+  test("requerimientos asignables: sin expediente, los de Empresa del " +
+      "Mandante; con expediente, los que le aplican", async () => {
+    const c = await registrar();
+    expect(await carpetas.requerimientosAsignables(c.id, EVALUADOR))
+        .toMatchObject({conExpediente: false, total: 3});
+    await carpetas.vincular({expedienteId: "e1", ruta: "1. TECNORED"}, SUPER);
+    const r = await carpetas.requerimientosAsignables(c.id, SUPER);
+    expect(r).toMatchObject({conExpediente: true, total: 2});
+    expect(r.requerimientos.map((x) => x.id)).toEqual(["r1", "r2"]);
+  });
+
+  test("permisos: registrar y asignables solo superadmin y evaluador; " +
+      "aislamiento por Mandante", async () => {
+    const c = await registrar();
+    await expect(registrar("1. TECNORED", "emp1", ADMIN_M1))
+        .rejects.toMatchObject({status: 403});
+    await expect(carpetas.requerimientosAsignables(c.id, ADMIN_M1))
+        .rejects.toMatchObject({status: 403});
+    await expect(carpetas.requerimientosAsignables(c.id, LECTOR))
+        .rejects.toMatchObject({status: 403});
+    await expect(carpetas.actualizar(c.id, {mapeo: {r1: [{ruta: "A"}]}},
+        ADMIN_M2)).rejects.toMatchObject({status: 403});
+  });
+
+  test("estadoMapeo se recalcula: sin_mapear → parcial → completo → quitar",
+      async () => {
+        const c = await registrar();
+        const p1 = await carpetas.actualizar(c.id, {mapeo: {r1: [{ruta: "A"}]}},
+            EVALUADOR);
+        expect(p1.estadoMapeo).toBe("parcial");
+        const p2 = await carpetas.actualizar(c.id, {mapeo: {
+          r2: [{ruta: "B"}, {ruta: "C/anexo.pdf", tipo: "archivo"}],
+          r3: [{ruta: "D"}]}}, EVALUADOR);
+        expect(p2.estadoMapeo).toBe("completo");
+        const p3 = await carpetas.actualizar(c.id, {mapeo: {r1: null}},
+            EVALUADOR);
+        expect(p3.estadoMapeo).toBe("parcial");
+        expect(p3.mapeo.r1).toBeUndefined();
+        // Quitar queda en la Bitácora con el valor anterior y el nuevo.
+        expect(bitacoraLogger.registrarEvento).toHaveBeenLastCalledWith(
+            expect.objectContaining({detalle: expect.objectContaining({
+              requerimientos: [{requerimientoId: "r1", anterior: ["A"],
+                nuevo: []}]})}));
+      });
+
+  test("solo requerimientos de Empresa de la carpeta", async () => {
+    const c = await registrar();
+    await expect(carpetas.actualizar(c.id, {mapeo: {rp: [{ruta: "A"}]}},
+        SUPER)).rejects.toMatchObject({status: 400,
+      message: expect.stringContaining("nivel Empresa")});
+  });
+
+  test("reglas de asignación en el backend", async () => {
+    const c = await registrar();
+    await carpetas.actualizar(c.id, {carpetaPersonas: "02. Trabajadores",
+      mapeo: {r1: [{ruta: "09. MIPER"}]}}, SUPER);
+    const intentar = (mapeo) => carpetas.actualizar(c.id, {mapeo}, SUPER);
+    // Un nodo, un solo requerimiento.
+    await expect(intentar({r2: [{ruta: "09. MIPER"}]}))
+        .rejects.toMatchObject({message: expect.stringContaining(
+            "ya está asignada a «Requerimiento r1»")});
+    // Descendiente de una carpeta asignada.
+    await expect(intentar({r2: [{ruta: "09. MIPER/matriz.xlsx",
+      tipo: "archivo"}]})).rejects.toMatchObject({
+      message: expect.stringContaining("está dentro de «09. MIPER»")});
+    // La carpeta del personal no se asigna.
+    await expect(intentar({r2: [{ruta: "02. Trabajadores"}]}))
+        .rejects.toMatchObject({message: expect.stringContaining(
+            "es la carpeta del personal")});
+    // Sus subcarpetas (personas) tampoco; sus archivos sueltos sí.
+    await expect(intentar({r2: [{ruta: "02. Trabajadores/Juan Pérez"}]}))
+        .rejects.toMatchObject({message: expect.stringContaining(
+            "se mapea por patrón")});
+    await expect(intentar({r2: [{ruta:
+      "02. Trabajadores/Juan Pérez/cedula.pdf", tipo: "archivo"}]}))
+        .rejects.toMatchObject({status: 400});
+    const ok = await intentar({r2: [{ruta:
+      "02. Trabajadores/Listado Trabajadores.docx", tipo: "archivo"}]});
+    expect(ok.mapeo.r2[0].ruta).toBe(
+        "02. Trabajadores/Listado Trabajadores.docx");
+    // Elegir como carpeta del personal una carpeta asignada: rechazado.
+    await expect(carpetas.actualizar(c.id, {carpetaRecursos: "09. MIPER"},
+        SUPER)).rejects.toMatchObject({message: expect.stringContaining(
+        "es la carpeta de maquinarias")});
+  });
+
+  test("validarAsignaciones (pura)", () => {
+    expect(validarAsignaciones({mapeo: {a: [{ruta: "X"}], b: [{ruta: "Y"}]},
+      carpetaPersonas: null, carpetaRecursos: null})).toBeNull();
+    expect(validarAsignaciones({mapeo: {a: [{ruta: "X"}, {ruta: "X/y"}]}}))
+        .toMatch(/está dentro de «X»/);
+    expect(validarAsignaciones({mapeo: {a: [{ruta: "Base"}]},
+      carpetaPersonas: "Base/Personal"})).toMatch(/contiene la carpeta del/);
+    expect(validarAsignaciones({mapeo: {}, carpetaPersonas: "P",
+      carpetaRecursos: "P/M"})).toMatch(/distintas/);
+    // "X2" no es descendiente de "X" (prefijo de ruta, no de texto).
+    expect(validarAsignaciones({mapeo: {a: [{ruta: "X"}], b: [{ruta: "X2"}]}}))
+        .toBeNull();
   });
 });

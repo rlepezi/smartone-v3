@@ -134,22 +134,34 @@ function rutasDeRequerimiento(carpeta, requerimientoId) {
 }
 
 /**
- * Estado del mapeo: sin_mapear (ninguno con entradas), completo (todos los
- * requerimientos pedidos con al menos una entrada) o parcial.
+ * Avance del mapeo: de los requerimientos que la carpeta debe cubrir (Y),
+ * cuántos tienen al menos una ubicación (X). Las entradas de requerimientos
+ * fuera de la lista no cuentan.
  * @param {?Object} mapeo {requerimientoId: [entradas]}.
- * @param {string[]} requerimientoIds Requerimientos que debería cubrir.
+ * @param {string[]} requerimientoIds Requerimientos que debe cubrir.
+ * @return {{ubicados: number, total: number}} X e Y.
+ */
+function avanceMapeo(mapeo, requerimientoIds) {
+  const ids = [...new Set(requerimientoIds || [])];
+  const ubicados = ids.filter((id) =>
+    entradasMapeo((mapeo || {})[id]).length).length;
+  return {ubicados, total: ids.length};
+}
+
+/**
+ * Estado del mapeo: sin_mapear (X = 0), completo (X = Y) o parcial
+ * (0 < X < Y), con X e Y de avanceMapeo.
+ * @param {?Object} mapeo {requerimientoId: [entradas]}.
+ * @param {string[]} requerimientoIds Requerimientos que debe cubrir.
  * @return {string} Estado.
  */
 function calcularEstadoMapeo(mapeo, requerimientoIds) {
-  const con = new Set(Object.entries(mapeo || {})
-      .filter(([, v]) => entradasMapeo(v).length).map(([id]) => id));
-  if (!con.size) return "sin_mapear";
-  const ids = [...new Set(requerimientoIds || [])];
-  return ids.length && ids.every((id) => con.has(id)) ? "completo" :
-    "parcial";
+  const {ubicados, total} = avanceMapeo(mapeo, requerimientoIds);
+  if (!ubicados) return "sin_mapear";
+  return ubicados === total ? "completo" : "parcial";
 }
 
 module.exports = {
   resolverCarpetaExpediente, rutasDeRequerimiento, calcularEstadoMapeo,
-  normalizarMapeo, entradasMapeo,
+  avanceMapeo, normalizarMapeo, entradasMapeo,
 };

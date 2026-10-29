@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, KeyRound, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import {
   soportaSelectorCarpeta, obtenerCarpetaPredeterminada, guardarCarpetaPredeterminada, estadoPermiso, pedirPermiso,
-  seleccionarCarpeta, vistaRapida,
+  seleccionarCarpeta,
 } from "../../services/fuentes/carpetaLocal";
 import { fuenteDocumentalService } from "../../services/fuenteDocumentalService";
+import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { Tarjeta } from "./Tarjeta";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
@@ -24,7 +25,7 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId, fuentes, esSuperadmin,
   const [registro, setRegistro] = useState(null); // raíz recordada en este navegador
   const [permiso, setPermiso] = useState(null);
   const [cargado, setCargado] = useState(!soportado);
-  const [vista, setVista] = useState(null);
+  const [registradas, setRegistradas] = useState({ fuenteId: null, n: null }); // carpetas de empresa de la fuente
   const [error, setError] = useState(null);
   const [aviso, setAviso] = useState(null);
   const [trabajando, setTrabajando] = useState(false);
@@ -32,17 +33,15 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId, fuentes, esSuperadmin,
 
   const autorizada = Boolean(local && registro && registro.handle.name === local.etiqueta && permiso === "granted");
 
-  // Raíz recordada en este navegador, su permiso y su vista rápida (sin tocar el estado).
+  // Raíz recordada en este navegador y su permiso (sin tocar el estado).
   const consultarNavegador = useCallback(async () => {
     const reg = await obtenerCarpetaPredeterminada(usuarioId, mandanteId);
     const estado = reg ? await estadoPermiso(reg.handle).catch(() => "prompt") : null;
-    const rapida = reg && estado === "granted" ? await vistaRapida(reg.handle).catch(() => null) : null;
-    return { reg, estado, rapida };
+    return { reg, estado };
   }, [usuarioId, mandanteId]);
-  const aplicar = ({ reg, estado, rapida }) => {
+  const aplicar = ({ reg, estado }) => {
     setRegistro(reg);
     setPermiso(estado);
-    setVista(rapida);
   };
   const leerNavegador = async () => aplicar(await consultarNavegador());
 
@@ -55,6 +54,17 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId, fuentes, esSuperadmin,
       .finally(() => { if (vigente) setCargado(true); });
     return () => { vigente = false; };
   }, [soportado, usuarioId, mandanteId, consultarNavegador]);
+
+  // Carpetas de empresa registradas en la fuente local activa.
+  const fuenteLocalId = local?.id || null;
+  useEffect(() => {
+    if (!fuenteLocalId) return undefined;
+    let vigente = true;
+    carpetaEmpresaService.listar({ mandanteId, fuenteId: fuenteLocalId })
+      .then((lista) => { if (vigente) setRegistradas({ fuenteId: fuenteLocalId, n: (lista || []).length }); })
+      .catch(() => { if (vigente) setRegistradas({ fuenteId: fuenteLocalId, n: null }); });
+    return () => { vigente = false; };
+  }, [mandanteId, fuenteLocalId]);
 
   const recordar = async (handle) => {
     await guardarCarpetaPredeterminada(usuarioId, mandanteId, handle);
@@ -155,8 +165,8 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId, fuentes, esSuperadmin,
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700"><ShieldAlert className="w-4 h-4" /> No autorizada en este navegador</span>
             )}
           </div>
-          {autorizada && vista && (
-            <p className="text-xs text-slate-600">{vista.subcarpetas} {vista.subcarpetas === 1 ? "subcarpeta" : "subcarpetas"} · {vista.archivosValidos} archivos válidos</p>
+          {registradas.fuenteId === local.id && registradas.n !== null && (
+            <p className="text-xs text-slate-600">{registradas.n} {registradas.n === 1 ? "carpeta de empresa" : "carpetas de empresa"}</p>
           )}
           {registro && registro.handle.name !== local.etiqueta && (
             <p className="text-[11px] text-amber-700">En este navegador está recordada «{registro.handle.name}», que no es la fuente.</p>

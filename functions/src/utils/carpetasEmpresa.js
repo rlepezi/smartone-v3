@@ -123,6 +123,88 @@ function aplicarCambiosMapeo(cambios, actual, {uid, ahora}) {
   return {ok: true, error: null, valor: salida};
 }
 
+/**
+ * ¿`ruta` está dentro de `base` (descendiente, no igual)? Por prefijo, sin
+ * leer el disco.
+ * @param {string} ruta Ruta.
+ * @param {string} base Carpeta.
+ * @return {boolean} Si está dentro.
+ */
+const dentroDe = (ruta, base) => Boolean(base) && ruta.startsWith(`${base}/`);
+
+/**
+ * Reglas de asignación del mapeo documental sobre el estado FINAL de la
+ * carpeta (mapeo, carpeta del personal y de maquinarias):
+ *  - un nodo (ruta) pertenece a un solo requerimiento;
+ *  - una carpeta asignada incluye todo su contenido: no se asigna un nodo
+ *    dentro de otro ya asignado (ni en el mismo requerimiento);
+ *  - la carpeta del personal / de maquinarias no se asigna, ni una carpeta
+ *    que la contenga; dentro de ellas, sus subcarpetas (personas o
+ *    maquinarias) y lo que hay en ellas no se asignan (se mapean por
+ *    patrón); sí sus archivos sueltos;
+ *  - la carpeta del personal y la de maquinarias son distintas y no una
+ *    dentro de la otra.
+ * @param {Object} estado {mapeo: {requerimientoId: [{ruta, tipo}]},
+ *     carpetaPersonas: ?string, carpetaRecursos: ?string}.
+ * @param {function(string): string} [nombreDe] Nombre de un requerimiento.
+ * @return {?string} Mensaje del primer problema, o null.
+ */
+function validarAsignaciones({mapeo, carpetaPersonas, carpetaRecursos},
+    nombreDe = (id) => id) {
+  const bases = [
+    {ruta: carpetaPersonas || null, nombre: "la carpeta del personal",
+      sujetos: "personas"},
+    {ruta: carpetaRecursos || null, nombre: "la carpeta de maquinarias",
+      sujetos: "maquinarias"},
+  ].filter((b) => b.ruta);
+  if (bases.length === 2 && (bases[0].ruta === bases[1].ruta ||
+      dentroDe(bases[0].ruta, bases[1].ruta) ||
+      dentroDe(bases[1].ruta, bases[0].ruta))) {
+    return "La carpeta del personal y la de maquinarias deben ser carpetas " +
+        "distintas, y una no puede estar dentro de la otra.";
+  }
+  const entradas = [];
+  Object.entries(mapeo || {}).forEach(([id, lista]) => (lista || [])
+      .forEach((e) => entradas.push({id, ruta: e.ruta,
+        tipo: e.tipo === "archivo" ? "archivo" : "carpeta"})));
+  const porRuta = new Map();
+  for (const e of entradas) {
+    const previa = porRuta.get(e.ruta);
+    if (previa && previa.id !== e.id) {
+      return `«${e.ruta}» ya está asignada a «${nombreDe(previa.id)}»: ` +
+          "un nodo pertenece a un solo requerimiento.";
+    }
+    porRuta.set(e.ruta, e);
+  }
+  for (const e of entradas) {
+    const contenedora = entradas.find((x) => x.tipo === "carpeta" &&
+        dentroDe(e.ruta, x.ruta));
+    if (contenedora) {
+      return `«${e.ruta}» está dentro de «${contenedora.ruta}», asignada a ` +
+          `«${nombreDe(contenedora.id)}». Para asignarla por separado, quite ` +
+          "primero la asignación de la carpeta.";
+    }
+    for (const b of bases) {
+      if (e.ruta === b.ruta) {
+        return `«${e.ruta}» es ${b.nombre}: no se asigna a un requerimiento.`;
+      }
+      if (dentroDe(b.ruta, e.ruta)) {
+        return `«${e.ruta}» contiene ${b.nombre}: no se asigna a un ` +
+            "requerimiento de Empresa.";
+      }
+      if (dentroDe(e.ruta, b.ruta)) {
+        const resto = e.ruta.slice(b.ruta.length + 1);
+        if (e.tipo === "carpeta" || resto.includes("/")) {
+          return `«${e.ruta}» es de las ${b.sujetos} de ${b.nombre}: se ` +
+              "mapea por patrón, no a un requerimiento de Empresa.";
+        }
+      }
+    }
+  }
+  return null;
+}
+
 module.exports = {
   idCarpeta, validarRutaCarpeta, validarUrlCarpeta, aplicarCambiosMapeo,
+  validarAsignaciones, dentroDe,
 };

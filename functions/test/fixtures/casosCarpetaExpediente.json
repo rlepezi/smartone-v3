@@ -93,6 +93,7 @@
     {"caso": "entradas vacías no cuentan", "mapeo": {"r1": []}, "ids": ["r1"], "esperado": "sin_mapear"},
     {"caso": "parcial", "mapeo": {"r1": [{"ruta": "a"}]}, "ids": ["r1", "r2"], "esperado": "parcial"},
     {"caso": "completo", "mapeo": {"r1": [{"ruta": "a"}], "r2": [{"ruta": "b", "tipo": "archivo"}]}, "ids": ["r1", "r2"], "esperado": "completo"},
-    {"caso": "sin requerimientos que cubrir", "mapeo": {"r1": [{"ruta": "a"}]}, "ids": [], "esperado": "parcial"}
+    {"caso": "sin requerimientos que cubrir: X = 0", "mapeo": {"r1": [{"ruta": "a"}]}, "ids": [], "esperado": "sin_mapear"},
+    {"caso": "entradas de requerimientos fuera de la lista no cuentan", "mapeo": {"r9": [{"ruta": "a"}]}, "ids": ["r1"], "esperado": "sin_mapear"}
   ]
 }

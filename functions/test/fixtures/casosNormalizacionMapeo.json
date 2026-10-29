@@ -1,0 +1,27 @@
+{
+  "normalizar": [
+    {"entrada": "05. O.D.I Especifica del contrato", "opciones": {}, "esperado": "odi especifica del contrato"},
+    {"entrada": "05. ODI Específica de contrato", "opciones": {}, "esperado": "odi especifica de contrato"},
+    {"entrada": "14. Vehículos y Maquinarias", "opciones": {}, "esperado": "vehiculos y maquinarias"},
+    {"entrada": "09. Vehículos y Maquinarias", "opciones": {}, "esperado": "vehiculos y maquinarias"},
+    {"entrada": "2.- C.I. Diego Garrido Muñoz 31-12-2031.pdf", "opciones": {"nombrePersona": "Diego Garrido Muñoz", "quitarFechas": true}, "esperado": "ci"},
+    {"entrada": "1.- CONTRATO DE TRABAJO_Diego Garrido Muñoz.pdf", "opciones": {"nombrePersona": "Diego Garrido Muñoz", "quitarFechas": true}, "esperado": "contrato de trabajo"},
+    {"entrada": "1.- ANEXO CONTRATO DE TRABAJO_Diego Garrido Muñoz.pdf", "opciones": {"nombrePersona": "Diego Garrido Muñoz", "quitarFechas": true}, "esperado": "anexo contrato de trabajo"},
+    {"entrada": "3.- CERT. ANTECEDENTES Diego Garrido Muñoz 25-06-2024.pdf", "opciones": {"nombrePersona": "Diego Garrido Muñoz", "quitarFechas": true}, "esperado": "cert antecedentes"},
+    {"entrada": "12. Reglamento interno de Higiene y seguridad (RIOHS)", "opciones": {}, "esperado": "reglamento interno de higiene y seguridad riohs"},
+    {"entrada": "17.B-BOSCH_Proyecto_Linea_1x220", "opciones": {}, "esperado": "bosch proyecto linea 1x220"},
+    {"entrada": "01 - Cronograma de Actividades", "opciones": {}, "esperado": "cronograma de actividades"},
+    {"entrada": "0.1. Programa «Ambiental»", "opciones": {}, "esperado": "programa ambiental"},
+    {"entrada": "2_E.P.P entrega 2024-03-15", "opciones": {"quitarFechas": true}, "esperado": "epp entrega"},
+    {"entrada": "Revision 2023 / anual", "opciones": {"quitarFechas": true}, "esperado": "revision anual"},
+    {"entrada": "Licencia ABCD12.pdf", "opciones": {"identificadorRecurso": "ABCD12"}, "esperado": "licencia"}
+  ],
+  "similitud": [
+    {"a": "programa ambiental", "b": "programa ambiental", "esperado": 1},
+    {"a": "programa capacitacion", "b": "programa de capacitacion", "esperado": 1},
+    {"a": "odi especifica del contrato", "b": "odi especifica de contrato", "esperado": 1},
+    {"a": "comite paritario", "b": "comite paritario cphs si aplica", "esperado": 0.8},
+    {"a": "cronograma", "b": "matriz iper", "esperado": 0},
+    {"a": "", "b": "algo", "esperado": 0}
+  ]
+}
