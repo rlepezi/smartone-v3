@@ -82,8 +82,10 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId }) => {
   return (
     <Tarjeta titulo="Carpeta local" Icono={FolderOpen}>
       <p className="text-[11px] text-slate-500">
-        Por seguridad, el navegador no permite guardar la ruta de la carpeta (C:\...). SmartOne recuerda el acceso a la
-        carpeta en este navegador y te pedirá confirmar el permiso con un clic.
+        Elige la carpeta principal que contiene una subcarpeta por empresa (por ejemplo, «Repositorio Empresas»). En Nueva
+        Acreditación, la carpeta de cada expediente se elige entre esas subcarpetas. Por seguridad, el navegador no permite
+        guardar la ruta de la carpeta (C:\...): SmartOne recuerda el acceso en este navegador y te pedirá confirmar el
+        permiso con un clic.
       </p>
       {!soportado ? (
         <p className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-600">

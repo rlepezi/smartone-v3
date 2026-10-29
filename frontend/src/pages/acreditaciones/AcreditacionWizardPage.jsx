@@ -674,6 +674,9 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             valor={repositorioWizard}
             carpeta={carpetaWizard}
             empresa={empresaSel}
+            usuarioId={profile?.uid}
+            mandanteId={mandanteEfectivo}
+            puedeConfigurarBase={["superadmin", "mandante_admin"].includes(profile?.rol)}
             onCambiar={setRepositorioWizard}
           />
         )}

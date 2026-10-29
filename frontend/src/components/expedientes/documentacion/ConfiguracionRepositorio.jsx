@@ -19,9 +19,12 @@ const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 r
 //    Empresa (validarCarpetaEmpresa): check verde o advertencia; una URL de SharePoint que no
 //    coincide no se puede guardar.
 //  - carpetaRechazada: carpeta local elegida que no se guardó por no ser de la Empresa.
+//  - selectorLocal: elección de la carpeta local en lugar del botón "Vincular carpeta" (p. ej.
+//    SelectorCarpetaEmpresa, desde la carpeta principal del Mandante).
 export const ConfiguracionRepositorio = ({
   valor, soportado, carpetaNombre, permiso, onVincular, onReautorizar, onGuardarSharePoint, onQuitar,
   puedeEditar = true, variante = "completo", error = null, children = null, empresa = null, carpetaRechazada = null,
+  selectorLocal = null,
 }) => {
   const compacto = variante === "compacto";
   const [tipo, setTipo] = useState(valor?.tipo || (soportado ? "local" : "sharepoint"));
@@ -81,7 +84,7 @@ export const ConfiguracionRepositorio = ({
             <p className="text-[11px] text-amber-700">La carpeta configurada es «{valor.etiqueta}»; en este equipo está vinculada «{carpetaNombre}».</p>
           )}
           <div className="flex flex-wrap gap-2">
-            {puedeEditar && (
+            {puedeEditar && !selectorLocal && (
               <button type="button" onClick={onVincular} className={CLASE_PRIMARIO}>
                 <Link2 className="w-4 h-4" /> {carpetaNombre ? "Cambiar carpeta" : "Vincular carpeta"}
               </button>
@@ -93,6 +96,7 @@ export const ConfiguracionRepositorio = ({
               <button type="button" onClick={onQuitar} className={CLASE_SECUNDARIO}>Quitar</button>
             )}
           </div>
+          {puedeEditar && selectorLocal}
           {validacionLocal && (
             <ValidacionCarpetaEmpresa
               nombreCarpeta={nombreLocal}

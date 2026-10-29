@@ -27,12 +27,11 @@ export const useCarpetaWizard = (usuarioId, sesionId) => {
     return () => { vigente = false; };
   }, [soportado, usuarioId, sesionId]);
 
-  // Debe llamarse desde un clic. Devuelve el registro, o null si se canceló.
-  const vincular = useCallback(async () => {
+  // Recuerda `handle` como la carpeta del asistente (p. ej. una subcarpeta de la carpeta principal
+  // del Mandante). Devuelve el registro, o null si falló.
+  const vincularHandle = useCallback(async (handle) => {
     setError(null);
     try {
-      const handle = await seleccionarCarpeta(registro?.handle || null);
-      if (!handle) return null;
       const reg = await guardarCarpetaWizard(usuarioId, sesionId, handle);
       setRegistro(reg);
       setPermiso("granted");
@@ -41,7 +40,20 @@ export const useCarpetaWizard = (usuarioId, sesionId) => {
       setError(err.message || "No se pudo vincular la carpeta.");
       return null;
     }
-  }, [usuarioId, sesionId, registro]);
+  }, [usuarioId, sesionId]);
+
+  // Con el selector del navegador (debe llamarse desde un clic). Devuelve el registro, o null si se
+  // canceló.
+  const vincular = useCallback(async () => {
+    setError(null);
+    try {
+      const handle = await seleccionarCarpeta(registro?.handle || null);
+      return handle ? vincularHandle(handle) : null;
+    } catch (err) {
+      setError(err.message || "No se pudo vincular la carpeta.");
+      return null;
+    }
+  }, [registro, vincularHandle]);
 
   const reautorizar = useCallback(async () => {
     setError(null);
@@ -63,6 +75,6 @@ export const useCarpetaWizard = (usuarioId, sesionId) => {
     handle: registro?.handle || null,
     permiso,
     lista: Boolean(registro) && permiso === "granted",
-    vincular, reautorizar, olvidar,
+    vincular, vincularHandle, reautorizar, olvidar,
   };
 };
