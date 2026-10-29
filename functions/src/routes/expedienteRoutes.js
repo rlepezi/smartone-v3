@@ -8,6 +8,8 @@ const revisionRequerimientoIAController =
     require("../controllers/revisionRequerimientoIAController");
 const repositorioDocumentalController =
     require("../controllers/repositorioDocumentalController");
+const carpetaEmpresaController =
+    require("../controllers/carpetaEmpresaController");
 const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 
 // Middleware de autenticación para todas las operaciones
@@ -61,6 +63,13 @@ router.patch(
     "/:id/carpeta-sujeto",
     requireRole(ROLES_TRANSICIONAR),
     repositorioDocumentalController.asignarCarpetaSujeto,
+);
+// Carpeta de empresa del expediente: la desvincula (la carpeta conserva su
+// mapeo para reutilizarla).
+router.post(
+    "/:id/desvincular-carpeta",
+    requireRole(ROLES_TRANSICIONAR),
+    carpetaEmpresaController.desvincular,
 );
 // Revisiones IA del Expediente: todos leen (mandante_lector en solo
 // lectura); configuran superadmin, evaluador y mandante_admin.

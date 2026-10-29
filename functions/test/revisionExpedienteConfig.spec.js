@@ -34,6 +34,12 @@ jest.mock("../src/repositories/usuarioRepository", () => ({
   "sesionRevisionRepository",
 ].forEach((r) => jest.mock(`../src/repositories/${r}`, () => ({})));
 jest.mock("../src/services/resolucionService", () => ({}));
+// Expediente legado (sin carpetaEmpresaId): la Carpeta de empresa no
+// interviene.
+jest.mock("../src/services/carpetaEmpresaService", () => ({
+  deExpediente: jest.fn().mockResolvedValue({carpetaEmpresa: null,
+    fuente: null}),
+}));
 jest.mock("../src/utils/bitacoraLogger", () => ({
   registrarEvento: jest.fn().mockResolvedValue(undefined),
 }));

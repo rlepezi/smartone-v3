@@ -8,15 +8,38 @@ import { ConfiguracionRepositorio } from "./ConfiguracionRepositorio";
 import { SelectorCarpetaEmpresa } from "./SelectorCarpetaEmpresa";
 import { useCarpetaBase } from "../../../hooks/useCarpetaBase";
 import { Toast } from "../../shared/Toast";
+import { CarpetaEmpresaExpediente } from "./CarpetaEmpresaExpediente";
 
-// Pestaña "Documentación" del Expediente: dónde está su documentación (carpeta local o SharePoint).
+// Pestaña "Documentación" del Expediente. La carpeta se lee con el resolvedor (datos.origen):
+//  - "carpetaEmpresa" o "ninguna": la Carpeta de empresa dentro de la fuente documental del Mandante
+//    (CarpetaEmpresaExpediente: Cambiar / Desvincular).
+//  - "legado": la configuración anterior, como antes, con la nota de que se actualizará en la
+//    migración (DocumentacionLegado).
+export const TabDocumentacion = (props) => {
+  const { datos } = props;
+  const legado = datos?.origen === "legado";
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="flex items-center gap-2 text-base font-bold text-carbon-dark"><FolderOpen className="w-4 h-4 text-primary" /> Documentación del expediente</h3>
+        <p className="text-xs text-slate-500">
+          Dónde está la documentación de esta empresa. Desde Empresa, Personas y Recursos podrá ver y abrir los archivos mientras evalúa.
+        </p>
+      </div>
+      {legado ? <DocumentacionLegado {...props} /> : <CarpetaEmpresaExpediente {...props} />}
+      {!datos?.puedeEditar && <p className="text-[11px] text-slate-400">Solo lectura: su rol no puede cambiar la carpeta del expediente.</p>}
+    </div>
+  );
+};
+
+// Configuración anterior (formato legado): dónde está su documentación (carpeta local o SharePoint).
 // La carpeta local se vincula en cada equipo (el navegador recuerda el acceso; en SmartOne solo
 // queda su nombre); es la misma carpeta que usa la pestaña Revisiones IA. Con la carpeta vinculada
 // se muestra el mapeo de carpetas (personal y maquinarias) y la estructura de primer y segundo nivel.
 // `empresa`: la del expediente; la carpeta debe ser suya (si no, advertencia y no se guarda).
 // La carpeta local se elige entre las subcarpetas de la carpeta principal del Mandante (y se vincula
 // sola si hay una única de la empresa); el selector del navegador queda como alternativa.
-export const TabDocumentacion = ({ expedienteId, usuarioId, mandanteId, datos, onActualizado, empresa = null, puedeConfigurarBase = false }) => {
+const DocumentacionLegado = ({ expedienteId, usuarioId, mandanteId, datos, onActualizado, empresa = null, puedeConfigurarBase = false }) => {
   const repo = datos?.repositorioDocumental || null;
   const puedeEditar = Boolean(datos?.puedeEditar);
   const carpeta = useCarpetaExpediente(usuarioId, expedienteId, {
@@ -57,11 +80,10 @@ export const TabDocumentacion = ({ expedienteId, usuarioId, mandanteId, datos, o
 
   return (
     <div className="space-y-5">
+      <p className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+        Configuración anterior; se actualizará en la migración.
+      </p>
       <div>
-        <h3 className="flex items-center gap-2 text-base font-bold text-carbon-dark"><FolderOpen className="w-4 h-4 text-primary" /> Documentación del expediente</h3>
-        <p className="text-xs text-slate-500">
-          Dónde está la documentación de esta empresa. Desde Empresa, Personas y Recursos podrá ver y abrir los archivos mientras evalúa.
-        </p>
         {repo && (
           <p className="text-[11px] text-slate-400 mt-1">
             Configurado: <b className="text-slate-600">{repo.etiqueta}</b> ({repo.tipo === "local" ? "carpeta local" : "SharePoint"}) · {repo.updatedByNombre || "—"} · {formatFecha(repo.updatedAt)}
@@ -116,7 +138,6 @@ export const TabDocumentacion = ({ expedienteId, usuarioId, mandanteId, datos, o
           </div>
         )}
       </ConfiguracionRepositorio>
-      {!puedeEditar && <p className="text-[11px] text-slate-400">Solo lectura: su rol no puede cambiar el repositorio documental.</p>}
       <Toast mensaje={carpeta.avisoAuto} onCerrar={carpeta.limpiarAvisoAuto} />
     </div>
   );

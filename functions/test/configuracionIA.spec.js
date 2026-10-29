@@ -25,6 +25,9 @@ jest.mock("../src/repositories/fuenteDocumentalRepository", () => ({
     return f;
   }),
 }));
+jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
+  contarActivasDeFuente: jest.fn().mockResolvedValue(0),
+}));
 jest.mock("../src/repositories/mandanteRepository", () => ({
   getById: jest.fn(async (id) => ({id})),
 }));
@@ -116,7 +119,9 @@ describe("validaciones de mockFuentes documentales", () => {
   test("aPublica quita los secretos", () => {
     const publica = aPublica({id: "x", secretCifrado: "c", iv: "i",
       authTag: "t", secretUltimos4: "1234"});
-    expect(publica).toEqual({id: "x", secretUltimos4: "1234"});
+    // Etiqueta y url uniformes para local y SharePoint.
+    expect(publica).toEqual({id: "x", secretUltimos4: "1234", etiqueta: null,
+      url: null});
   });
 });
 
@@ -151,11 +156,15 @@ describe("respuestas del servicio de mockFuentes sin secretos", () => {
     expect(sinSecretos(inactiva)).toBe(true);
   });
 
-  test("rechaza una segunda SharePoint activa", async () => {
-    await fuenteDocumentalService.crear(DATOS, ACTOR);
-    await expect(fuenteDocumentalService.crear(DATOS, ACTOR))
-        .rejects.toThrow(/ya tiene una fuente SharePoint activa/);
-  });
+  test("rechaza una segunda fuente activa (una sola por Mandante)",
+      async () => {
+        await fuenteDocumentalService.crear(DATOS, ACTOR);
+        await expect(fuenteDocumentalService.crear(DATOS, ACTOR))
+            .rejects.toMatchObject({status: 409,
+              codigo: "OTRA_FUENTE_ACTIVA",
+              message: expect.stringMatching(
+                  /ya tiene una fuente documental/)});
+      });
 
   test("mandante_admin no administra otro Mandante", async () => {
     await expect(fuenteDocumentalService.crear({...DATOS, mandanteId: "m2"},

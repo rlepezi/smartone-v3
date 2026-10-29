@@ -34,6 +34,10 @@ const {
   motivoFueraDeLote,
 } = require("../utils/revisionExpediente");
 const resolucionService = require("./resolucionService");
+const carpetaEmpresaService = require("./carpetaEmpresaService");
+const {
+  resolverCarpetaExpediente, rutasDeRequerimiento,
+} = require("../utils/carpetaExpediente");
 const AppError = require("../utils/AppError");
 
 const FUENTES = ["carpeta_local"];
@@ -64,6 +68,12 @@ class RevisionExpedienteService {
    *     plantilla: ?Object}>} Datos.
    */
   async _requerimientos(expediente, config) {
+    // Mapeo de la carpeta del expediente (un solo resolvedor): la ubicación
+    // usa la primera ruta asignada a cada requerimiento.
+    const {carpeta} = await this._carpeta(expediente, config);
+    const mapeoRutas = carpeta ? {requerimientos: Object.fromEntries(
+        Object.keys(carpeta.mapeo.requerimientos).map((id) =>
+          [id, rutasDeRequerimiento(carpeta, id)[0]]))} : null;
     const [instancias, tipos, plantilla] = await Promise.all([
       expedienteRequerimientoRepository.listByExpediente(expediente.id,
           "activo"),
@@ -100,7 +110,7 @@ class RevisionExpedienteService {
       // en la plantilla; el guardado (tipo) es respaldo.
       const el = elegibilidadRequerimiento({requerimiento, tipo, plantilla,
         libre, tipoEntidad: r.tipoEntidad, tiposPorCodigo,
-        mapeo: config?.repositorioDocumental?.mapeo || null});
+        mapeo: mapeoRutas});
       return {
         ...r,
         estadoIA: requerimiento?.estadoIA || "sin_reglas",
@@ -125,6 +135,20 @@ class RevisionExpedienteService {
   }
 
   /**
+   * Carpeta del expediente con resolverCarpetaExpediente (Carpeta de
+   * empresa; si el expediente no tiene, el formato legado de la config).
+   * @param {Object} expediente Expediente.
+   * @param {?Object} config configRevisionExpediente.
+   * @return {Promise<{origen: string, carpeta: ?Object}>} Resultado.
+   */
+  async _carpeta(expediente, config) {
+    const {carpetaEmpresa, fuente} =
+        await carpetaEmpresaService.deExpediente(expediente);
+    return resolverCarpetaExpediente({expediente, carpetaEmpresa, fuente,
+      legado: config?.repositorioDocumental || null});
+  }
+
+  /**
    * Configuración del Expediente con la elegibilidad de cada requerimiento.
    * @param {string} expedienteId ID del Expediente.
    * @param {Object} actor Usuario autenticado.
@@ -141,9 +165,17 @@ class RevisionExpedienteService {
     const ultima = config?.ultimaSesionId ?
       await sesionRevisionRepository.getById(config.ultimaSesionId)
           .catch(() => null) : null;
-    const {requerimientos, plantilla} =
-        await this._requerimientos(expediente, config);
+    const [{requerimientos, plantilla}, carpetaExpediente] = await Promise.all([
+      this._requerimientos(expediente, config),
+      this._carpeta(expediente, config),
+    ]);
     return {
+      // Carpeta del expediente (Documentación): Revisiones IA la usa en
+      // modo plantilla; la carpeta libre es aparte y no la cambia.
+      carpetaExpediente: {origen: carpetaExpediente.origen,
+        tipo: carpetaExpediente.carpeta?.tipo || null,
+        ruta: carpetaExpediente.carpeta?.ruta || null,
+        carpetaEmpresaId: carpetaExpediente.carpeta?.carpetaEmpresaId || null},
       config: config ? {
         fuente: config.fuente || "carpeta_local",
         carpetaNombre: config.carpetaNombre || null,
@@ -227,6 +259,18 @@ class RevisionExpedienteService {
       }
     }
     const cambioCarpeta = carpetaNombre !== (previa?.carpetaNombre || null);
+    // Con Carpeta de empresa, en modo plantilla la carpeta es la del
+    // expediente: se cambia en Documentación, no aquí.
+    const conCarpetaEmpresa =
+        Boolean(expediente.repositorioDocumental?.carpetaEmpresaId);
+    if (conCarpetaEmpresa && modoEstructura !== "libre" && carpetaNombre) {
+      const {carpeta} = await this._carpeta(expediente, previa);
+      if (carpeta && carpeta.ruta && carpeta.ruta !== carpetaNombre) {
+        throw new AppError(400, `La carpeta de este expediente es ` +
+            `«${carpeta.ruta}». Para usar otra, cámbiela en la pestaña ` +
+            "Documentación (o use una carpeta libre).");
+      }
+    }
     const empresa = await empresaRepository.getById(expediente.empresaId);
     if (cambioCarpeta && carpetaNombre) {
       const v = validarCarpetaEmpresa(carpetaNombre, empresa);
@@ -259,7 +303,9 @@ class RevisionExpedienteService {
     const nombreActor = usuario ? nombrePersona(usuario) :
       actor.email || actor.uid;
     const repoPrevio = previa?.repositorioDocumental || null;
-    const escribeRepositorio = cambioCarpeta && modoEstructura !== "libre";
+    // Con Carpeta de empresa no se escribe el formato legado.
+    const escribeRepositorio = cambioCarpeta && modoEstructura !== "libre" &&
+        !conCarpetaEmpresa;
     const repositorioDocumental = !escribeRepositorio ? repoPrevio :
       carpetaNombre ? {tipo: "local", etiqueta: carpetaNombre, url: null,
         mapeo: repoPrevio?.mapeo || null,

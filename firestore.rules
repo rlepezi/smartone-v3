@@ -206,6 +206,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Carpetas de empresa (subcarpetas de la fuente documental del Mandante,
+    // con su mapeo): se leen dentro del propio Mandante; solo el backend
+    // escribe (validación estricta, find-or-create y vínculo en transacción).
+    match /carpetasEmpresa/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
     // Configuración de IA (API key cifrada): nunca desde el cliente.
     match /configuracionIA/{docId} {
       allow read, write: if false;

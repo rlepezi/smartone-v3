@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { CheckCircle2, Folder, FolderOpen, KeyRound, Search } from "lucide-react";
+import { CheckCircle2, Cloud, Folder, FolderOpen, KeyRound, Search } from "lucide-react";
 import { validarCarpetaEmpresa } from "../../../utils/carpetaEmpresa";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
 
 const CLASE_BUSCAR = "w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary";
 
-// Carpeta de la Empresa dentro de la carpeta principal del Mandante (Fuentes documentales): lista
-// sus subcarpetas, primero las que contienen el nombre o el RUT de la Empresa. Si coincide una
-// sola y aún no hay carpeta elegida, se elige sola.
+// Carpeta de la Empresa dentro de la fuente documental del Mandante: lista sus subcarpetas, primero
+// las que contienen el nombre o el RUT de la Empresa. Si coincide una sola y aún no hay carpeta
+// elegida, se elige sola.
+//  - fuente: fuente activa del Mandante (backend) — null si no tiene; sin el prop (undefined), modo
+//    anterior (expedientes legados: carpeta principal de este navegador y "Elegir desde otra
+//    ubicación"). Con fuente local, la raíz de este navegador debe ser esa carpeta (si no, se ofrece
+//    autorizarla aquí); con SharePoint se pega la URL de la carpeta (sin árbol hasta Graph).
+//  - onElegirUrl(url): SharePoint.
+//  - errorSeleccion: mensaje del backend para la carpeta elegida (p. ej. ya vinculada).
 //  - base: resultado de useCarpetaBase.
 //  - seleccionada: nombre de la carpeta vinculada, o null.
 //  - onElegir(nombre): vincula esa subcarpeta.
@@ -18,7 +24,10 @@ const CLASE_BUSCAR = "w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rou
 //  - onAutoElegida(nombre): avisa que se vinculó sola (para el toast).
 export const SelectorCarpetaEmpresa = ({
   base, empresa, seleccionada, onElegir, onManual, puedeConfigurarBase = false, autoElegir = true, onAutoElegida,
+  fuente, onElegirUrl, errorSeleccion = null,
 }) => {
+  const modoFuente = fuente !== undefined;
+  const [url, setUrl] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [verTodas, setVerTodas] = useState(false);
   const [eligiendo, setEligiendo] = useState(null);
@@ -40,18 +49,62 @@ export const SelectorCarpetaEmpresa = ({
 
   // UNA sola subcarpeta que pasa la validación estricta y nada elegido: se vincula sola (una vez por
   // Empresa). Con 0 o 2+ coincidencias queda la lista para elegir.
-  const unica = autoElegir && !seleccionada && coincidentes.length === 1 ? coincidentes[0].nombre : null;
+  const unica = autoElegir && !seleccionada && coincidentes.length === 1 && (!modoFuente || fuente?.tipo === "local")
+    ? coincidentes[0].nombre : null;
   useEffect(() => {
     if (!unica || autoelegida.current) return;
     autoelegida.current = true;
     Promise.resolve(onElegir(unica)).then(() => onAutoElegida?.(unica)).catch(() => {});
   }, [unica, onElegir, onAutoElegida]);
 
-  if (base.cargando) return <p className="text-xs text-slate-400">Buscando la carpeta principal...</p>;
-
   const enlaceConfigurar = puedeConfigurarBase && (
     <Link to="/configuracion/ia?tab=fuentes" className="font-bold text-primary hover:underline">Configurar en Fuentes documentales</Link>
   );
+  const avisoSeleccion = errorSeleccion && <p role="alert" className="text-xs text-red-600">{errorSeleccion}</p>;
+
+  if (modoFuente && !fuente) {
+    return (
+      <div className="space-y-1.5 text-xs">
+        <p className="text-amber-700">Configura la fuente documental del Mandante: es la carpeta que contiene una subcarpeta por empresa y proyecto.</p>
+        {enlaceConfigurar}
+      </div>
+    );
+  }
+
+  if (modoFuente && fuente.tipo === "sharepoint") {
+    const sitio = fuente.url || "";
+    const valida = /^https:\/\//i.test(url.trim()) && (!sitio || url.trim().toLowerCase().startsWith(sitio.toLowerCase()));
+    return (
+      <div className="space-y-2 text-xs">
+        <p className="flex items-center gap-1.5 text-slate-500"><Cloud className="w-3.5 h-3.5 text-primary" /> Fuente SharePoint: <b className="text-carbon-dark">{fuente.etiqueta}</b></p>
+        <p className="text-slate-500">Pegue la URL de la carpeta de la empresa dentro del sitio {sitio || "de la fuente"}. La navegación del árbol estará disponible cuando exista la conexión con Microsoft Graph.</p>
+        <div className="flex flex-wrap gap-2">
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={`${sitio || "https://..."}/...`} aria-label="URL de la carpeta en SharePoint" className={`${CLASE_BUSCAR} flex-1 min-w-60 pl-3`} />
+          <button type="button" disabled={!valida} onClick={() => onElegirUrl?.(url.trim())} className={CLASE_PRIMARIO}>Usar esta carpeta</button>
+        </div>
+        {url.trim() && !valida && <p className="text-amber-700">La URL debe ser https y estar dentro del sitio de la fuente.</p>}
+        {avisoSeleccion}
+      </div>
+    );
+  }
+
+  if (base.cargando) return <p className="text-xs text-slate-400">Buscando la carpeta principal...</p>;
+
+  if (modoFuente && (!base.handle || !base.coincideFuente)) {
+    return (
+      <div className="space-y-2 text-xs">
+        <p className="text-amber-700">
+          La fuente documental del Mandante es «{fuente.etiqueta}», pero no está autorizada en este navegador
+          {base.handle ? ` (aquí está recordada «${base.handle.name}»)` : ""}. Autorícela para elegir la carpeta de la empresa.
+        </p>
+        <button type="button" onClick={base.autorizarFuente} disabled={!base.soportado} className={CLASE_PRIMARIO}>
+          <KeyRound className="w-3.5 h-3.5" /> Autorizar «{fuente.etiqueta}» en este navegador
+        </button>
+        {!base.soportado && <p className="text-slate-500">Este navegador no permite leer carpetas locales (use Chrome o Edge).</p>}
+        {base.error && <p className="text-red-600">{base.error}</p>}
+      </div>
+    );
+  }
 
   if (!base.handle) {
     return (
@@ -87,8 +140,9 @@ export const SelectorCarpetaEmpresa = ({
   return (
     <div className="space-y-2">
       <p className="flex items-center gap-1.5 text-xs text-slate-500">
-        <FolderOpen className="w-3.5 h-3.5 text-primary" /> Carpeta principal: <b className="text-carbon-dark">{base.handle.name}</b>
+        <FolderOpen className="w-3.5 h-3.5 text-primary" /> {modoFuente ? "Fuente documental" : "Carpeta principal"}: <b className="text-carbon-dark">{base.handle.name}</b>
       </p>
+      {avisoSeleccion}
       {coincidentes.length === 0 && (
         <p className="text-xs text-amber-700">
           Ninguna subcarpeta contiene el nombre ni el RUT de {empresa?.razonSocial}. Revisa el nombre de la carpeta de la empresa.
@@ -130,7 +184,7 @@ export const SelectorCarpetaEmpresa = ({
             {verTodas ? "Ver solo las que coinciden" : `Ver todas las carpetas (${subcarpetas.length})`}
           </button>
         )}
-        {onManual && <button type="button" onClick={onManual} className="font-bold text-slate-500 hover:underline">Elegir desde otra ubicación</button>}
+        {onManual && !modoFuente && <button type="button" onClick={onManual} className="font-bold text-slate-500 hover:underline">Elegir desde otra ubicación</button>}
       </div>
     </div>
   );

@@ -1,6 +1,8 @@
 const AppError = require("./AppError");
 
-// Validaciones y forma pública de las Fuentes Documentales (SharePoint).
+// Validaciones y forma pública de las Fuentes Documentales de un Mandante:
+// SharePoint (con credenciales cifradas) o carpeta local (solo su nombre: el
+// handle vive en el navegador). Regla: UNA sola fuente activa por Mandante.
 // Funciones puras, para probarlas aisladas.
 
 const RE_GUID =
@@ -73,7 +75,28 @@ function validarFuenteSharePoint(payload, {esNueva}) {
 }
 
 /**
- * Fuente sin secretos (para cualquier respuesta).
+ * Valida el nombre de la carpeta raíz de una fuente local (solo el nombre,
+ * sin ruta: el handle vive en el navegador).
+ * @param {*} payload {etiqueta}.
+ * @return {{etiqueta: string}} Datos.
+ */
+function validarFuenteLocal(payload) {
+  const etiqueta = String(payload?.etiqueta || "").trim();
+  if (!etiqueta) {
+    throw new AppError(400, "Indique el nombre de la carpeta raíz.");
+  }
+  if (etiqueta.length > NOMBRE_MAX * 2) {
+    throw new AppError(400, "El nombre de la carpeta es demasiado largo.");
+  }
+  if (/[\\/:]/.test(etiqueta) || etiqueta === "." || etiqueta === "..") {
+    throw new AppError(400, "Indique solo el nombre de la carpeta, sin ruta.");
+  }
+  return {etiqueta};
+}
+
+/**
+ * Fuente sin secretos (para cualquier respuesta), con etiqueta y url
+ * uniformes: local → su etiqueta; SharePoint → su nombre y la URL del sitio.
  * @param {?Object} fuente Documento de fuentesDocumentales.
  * @return {?Object} Fuente pública.
  */
@@ -83,7 +106,22 @@ function aPublica(fuente) {
   CAMPOS_SECRETOS.forEach((campo) => {
     delete publica[campo];
   });
+  publica.etiqueta = fuente.tipo === "local" ? fuente.etiqueta || null :
+    fuente.nombre || null;
+  publica.url = fuente.tipo === "sharepoint" ?
+    fuente.config?.siteUrl || null : null;
   return publica;
+}
+
+/**
+ * Fuente activa del Mandante (de cualquier tipo), sin contar excluirId.
+ * @param {Object[]} fuentes Fuentes del Mandante.
+ * @param {?string} [excluirId] Fuente que se está creando o activando.
+ * @return {?Object} La activa, o null.
+ */
+function fuenteActiva(fuentes, excluirId = null) {
+  return (fuentes || []).find((f) => f.estado === "activa" &&
+      f.id !== excluirId) || null;
 }
 
 /**
@@ -100,5 +138,6 @@ function hayOtraActiva(fuentes, tipo, excluirId = null) {
 
 module.exports = {
   RE_GUID, RE_SITE_URL, CAMPOS_SECRETOS, BIBLIOTECA_POR_DEFECTO,
-  normalizarRutaBase, validarFuenteSharePoint, aPublica, hayOtraActiva,
+  normalizarRutaBase, validarFuenteSharePoint, validarFuenteLocal, aPublica,
+  hayOtraActiva, fuenteActiva,
 };

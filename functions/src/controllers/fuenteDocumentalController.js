@@ -106,6 +106,40 @@ class FuenteDocumentalController {
       next(error);
     }
   }
+
+  /**
+   * Fuente activa de un Mandante (sin secretos), o null.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async activa(req, res, next) {
+    try {
+      const data = await fuenteDocumentalService.activa(req.query.mandanteId,
+          req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Registra o cambia la carpeta local del Mandante (solo superadmin).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async guardarLocal(req, res, next) {
+    try {
+      const data = await fuenteDocumentalService.guardarLocal(
+          req.params.mandanteId, req.body || {}, req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new FuenteDocumentalController();

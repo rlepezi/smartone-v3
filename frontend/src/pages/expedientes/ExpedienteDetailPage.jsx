@@ -563,6 +563,7 @@ export const ExpedienteDetailPage = () => {
       expedienteId={id}
       usuarioId={profile?.uid}
       repositorio={repositorioDoc?.repositorioDocumental || null}
+      origenCarpeta={repositorioDoc?.origen || null}
       tipo={tipo}
       sujeto={sujeto}
       carpetaSujeto={sujeto ? carpetaDeSujeto(tipo, sujeto.id) : null}
@@ -983,6 +984,7 @@ export const ExpedienteDetailPage = () => {
                 empresa={empresa}
                 mandanteId={expediente.mandanteId}
                 puedeConfigurarBase={["superadmin", "mandante_admin"].includes(profile?.rol)}
+                puedeConfigurarFuente={profile?.rol === "superadmin"}
               />
             )}
 

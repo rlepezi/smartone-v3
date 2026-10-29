@@ -5,18 +5,40 @@ const usuarioRepository = require("../repositories/usuarioRepository");
 const aiConfigService = require("./aiConfigService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
+const carpetaEmpresaRepository =
+    require("../repositories/carpetaEmpresaRepository");
 const {
-  validarFuenteSharePoint, aPublica, hayOtraActiva,
+  validarFuenteSharePoint, validarFuenteLocal, aPublica, fuenteActiva,
 } = require("../utils/fuentesDocumentales");
 
 const TIPO_SHAREPOINT = "sharepoint";
+const TIPO_LOCAL = "local";
+// Quiénes consultan la fuente activa (para vincular Carpetas de empresa y
+// leer la carpeta del expediente).
+const ROLES_CONSULTAN = ["superadmin", "evaluador", "mandante_admin",
+  "mandante_lector"];
 
 /**
- * Fuentes Documentales por Mandante: hoy solo la configuración de SharePoint
- * (sin conexión real a Microsoft Graph todavía). El client secret se guarda
- * cifrado con la misma clave maestra que la API key de IA y nunca sale en
- * una respuesta. La carpeta local no se guarda en el backend (vive en el
- * navegador).
+ * Mensaje cuando el Mandante ya tiene otra fuente activa.
+ * @param {Object} activa Fuente activa.
+ * @return {string} Mensaje.
+ */
+const mensajeOtraActiva = (activa) => "Este Mandante ya tiene una fuente " +
+    "documental activa (" + (activa.tipo === TIPO_LOCAL ?
+    `carpeta local «${activa.etiqueta}»` : `SharePoint «${activa.nombre}»`) +
+    "). Solo puede haber una: desactívela antes.";
+
+/**
+ * Fuentes Documentales por Mandante: la raíz del árbol de carpetas (una
+ * subcarpeta por empresa y proyecto). UNA sola fuente activa por Mandante:
+ *  - SharePoint (superadmin y mandante_admin de su Mandante; sin conexión
+ *    real a Microsoft Graph todavía). El client secret se guarda cifrado con
+ *    la misma clave maestra que la API key de IA y nunca sale en una
+ *    respuesta.
+ *  - Carpeta local (solo superadmin): solo su nombre; el handle vive en el
+ *    navegador (IndexedDB).
+ * Con Carpetas de empresa activas la fuente no se cambia ni se desactiva
+ * (el traslado lo resuelve la migración).
  */
 class FuenteDocumentalService {
   /**
@@ -79,7 +101,8 @@ class FuenteDocumentalService {
     await bitacoraLogger.registrarEvento({
       mandanteId: fuente.mandanteId, entidad: "fuentesDocumentales",
       entidadId: fuente.id, accion, actor,
-      detalle: {tipo: fuente.tipo, nombre: fuente.nombre, ...detalle},
+      detalle: {tipo: fuente.tipo,
+        nombre: fuente.nombre || fuente.etiqueta || null, ...detalle},
     });
   }
 
@@ -115,10 +138,11 @@ class FuenteDocumentalService {
     const mandanteId = await this._mandante(actor, payload?.mandanteId);
     const {nombre, config, clientSecret} =
         validarFuenteSharePoint(payload, {esNueva: true});
-    const existentes = await fuenteDocumentalRepository.list(mandanteId);
-    if (hayOtraActiva(existentes, TIPO_SHAREPOINT)) {
-      throw new AppError(409, "Este Mandante ya tiene una fuente SharePoint " +
-          "activa. Desactívela antes de crear otra.");
+    const activa = fuenteActiva(await fuenteDocumentalRepository.list(
+        mandanteId));
+    if (activa) {
+      throw new AppError(409, mensajeOtraActiva(activa),
+          {codigo: "OTRA_FUENTE_ACTIVA"});
     }
     const {cifrado, iv, authTag} = aiConfigService.cifrarSecreto(clientSecret);
     const autor = await this._autor(actor);
@@ -149,6 +173,10 @@ class FuenteDocumentalService {
    */
   async actualizar(id, payload, actor) {
     const previa = await this._cargar(id, actor);
+    if (previa.tipo !== TIPO_SHAREPOINT) {
+      throw new AppError(400, "La carpeta local se registra desde " +
+          "\"Carpeta local\".");
+    }
     const {nombre, config, clientSecret} =
         validarFuenteSharePoint(payload, {esNueva: false});
     const camposConexion = ["tenantId", "clientId", "siteUrl", "biblioteca",
@@ -190,14 +218,17 @@ class FuenteDocumentalService {
    */
   async cambiarEstado(id, estado, actor) {
     const previa = await this._cargar(id, actor);
+    this._exigirPermisoTipo(previa.tipo, actor);
     if (previa.estado === estado) return aPublica(previa);
     if (estado === "activa") {
-      const existentes = await fuenteDocumentalRepository.list(
-          previa.mandanteId);
-      if (hayOtraActiva(existentes, previa.tipo, id)) {
-        throw new AppError(409, "Este Mandante ya tiene otra fuente " +
-            "SharePoint activa. Desactívela antes de reactivar esta.");
+      const activa = fuenteActiva(await fuenteDocumentalRepository.list(
+          previa.mandanteId), id);
+      if (activa) {
+        throw new AppError(409, mensajeOtraActiva(activa),
+            {codigo: "OTRA_FUENTE_ACTIVA"});
       }
+    } else {
+      await this._exigirSinCarpetas(previa);
     }
     const fuente = await fuenteDocumentalRepository.update(id, {
       estado, updatedBy: await this._autor(actor),
@@ -206,6 +237,100 @@ class FuenteDocumentalService {
       estadoAnterior: previa.estado, estadoNuevo: estado,
     });
     return aPublica(fuente);
+  }
+
+  /**
+   * La carpeta local la administra solo superadmin; SharePoint, también
+   * mandante_admin (de su Mandante).
+   * @param {string} tipo Tipo de la fuente.
+   * @param {Object} actor Usuario autenticado.
+   */
+  _exigirPermisoTipo(tipo, actor) {
+    if (tipo === TIPO_LOCAL && actor.rol !== "superadmin") {
+      throw new AppError(403, "Solo un superadmin configura la carpeta " +
+          "local del Mandante.");
+    }
+  }
+
+  /**
+   * Rechaza cambiar o desactivar una fuente con Carpetas de empresa
+   * activas (el traslado lo resuelve la migración).
+   * @param {Object} fuente Fuente.
+   * @return {Promise<void>}
+   */
+  async _exigirSinCarpetas(fuente) {
+    const n = await carpetaEmpresaRepository.contarActivasDeFuente(fuente.id);
+    if (n > 0) {
+      throw new AppError(409, `La fuente tiene ${n} ` +
+          `${n === 1 ? "carpeta de empresa activa" :
+            "carpetas de empresa activas"}: no se puede cambiar ni ` +
+          "desactivar hasta trasladarlas (migración).",
+      {codigo: "FUENTE_CON_CARPETAS", detalle: {carpetas: n}});
+    }
+  }
+
+  /**
+   * Registra (o cambia) la carpeta local como fuente activa del Mandante.
+   * Solo superadmin. Con SharePoint activo se rechaza (la UI ofrece
+   * desactivarlo, con confirmación); con Carpetas de empresa activas no se
+   * cambia la carpeta.
+   * @param {string} mandanteId Mandante.
+   * @param {{etiqueta: string}} payload Nombre de la carpeta raíz.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Fuente pública.
+   */
+  async guardarLocal(mandanteId, payload, actor) {
+    this._exigirPermisoTipo(TIPO_LOCAL, actor);
+    const id = await this._mandante(actor, mandanteId);
+    const {etiqueta} = validarFuenteLocal(payload);
+    const existentes = await fuenteDocumentalRepository.list(id);
+    const activa = fuenteActiva(existentes);
+    if (activa && activa.tipo !== TIPO_LOCAL) {
+      throw new AppError(409, mensajeOtraActiva(activa),
+          {codigo: "SHAREPOINT_ACTIVA", detalle: {fuenteId: activa.id}});
+    }
+    const autor = await this._autor(actor);
+    if (activa) {
+      if (activa.etiqueta === etiqueta) return aPublica(activa);
+      await this._exigirSinCarpetas(activa);
+      const fuente = await fuenteDocumentalRepository.update(activa.id,
+          {etiqueta, updatedBy: autor});
+      await this._bitacora(fuente, "actualizado", actor,
+          {etiquetaAnterior: activa.etiqueta, etiqueta});
+      return aPublica(fuente);
+    }
+    // Una local inactiva se reutiliza (sin duplicar documentos).
+    const previa = existentes.find((f) => f.tipo === TIPO_LOCAL);
+    const fuente = previa ?
+      await fuenteDocumentalRepository.update(previa.id,
+          {etiqueta, estado: "activa", updatedBy: autor}) :
+      await fuenteDocumentalRepository.create({mandanteId: id,
+        tipo: TIPO_LOCAL, etiqueta, url: null, estado: "activa",
+        createdBy: autor, updatedBy: autor});
+    await this._bitacora(fuente, previa ? "transicion_estado" : "creado",
+        actor, previa ? {estadoAnterior: previa.estado, estadoNuevo: "activa",
+          etiqueta} : {etiqueta});
+    return aPublica(fuente);
+  }
+
+  /**
+   * Fuente activa del Mandante (sin secretos), o null. Para vincular
+   * Carpetas de empresa y leer la carpeta del expediente.
+   * @param {?string} mandanteId Mandante.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<?Object>} Fuente pública.
+   */
+  async activa(mandanteId, actor) {
+    if (!ROLES_CONSULTAN.includes(actor.rol)) {
+      throw new AppError(403, "No tiene permisos para ver la fuente.");
+    }
+    const id = ["mandante_admin", "mandante_lector"].includes(actor.rol) ?
+      actor.mandanteId : mandanteId;
+    if (!id) throw new AppError(400, "Falta el Mandante.");
+    if (mandanteId && id !== mandanteId) {
+      throw new AppError(403, "No tiene acceso a este Mandante.");
+    }
+    return aPublica(fuenteActiva(await fuenteDocumentalRepository.list(id)));
   }
 
   /**

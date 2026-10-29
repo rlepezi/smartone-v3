@@ -897,6 +897,31 @@
         {"fieldPath": "mandanteId", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "carpetasEmpresa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fuenteId", "order": "ASCENDING"},
+        {"fieldPath": "ruta", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "carpetasEmpresa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "empresaId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "carpetasEmpresa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "fuenteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

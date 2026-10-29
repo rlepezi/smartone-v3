@@ -11,6 +11,7 @@ import { listarDirectorio, obtenerArchivo } from "../../../services/fuentes/carp
 import { expedienteService } from "../../../services/expedienteService";
 import { repositorioDocumentalService } from "../../../services/repositorioDocumentalService";
 import { esImagen, esPdf, extensionDe, formatTamano, MAPEO_VACIO } from "../../../utils/repositorioDocumental";
+import { rutasDeRequerimiento } from "../../../utils/carpetaExpediente";
 import { formatFecha, formatFechaHora } from "../../../utils/fechas";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO, MENSAJE_SIN_SOPORTE } from "./estilos";
 import { SelectorCarpeta } from "./SelectorCarpeta";
@@ -60,14 +61,17 @@ const LineaAnalisis = ({ texto, analisis, analizando, error, puedeReanalizar, on
 // Lista ↔ visor: la lista conserva filtro y scroll; el visor navega ‹ › por la lista filtrada.
 // La evaluación de la izquierda sigue usable mientras tanto. Acceso de solo lectura.
 export const PanelDocumentos = (props) => {
-  const { expedienteId, usuarioId, repositorio, onRepositorio, empresa = null, mandanteId = null } = props;
-  // Con `empresa`, solo se puede vincular una carpeta de esa Empresa (validarCarpetaEmpresa). Si este
-  // navegador no tiene la carpeta configurada y es la única de la empresa en la carpeta principal del
-  // Mandante, se vincula sola (sin cambiar la configuración del expediente) y se avisa.
+  const { expedienteId, usuarioId, repositorio, onRepositorio, empresa = null, mandanteId = null, origenCarpeta = null } = props;
+  // Carpeta resuelta (resolverCarpetaExpediente): con Carpeta de empresa se abre desde la raíz de la
+  // fuente autorizada en este navegador; legado, como antes (si este navegador no tiene la carpeta y
+  // es la única de la empresa en la carpeta principal, se vincula sola sin cambiar la configuración
+  // del expediente). Con `empresa`, solo se vincula una carpeta de esa Empresa.
+  const usaFuente = origenCarpeta === "carpetaEmpresa";
   const carpeta = useCarpetaExpediente(usuarioId, expedienteId, {
-    onRepositorio, empresa, mandanteId,
-    configurada: repositorio?.tipo === "local" ? repositorio.etiqueta : null,
-    autoVincular: repositorio?.tipo === "local",
+    onRepositorio, empresa, mandanteId, usaFuente,
+    rutaFuente: usaFuente && repositorio?.tipo === "local" ? repositorio.ruta : null,
+    configurada: !usaFuente && repositorio?.tipo === "local" ? repositorio.etiqueta : null,
+    autoVincular: !usaFuente && repositorio?.tipo === "local",
   });
   return (
     <>
@@ -80,7 +84,7 @@ export const PanelDocumentos = (props) => {
 const ContenidoPanel = ({
   expedienteId, usuarioId, mandanteId, repositorio, tipo, sujeto, carpetaSujeto = null, puedeEditar,
   onIrADocumentacion, onRepositorio, onCarpetaAsignada, empresa = null, carpeta, ubicaciones = null,
-  puedeReanalizar = false, proyecto = null, puedeDefinirReglas = false,
+  puedeReanalizar = false, proyecto = null, puedeDefinirReglas = false, origenCarpeta = null,
 }) => {
   const {
     expandible, expandido, alternarExpandido, informarArchivo, archivoAbierto, requerimientoActivo, abrirRequerimiento,
@@ -101,7 +105,7 @@ const ContenidoPanel = ({
       .catch(() => { if (vigente) setRequerimientos([]); });
     return () => { vigente = false; };
   }, [tipo, expedienteId]);
-  const rutaRequerimiento = requerimientoId ? mapeo.requerimientos?.[requerimientoId] || null : null;
+  const rutaRequerimiento = requerimientoId ? rutasDeRequerimiento({ mapeo }, requerimientoId)[0] || null : null;
   const ubicacion = tipo === "empresa" && requerimientoId ? ubicaciones?.[requerimientoId] || null : null;
   const porEstructura = Boolean(ubicacion && !rutaRequerimiento && ORIGEN_ESTRUCTURA[ubicacion.nivel]);
   const rutaEstructura = porEstructura ? rutaDeUbicacion(ubicacion, analisis) : null;
@@ -389,6 +393,25 @@ const ContenidoPanel = ({
   }
   if (!carpeta.soportado) return conEncabezado(<Mensaje><p>{MENSAJE_SIN_SOPORTE}</p></Mensaje>);
   if (carpeta.cargando) return conEncabezado(<Mensaje><p>Cargando carpeta...</p></Mensaje>);
+  // Carpeta de empresa: se abre desde la raíz de la fuente autorizada en este navegador.
+  if (origenCarpeta === "carpetaEmpresa" && !carpeta.handle) {
+    return conEncabezado(
+      <Mensaje>
+        {carpeta.faltaRaiz ? (
+          <>
+            <p>La fuente documental del Mandante no está autorizada en este navegador.</p>
+            <button type="button" onClick={onIrADocumentacion} className="font-bold text-primary hover:underline">Autorizarla en la pestaña Documentación</button>
+          </>
+        ) : carpeta.permiso === "prompt" ? (
+          <>
+            <p>El navegador necesita que confirme el acceso a la fuente documental para abrir «{repositorio.ruta}».</p>
+            <button type="button" onClick={carpeta.reautorizar} className={CLASE_PRIMARIO}><KeyRound className="w-4 h-4" /> Re-autorizar</button>
+          </>
+        ) : <p>No se pudo abrir la carpeta «{repositorio.ruta}».</p>}
+        {carpeta.error && <p className="text-red-600">{carpeta.error}</p>}
+      </Mensaje>
+    );
+  }
   if (!carpeta.handle) {
     return conEncabezado(
       <Mensaje>

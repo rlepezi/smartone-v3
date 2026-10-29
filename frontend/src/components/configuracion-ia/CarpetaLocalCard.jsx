@@ -1,141 +1,206 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
+import { FolderOpen, KeyRound, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import {
-  soportaSelectorCarpeta, obtenerCarpetaPredeterminada, guardarCarpetaPredeterminada,
-  quitarCarpetaPredeterminada, estadoPermiso, pedirPermiso, seleccionarCarpeta, vistaRapida,
+  soportaSelectorCarpeta, obtenerCarpetaPredeterminada, guardarCarpetaPredeterminada, estadoPermiso, pedirPermiso,
+  seleccionarCarpeta, vistaRapida,
 } from "../../services/fuentes/carpetaLocal";
+import { fuenteDocumentalService } from "../../services/fuenteDocumentalService";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
-import { formatFechaHora } from "../../utils/fechas";
 import { Tarjeta } from "./Tarjeta";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
 
-const SIN_INDEXEDDB = "Este navegador no permite guardar la carpeta (almacenamiento local no disponible). Podrás elegirla en cada revisión.";
+const SIN_INDEXEDDB = "Este navegador no permite recordar la carpeta (almacenamiento local no disponible).";
+const BADGE = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border";
 
-// Carpeta local predeterminada de Revisiones IA, por usuario y Mandante, en ESTE navegador
-// (IndexedDB). Nunca se guarda en el servidor.
-export const CarpetaLocalCard = ({ usuarioId, mandanteId }) => {
+// Fuente documental LOCAL del Mandante: la carpeta raíz con una subcarpeta por empresa y proyecto
+// (p. ej. «Repositorio Empresas»). En el backend queda solo su nombre (una sola fuente activa por
+// Mandante; la registra o cambia solo superadmin). El acceso vive en ESTE navegador (IndexedDB, por
+// usuario y Mandante): cada usuario la autoriza en su navegador eligiendo esa misma carpeta.
+//  - fuentes: las del Mandante (fuenteDocumentalService.listar); onCambio(): recargarlas.
+export const CarpetaLocalCard = ({ usuarioId, mandanteId, fuentes, esSuperadmin, onCambio }) => {
   const soportado = soportaSelectorCarpeta();
-  const [registro, setRegistro] = useState(null);
-  const [cargado, setCargado] = useState(false);
+  const local = (fuentes || []).find((f) => f.tipo === "local" && f.estado === "activa") || null;
+  const sharepoint = (fuentes || []).find((f) => f.tipo === "sharepoint" && f.estado === "activa") || null;
+  const [registro, setRegistro] = useState(null); // raíz recordada en este navegador
   const [permiso, setPermiso] = useState(null);
+  const [cargado, setCargado] = useState(!soportado);
   const [vista, setVista] = useState(null);
-  const [calculando, setCalculando] = useState(false);
   const [error, setError] = useState(null);
-  const [confirmarQuitar, setConfirmarQuitar] = useState(false);
+  const [aviso, setAviso] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+  const [pendienteSharePoint, setPendienteSharePoint] = useState(null); // handle elegido
 
-  const calcularVista = useCallback(async (handle) => {
-    setCalculando(true);
-    try {
-      setVista(await vistaRapida(handle));
-    } catch {
-      setError("No se pudo leer la carpeta (quizás se movió o se eliminó). Elíjala de nuevo.");
-    } finally {
-      setCalculando(false);
-    }
-  }, []);
+  const autorizada = Boolean(local && registro && registro.handle.name === local.etiqueta && permiso === "granted");
 
-  const actualizarEstado = useCallback(async (reg) => {
+  // Raíz recordada en este navegador, su permiso y su vista rápida (sin tocar el estado).
+  const consultarNavegador = useCallback(async () => {
+    const reg = await obtenerCarpetaPredeterminada(usuarioId, mandanteId);
+    const estado = reg ? await estadoPermiso(reg.handle).catch(() => "prompt") : null;
+    const rapida = reg && estado === "granted" ? await vistaRapida(reg.handle).catch(() => null) : null;
+    return { reg, estado, rapida };
+  }, [usuarioId, mandanteId]);
+  const aplicar = ({ reg, estado, rapida }) => {
     setRegistro(reg);
-    setVista(null);
-    if (!reg) { setPermiso(null); return; }
-    const estado = await estadoPermiso(reg.handle).catch(() => "prompt");
     setPermiso(estado);
-    if (estado === "granted") await calcularVista(reg.handle);
-  }, [calcularVista]);
+    setVista(rapida);
+  };
+  const leerNavegador = async () => aplicar(await consultarNavegador());
 
   useEffect(() => {
     if (!soportado || !usuarioId || !mandanteId) return undefined;
     let vigente = true;
-    obtenerCarpetaPredeterminada(usuarioId, mandanteId)
-      .then((reg) => { if (vigente) { setError(null); actualizarEstado(reg); } })
+    consultarNavegador()
+      .then((r) => { if (vigente) aplicar(r); })
       .catch(() => { if (vigente) setError(SIN_INDEXEDDB); })
       .finally(() => { if (vigente) setCargado(true); });
     return () => { vigente = false; };
-  }, [soportado, usuarioId, mandanteId, actualizarEstado]);
+  }, [soportado, usuarioId, mandanteId, consultarNavegador]);
 
-  const elegir = async () => {
+  const recordar = async (handle) => {
+    await guardarCarpetaPredeterminada(usuarioId, mandanteId, handle);
+    await leerNavegador();
+  };
+
+  // Registra `handle` como fuente local del Mandante (superadmin) y la recuerda aquí. Con SharePoint
+  // activo, el backend rechaza: se pide confirmación explícita para desactivarlo.
+  const registrar = async (handle) => {
+    setError(null);
+    setAviso(null);
+    setTrabajando(true);
+    try {
+      await fuenteDocumentalService.guardarLocal(mandanteId, handle.name);
+      await recordar(handle);
+      setAviso(`«${handle.name}» quedó como fuente documental del Mandante.`);
+      onCambio?.();
+    } catch (err) {
+      if (err.codigo === "SHAREPOINT_ACTIVA") setPendienteSharePoint(handle);
+      else setError(err.message || "No se pudo registrar la fuente.");
+    } finally {
+      setTrabajando(false);
+    }
+  };
+
+  const desactivarSharePointYRegistrar = async () => {
+    setTrabajando(true);
     setError(null);
     try {
-      const handle = await seleccionarCarpeta(registro?.handle || null);
-      if (!handle) return;
-      await actualizarEstado(await guardarCarpetaPredeterminada(usuarioId, mandanteId, handle));
+      await fuenteDocumentalService.desactivar(sharepoint.id);
+      const handle = pendienteSharePoint;
+      setPendienteSharePoint(null);
+      await registrar(handle);
+    } catch (err) {
+      setError(err.message || "No se pudo desactivar SharePoint.");
+      setPendienteSharePoint(null);
+    } finally {
+      setTrabajando(false);
+    }
+  };
+
+  const elegir = async () => (await seleccionarCarpeta(registro?.handle || null).catch(() => null)) || null;
+
+  // Autoriza en este navegador la carpeta ya registrada (debe ser la misma).
+  const vincularEnNavegador = async () => {
+    setError(null);
+    const handle = await elegir();
+    if (!handle) return;
+    if (handle.name !== local.etiqueta) {
+      setError(`Elija la carpeta «${local.etiqueta}» (la fuente del Mandante); eligió «${handle.name}».`);
+      return;
+    }
+    try {
+      await recordar(handle);
     } catch {
       setError(SIN_INDEXEDDB);
     }
   };
 
-  const confirmarAcceso = async () => {
-    if (await pedirPermiso(registro.handle).catch(() => false)) await actualizarEstado(registro);
+  const reautorizar = async () => {
+    setError(null);
+    if (await pedirPermiso(registro.handle).catch(() => false)) await leerNavegador();
     else setError("El navegador no concedió el acceso a la carpeta.");
   };
 
-  const quitar = async () => {
-    try {
-      await quitarCarpetaPredeterminada(usuarioId, mandanteId);
-      await actualizarEstado(null);
-    } catch {
-      setError(SIN_INDEXEDDB);
-    }
-    setConfirmarQuitar(false);
+  const cambiar = async () => {
+    const handle = await elegir();
+    if (handle && handle.name !== local?.etiqueta) await registrar(handle);
+  };
+  const nueva = async () => {
+    const handle = await elegir();
+    if (handle) await registrar(handle);
   };
 
   return (
-    <Tarjeta titulo="Carpeta local" Icono={FolderOpen}>
+    <Tarjeta
+      titulo="Carpeta local"
+      Icono={FolderOpen}
+      acciones={local
+        ? <span className={`${BADGE} bg-sage-lighter text-sage-darker border-sage-light`}>Activa</span>
+        : <span className={`${BADGE} bg-slate-100 text-slate-500 border-slate-200`}>{sharepoint ? "No es la fuente activa" : "No configurada"}</span>}
+    >
       <p className="text-[11px] text-slate-500">
-        Elige la carpeta principal que contiene una subcarpeta por empresa (por ejemplo, «Repositorio Empresas»). En Nueva
-        Acreditación, la carpeta de cada expediente se elige entre esas subcarpetas. Por seguridad, el navegador no permite
-        guardar la ruta de la carpeta (C:\...): SmartOne recuerda el acceso en este navegador y te pedirá confirmar el
-        permiso con un clic.
+        La carpeta raíz contiene una subcarpeta por empresa y proyecto (por ejemplo, «Repositorio Empresas»). En SmartOne
+        queda solo su nombre; el navegador recuerda el acceso en este equipo y pide confirmarlo con un clic.
       </p>
       {!soportado ? (
-        <p className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-600">
-          Tu navegador no permite recordar carpetas. Podrás elegirla en cada revisión.
-        </p>
+        <p className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-600">Este navegador no permite leer carpetas locales (use Chrome o Edge).</p>
       ) : !cargado ? (
         <div className="h-16 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
-      ) : registro ? (
+      ) : local ? (
         <div className="p-4 rounded-xl border border-slate-100 space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm font-bold text-carbon-dark mr-auto">{registro.handle.name}</p>
-            {permiso === "granted" ? (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-sage-dark"><ShieldCheck className="w-4 h-4" /> Acceso concedido</span>
+            <p className="text-sm font-bold text-carbon-dark mr-auto">{local.etiqueta}</p>
+            {autorizada ? (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-sage-dark"><ShieldCheck className="w-4 h-4" /> Autorizada en este navegador</span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700"><ShieldAlert className="w-4 h-4" /> Requiere confirmar acceso</span>
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700"><ShieldAlert className="w-4 h-4" /> No autorizada en este navegador</span>
             )}
           </div>
-          <p className="text-[11px] text-slate-400">Configurada el {formatFechaHora(registro.configuradaEn)}</p>
-          {permiso === "granted" ? (
-            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-              {vista ? (
-                <span>{vista.subcarpetas} {vista.subcarpetas === 1 ? "subcarpeta" : "subcarpetas"} · {vista.archivosValidos} archivos válidos</span>
-              ) : <span className="text-slate-400">{calculando ? "Contando…" : "Sin vista rápida"}</span>}
-              <button type="button" onClick={() => calcularVista(registro.handle)} disabled={calculando} className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:text-primary-dark disabled:opacity-50">
-                <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-              </button>
-            </div>
-          ) : (
-            <button type="button" onClick={confirmarAcceso} className={CLASE_PRIMARIO}>Confirmar acceso</button>
+          {autorizada && vista && (
+            <p className="text-xs text-slate-600">{vista.subcarpetas} {vista.subcarpetas === 1 ? "subcarpeta" : "subcarpetas"} · {vista.archivosValidos} archivos válidos</p>
           )}
+          {registro && registro.handle.name !== local.etiqueta && (
+            <p className="text-[11px] text-amber-700">En este navegador está recordada «{registro.handle.name}», que no es la fuente.</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {(!registro || registro.handle.name !== local.etiqueta) && (
+              <button type="button" onClick={vincularEnNavegador} disabled={trabajando} className={CLASE_PRIMARIO}><FolderOpen className="w-4 h-4" /> Vincular carpeta</button>
+            )}
+            {registro && registro.handle.name === local.etiqueta && permiso !== "granted" && (
+              <button type="button" onClick={reautorizar} disabled={trabajando} className={CLASE_PRIMARIO}><KeyRound className="w-4 h-4" /> Re-autorizar</button>
+            )}
+            {esSuperadmin && (
+              <button type="button" onClick={cambiar} disabled={trabajando} className={CLASE_SECUNDARIO}><RefreshCw className="w-4 h-4" /> Cambiar</button>
+            )}
+          </div>
+        </div>
+      ) : esSuperadmin ? (
+        <div className="space-y-2">
+          {sharepoint && <p className="text-xs text-slate-600">El Mandante usa SharePoint («{sharepoint.nombre}») como fuente documental.</p>}
+          <div className="flex flex-wrap gap-2">
+            {registro && (
+              <button type="button" onClick={() => registrar(registro.handle)} disabled={trabajando} className={CLASE_PRIMARIO}>
+                Registrar «{registro.handle.name}» como fuente
+              </button>
+            )}
+            <button type="button" onClick={nueva} disabled={trabajando} className={registro ? CLASE_SECUNDARIO : CLASE_PRIMARIO}>
+              <FolderOpen className="w-4 h-4" /> {sharepoint ? "Usar una carpeta local" : "Vincular carpeta"}
+            </button>
+          </div>
+          {registro && <p className="text-[11px] text-slate-400">Este navegador ya tenía «{registro.handle.name}» como carpeta principal: puede registrarla tal cual.</p>}
         </div>
       ) : (
-        <p className="py-4 text-center text-xs text-slate-400">Aún no hay una carpeta predeterminada para este Mandante en este navegador.</p>
+        <p className="py-4 text-center text-xs text-slate-400">El Mandante no tiene una carpeta local como fuente. Solo un superadmin la configura.</p>
       )}
-      {error && <p role="alert" className="text-xs text-amber-700">{error}</p>}
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={elegir} disabled={!soportado} className={registro ? CLASE_SECUNDARIO : CLASE_PRIMARIO}>
-          <FolderOpen className="w-4 h-4" /> {registro ? "Cambiar carpeta" : "Elegir carpeta predeterminada"}
-        </button>
-        {registro && (
-          <button type="button" onClick={() => setConfirmarQuitar(true)} disabled={!soportado} className={CLASE_SECUNDARIO}>Quitar</button>
-        )}
-      </div>
-      {confirmarQuitar && (
+      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+      {aviso && <p role="status" className="text-xs font-semibold text-sage-dark">{aviso}</p>}
+      {pendienteSharePoint && (
         <ConfirmacionModal
-          titulo="Quitar la carpeta predeterminada"
-          mensaje="Solo se olvida la carpeta en este navegador; los archivos no se tocan."
-          textoConfirmar="Quitar"
-          onConfirmar={quitar}
-          onCancelar={() => setConfirmarQuitar(false)}
+          titulo="Desactivar SharePoint y usar carpeta local"
+          mensaje={`El Mandante tiene SharePoint («${sharepoint?.nombre}») como fuente activa y solo puede haber una. Se desactivará SharePoint (su configuración se conserva) y «${pendienteSharePoint.name}» quedará como fuente. Queda registrado en la Bitácora.`}
+          textoConfirmar="Desactivar SharePoint y usar carpeta local"
+          ocupado={trabajando}
+          onConfirmar={desactivarSharePointYRegistrar}
+          onCancelar={() => setPendienteSharePoint(null)}
         />
       )}
     </Tarjeta>

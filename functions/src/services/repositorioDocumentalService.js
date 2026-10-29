@@ -16,18 +16,26 @@ const AppError = require("../utils/AppError");
 const {
   validarCarpetaEmpresa, carpetaDeUrlSharePoint, mensajeCarpetaNoCoincide,
 } = require("../utils/carpetaEmpresa");
+const carpetaEmpresaService = require("./carpetaEmpresaService");
+const proyectoRepository = require("../repositories/proyectoRepository");
+const {
+  resolverCarpetaExpediente, entradasMapeo,
+} = require("../utils/carpetaExpediente");
 
 const ROLES_EDITAN = ["superadmin", "evaluador", "mandante_admin"];
 const MAPEO_VACIO = {carpetaPersonas: null, carpetaRecursos: null,
   requerimientos: {}};
 
 /**
- * Repositorio documental de un Expediente (carpeta local o SharePoint) y su
- * mapeo de carpetas (personal, maquinarias, requerimientos). Se guarda en
- * configRevisionExpediente — la misma configuración que usa la pestaña
- * Revisiones IA — para que haya una sola fuente. La carpeta de cada persona
- * o recurso (carpetaRelativa) vive en su participación. El handle de una
- * carpeta local nunca llega acá: vive en el navegador (IndexedDB).
+ * Repositorio documental de un Expediente y su mapeo de carpetas (personal,
+ * maquinarias, requerimientos). Se lee SIEMPRE con resolverCarpetaExpediente:
+ *  - Carpeta de empresa (expediente.repositorioDocumental.carpetaEmpresaId):
+ *    el mapeo se escribe en la carpeta (carpetaEmpresaService).
+ *  - Legado (configRevisionExpediente.repositorioDocumental): solo en
+ *    expedientes sin carpetaEmpresaId; siguen escribiendo como antes.
+ * La carpeta de cada persona o recurso (carpetaRelativa) vive en su
+ * participación. El handle de una carpeta local nunca llega acá: vive en el
+ * navegador (IndexedDB).
  */
 class RepositorioDocumentalService {
   /**
@@ -110,12 +118,102 @@ class RepositorioDocumentalService {
   async obtener(expedienteId, actor) {
     const expediente = await expedienteService.getExpedienteById(
         expedienteId, actor);
-    const config = await configRepository.get(expedienteId);
+    const {origen, carpeta, config, carpetaEmpresa} =
+        await this.resolver(expediente);
+    const legado = origen === "legado" ?
+      this._publico(config?.repositorioDocumental) : null;
     return {
-      repositorioDocumental: this._publico(config?.repositorioDocumental),
+      origen,
+      // Misma forma para todos los orígenes ({tipo, etiqueta, url, mapeo});
+      // el mapeo de requerimientos va como arreglo de entradas.
+      repositorioDocumental: carpeta ? {...carpeta,
+        updatedAt: legado?.updatedAt || null,
+        updatedByNombre: legado?.updatedByNombre || null} : null,
+      carpetaEmpresa: carpetaEmpresa ?
+        await this._carpetaParaMostrar(carpetaEmpresa) : null,
       modoEstructura: config?.modoEstructura || "plantilla",
       puedeEditar: ROLES_EDITAN.includes(actor.rol) &&
           expediente.estado !== "cerrado",
+    };
+  }
+
+  /**
+   * Carpeta resuelta del expediente (un solo resolvedor para todos).
+   * @param {Object} expediente Expediente.
+   * @return {Promise<{origen: string, carpeta: ?Object, config: ?Object,
+   *     carpetaEmpresa: ?Object}>} Resultado.
+   */
+  async resolver(expediente) {
+    const [config, {carpetaEmpresa, fuente}] = await Promise.all([
+      configRepository.get(expediente.id),
+      carpetaEmpresaService.deExpediente(expediente),
+    ]);
+    const r = resolverCarpetaExpediente({expediente, carpetaEmpresa, fuente,
+      legado: config?.repositorioDocumental || null});
+    return {...r, config,
+      carpetaEmpresa: r.origen === "carpetaEmpresa" ? carpetaEmpresa : null};
+  }
+
+  /**
+   * Carpeta de empresa con el nombre de la empresa y del proyecto.
+   * @param {Object} c Carpeta.
+   * @return {Promise<Object>} Carpeta pública.
+   */
+  async _carpetaParaMostrar(c) {
+    const [empresa, proyecto] = await Promise.all([
+      empresaRepository.getById(c.empresaId).catch(() => null),
+      proyectoRepository.getById(c.proyectoId).catch(() => null),
+    ]);
+    return {...carpetaEmpresaService.publica(c),
+      empresaNombre: empresa?.razonSocial || null,
+      proyectoNombre: proyecto?.nombre || null,
+      proyectoCodigo: proyecto?.codigo || null};
+  }
+
+  /**
+   * Mapeo para el formato legado: cada requerimiento como texto (la primera
+   * ruta si viene como arreglo de entradas).
+   * @param {*} mapeo Mapeo recibido.
+   * @return {*} Mapeo legado (o lo recibido si no es un objeto).
+   */
+  _mapeoLegado(mapeo) {
+    if (!mapeo || typeof mapeo !== "object" ||
+        !mapeo.requerimientos || typeof mapeo.requerimientos !== "object") {
+      return mapeo;
+    }
+    const requerimientos = {};
+    Object.entries(mapeo.requerimientos).forEach(([id, v]) => {
+      requerimientos[id] = Array.isArray(v) ?
+        entradasMapeo(v)[0]?.ruta || null : v;
+    });
+    return {...mapeo, requerimientos};
+  }
+
+  /**
+   * Mapeo recibido en el formato del repositorio ({carpetaPersonas,
+   * carpetaRecursos, requerimientos: {id: texto | [entradas]}}) → cambios
+   * para la Carpeta de empresa (los requerimientos que ya no vienen se
+   * quitan).
+   * @param {Object} mapeo Mapeo recibido.
+   * @param {Object} carpeta Carpeta de empresa actual.
+   * @return {Object} {carpetaPersonas, carpetaRecursos, mapeo}.
+   */
+  _cambiosCarpeta(mapeo, carpeta) {
+    const m = mapeo && typeof mapeo === "object" ? mapeo : {};
+    const reqs = m.requerimientos && typeof m.requerimientos === "object" ?
+      m.requerimientos : {};
+    const cambios = {};
+    Object.keys(carpeta.mapeo || {}).forEach((id) => {
+      if (!(id in reqs)) cambios[id] = null;
+    });
+    Object.entries(reqs).forEach(([id, v]) => {
+      cambios[id] = entradasMapeo(v).map((e) => ({ruta: e.ruta,
+        tipo: e.tipo}));
+    });
+    return {
+      ...("carpetaPersonas" in m ? {carpetaPersonas: m.carpetaPersonas} : {}),
+      ...("carpetaRecursos" in m ? {carpetaRecursos: m.carpetaRecursos} : {}),
+      mapeo: cambios,
     };
   }
 
@@ -132,9 +230,34 @@ class RepositorioDocumentalService {
    */
   async actualizar(expedienteId, payload, actor) {
     const expediente = await this._editable(expedienteId, actor);
+    const p0 = payload || {};
+    // Con Carpeta de empresa: el mapeo se escribe en la carpeta; quitar la
+    // desvincula; cambiar de carpeta es "vincular" (carpetas-empresa).
+    if (expediente.repositorioDocumental?.carpetaEmpresaId) {
+      if (p0.tipo === null) {
+        await carpetaEmpresaService.desvincular(expedienteId, actor);
+        return this.obtener(expedienteId, actor);
+      }
+      if (p0.tipo !== undefined || p0.mapeo === undefined) {
+        throw new AppError(409, "Este expediente usa una Carpeta de " +
+            "empresa: cámbiela con \"Cambiar\" en la pestaña Documentación.");
+      }
+      const {carpetaEmpresa} = await carpetaEmpresaService.deExpediente(
+          expediente);
+      if (!carpetaEmpresa) {
+        throw new AppError(409, "La Carpeta de empresa del expediente no " +
+            "existe: vincule otra.");
+      }
+      await carpetaEmpresaService.actualizar(carpetaEmpresa.id,
+          this._cambiosCarpeta(p0.mapeo, carpetaEmpresa), actor);
+      return this.obtener(expedienteId, actor);
+    }
     const previa = await configRepository.get(expedienteId);
     const anterior = previa?.repositorioDocumental || null;
-    const p = payload || {};
+    // El legado guarda un texto por requerimiento; el resolvedor lo entrega
+    // como arreglo de entradas: se vuelve a texto (la primera ruta).
+    const p = {...p0, ...(p0.mapeo ? {mapeo: this._mapeoLegado(p0.mapeo)} :
+      {})};
     const quitar = p.tipo === null;
     const soloMapeo = p.tipo === undefined && p.mapeo !== undefined;
     let valor = null;

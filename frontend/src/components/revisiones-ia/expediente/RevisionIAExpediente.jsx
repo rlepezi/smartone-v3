@@ -115,6 +115,7 @@ export const RevisionIAExpediente = ({ expediente, usuarioId, rol, onEvaluarManu
           puedeConfigurarBase={puedeConfigurar}
           onGuardar={guardar}
           onAcceso={setHandle}
+          carpetaExpediente={datos.carpetaExpediente || null}
         />
       </Paso>
 

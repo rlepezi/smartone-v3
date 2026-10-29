@@ -48,9 +48,11 @@ const Campo = ({ id, etiqueta, error, ayuda, children }) => (
 );
 
 // Fuente SharePoint del Mandante: configuración guardada (secret cifrado en el backend, solo
-// escritura). Sin conexión real a Microsoft Graph todavía: "Probar conexión" llega en la próxima
-// versión.
-export const SharePointCard = ({ mandanteId }) => {
+// escritura). Sin conexión real a Microsoft Graph todavía: "Probar conexión", el árbol y la
+// navegación de carpetas llegan con esa conexión. Una sola fuente activa por Mandante: con una
+// carpeta local activa, el backend rechaza crear o reactivar SharePoint. `onCambio`: tras guardar o
+// cambiar el estado (para recargar la fuente activa y las Carpetas de empresa).
+export const SharePointCard = ({ mandanteId, onCambio }) => {
   const [fuente, setFuente] = useState(null);
   const [cargado, setCargado] = useState(false);
   const [datos, setDatos] = useState(VACIO);
@@ -109,6 +111,7 @@ export const SharePointCard = ({ mandanteId }) => {
       };
       aplicar(esNueva ? await fuenteDocumentalService.crear(payload) : await fuenteDocumentalService.actualizar(fuente.id, payload));
       setAviso("Fuente SharePoint guardada.");
+      onCambio?.();
     } catch (err) {
       setError(err.message || "No se pudo guardar la fuente.");
     } finally {
@@ -123,6 +126,7 @@ export const SharePointCard = ({ mandanteId }) => {
       aplicar(activar ? await fuenteDocumentalService.reactivar(fuente.id) : await fuenteDocumentalService.desactivar(fuente.id));
       setAviso(activar ? "Fuente reactivada." : "Fuente desactivada.");
       setConfirmarDesactivar(false);
+      onCambio?.();
     } catch (err) {
       setError(err.message || "No se pudo cambiar el estado.");
     } finally {
@@ -140,7 +144,10 @@ export const SharePointCard = ({ mandanteId }) => {
       Icono={Cloud}
       acciones={<span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${badge.clase}`}>{badge.label}</span>}
     >
-      <p className="text-[11px] text-slate-500">La estructura se valida con la plantilla activa del mandante.</p>
+      <p className="text-[11px] text-slate-500">
+        La estructura se valida con la plantilla activa del mandante. El árbol de carpetas y su navegación estarán disponibles
+        cuando exista la conexión con Microsoft Graph; mientras tanto, la carpeta de cada empresa se indica con su URL.
+      </p>
       {!cargado ? (
         <div className="h-40 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
       ) : (

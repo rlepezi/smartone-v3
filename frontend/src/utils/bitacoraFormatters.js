@@ -85,8 +85,21 @@ export const describirEvento = (registro) => {
       const sujeto = detalle?.tipo === "recurso" ? "maquinaria" : "persona";
       return detalle?.nuevo ? `Carpeta de ${sujeto} asignada: «${detalle.nuevo}»` : `Carpeta de ${sujeto} quitada`;
     }
+    if (accion === "carpeta_empresa_vinculada") return `Carpeta de empresa vinculada: «${detalle?.ruta || ""}»`;
+    if (accion === "carpeta_empresa_desvinculada") return "Carpeta de empresa desvinculada";
     if (accion === "revision_ia_configurada") return "Revisiones IA configuradas";
     if (accion === "revision_ia_aceptar_lote") return "Propuestas IA aceptadas en lote";
+  }
+
+  if (entidad === "carpetasEmpresa") {
+    if (accion === "creado") return `Carpeta de empresa creada: «${detalle?.ruta || ""}»`;
+    if (accion === "actualizado") return "Mapeo de la carpeta de empresa actualizado";
+  }
+
+  if (entidad === "fuentesDocumentales") {
+    if (accion === "creado") return `Fuente documental creada: «${detalle?.nombre || ""}»`;
+    if (accion === "actualizado") return "Fuente documental actualizada";
+    if (accion === "transicion_estado") return detalle?.estadoNuevo === "activa" ? "Fuente documental activada" : "Fuente documental desactivada";
   }
 
   if (entidad === "evaluacion" && accion === "creado") {

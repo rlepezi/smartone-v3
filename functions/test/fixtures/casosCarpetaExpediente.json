@@ -1,0 +1,98 @@
+{
+  "resolver": [
+    {
+      "caso": "carpeta de empresa local con mapeo nuevo",
+      "entrada": {
+        "expediente": {"id": "e1", "repositorioDocumental": {"carpetaEmpresaId": "c1"}},
+        "carpetaEmpresa": {"id": "c1", "fuenteId": "f1", "ruta": "1. TECNORED", "url": null,
+          "empresaId": "emp1", "proyectoId": "p1", "carpetaPersonas": "02. Trabajadores",
+          "carpetaRecursos": null, "estadoMapeo": "parcial",
+          "mapeo": {"r1": [{"ruta": "01. Contratos", "tipo": "carpeta", "origen": "manual",
+            "confirmadoPor": "u1", "confirmadoAt": "2026-10-29T12:00:00.000Z"}]}},
+        "fuente": {"id": "f1", "tipo": "local", "etiqueta": "Repositorio Empresas"},
+        "legado": {"tipo": "local", "etiqueta": "VIEJA", "mapeo": {"carpetaPersonas": "x"}}
+      },
+      "esperado": {
+        "origen": "carpetaEmpresa",
+        "carpeta": {"carpetaEmpresaId": "c1", "fuenteId": "f1", "fuenteEtiqueta": "Repositorio Empresas",
+          "tipo": "local", "etiqueta": "1. TECNORED", "ruta": "1. TECNORED", "url": null,
+          "empresaId": "emp1", "proyectoId": "p1", "estadoMapeo": "parcial",
+          "mapeo": {"carpetaPersonas": "02. Trabajadores", "carpetaRecursos": null,
+            "requerimientos": {"r1": [{"ruta": "01. Contratos", "tipo": "carpeta", "origen": "manual",
+              "confirmadoPor": "u1", "confirmadoAt": "2026-10-29T12:00:00.000Z"}]}}}
+      }
+    },
+    {
+      "caso": "carpeta de empresa SharePoint conserva la URL",
+      "entrada": {
+        "expediente": {"repositorioDocumental": {"carpetaEmpresaId": "c2"}},
+        "carpetaEmpresa": {"id": "c2", "fuenteId": "f2", "ruta": "17.B-BOSCH",
+          "url": "https://acme.sharepoint.com/sites/x/Docs/17.B-BOSCH", "mapeo": {}},
+        "fuente": {"id": "f2", "tipo": "sharepoint", "etiqueta": "Sitio Acme"}
+      },
+      "esperado": {
+        "origen": "carpetaEmpresa",
+        "carpeta": {"carpetaEmpresaId": "c2", "fuenteId": "f2", "fuenteEtiqueta": "Sitio Acme",
+          "tipo": "sharepoint", "etiqueta": "17.B-BOSCH", "ruta": "17.B-BOSCH",
+          "url": "https://acme.sharepoint.com/sites/x/Docs/17.B-BOSCH",
+          "empresaId": null, "proyectoId": null, "estadoMapeo": "sin_mapear",
+          "mapeo": {"carpetaPersonas": null, "carpetaRecursos": null, "requerimientos": {}}}
+      }
+    },
+    {
+      "caso": "con carpetaEmpresaId pero sin la carpeta: ninguna (no cae al legado)",
+      "entrada": {
+        "expediente": {"repositorioDocumental": {"carpetaEmpresaId": "c9"}},
+        "carpetaEmpresa": null,
+        "legado": {"tipo": "local", "etiqueta": "1. TECNORED"}
+      },
+      "esperado": {"origen": "ninguna", "carpeta": null}
+    },
+    {
+      "caso": "legado local: el texto por requerimiento pasa al formato nuevo",
+      "entrada": {
+        "expediente": {"repositorioDocumental": null},
+        "legado": {"tipo": "local", "etiqueta": "1. TECNORED", "url": null,
+          "mapeo": {"carpetaPersonas": "Trabajadores", "carpetaRecursos": "Equipos",
+            "requerimientos": {"r1": "Contratos", "r2": ""}}}
+      },
+      "esperado": {
+        "origen": "legado",
+        "carpeta": {"carpetaEmpresaId": null, "fuenteId": null, "fuenteEtiqueta": null,
+          "tipo": "local", "etiqueta": "1. TECNORED", "ruta": "1. TECNORED", "url": null,
+          "empresaId": null, "proyectoId": null, "estadoMapeo": null,
+          "mapeo": {"carpetaPersonas": "Trabajadores", "carpetaRecursos": "Equipos",
+            "requerimientos": {"r1": [{"ruta": "Contratos", "tipo": "carpeta", "origen": "manual",
+              "confirmadoPor": null, "confirmadoAt": null}]}}}
+      }
+    },
+    {
+      "caso": "legado SharePoint",
+      "entrada": {
+        "expediente": {},
+        "legado": {"tipo": "sharepoint", "etiqueta": "TECNORED",
+          "url": "https://acme.sharepoint.com/sites/x/TECNORED"}
+      },
+      "esperado": {
+        "origen": "legado",
+        "carpeta": {"carpetaEmpresaId": null, "fuenteId": null, "fuenteEtiqueta": null,
+          "tipo": "sharepoint", "etiqueta": "TECNORED", "ruta": null,
+          "url": "https://acme.sharepoint.com/sites/x/TECNORED",
+          "empresaId": null, "proyectoId": null, "estadoMapeo": null,
+          "mapeo": {"carpetaPersonas": null, "carpetaRecursos": null, "requerimientos": {}}}
+      }
+    },
+    {
+      "caso": "sin carpeta",
+      "entrada": {"expediente": {"id": "e3"}, "legado": null},
+      "esperado": {"origen": "ninguna", "carpeta": null}
+    }
+  ],
+  "estadoMapeo": [
+    {"caso": "vacío", "mapeo": {}, "ids": ["r1"], "esperado": "sin_mapear"},
+    {"caso": "entradas vacías no cuentan", "mapeo": {"r1": []}, "ids": ["r1"], "esperado": "sin_mapear"},
+    {"caso": "parcial", "mapeo": {"r1": [{"ruta": "a"}]}, "ids": ["r1", "r2"], "esperado": "parcial"},
+    {"caso": "completo", "mapeo": {"r1": [{"ruta": "a"}], "r2": [{"ruta": "b", "tipo": "archivo"}]}, "ids": ["r1", "r2"], "esperado": "completo"},
+    {"caso": "sin requerimientos que cubrir", "mapeo": {"r1": [{"ruta": "a"}]}, "ids": [], "esperado": "parcial"}
+  ]
+}

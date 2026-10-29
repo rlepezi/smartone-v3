@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, FolderOpen, KeyRound, Trash2 } from "lucid
 import { revisionIAService } from "../../../services/revisionIAService";
 import {
   soportaSelectorCarpeta, seleccionarCarpeta, leerArbol, estadoPermiso, pedirPermiso, existeCarpeta,
-  obtenerCarpetaExpediente, guardarCarpetaExpediente, quitarCarpetaExpediente,
+  obtenerCarpetaExpediente, guardarCarpetaExpediente, quitarCarpetaExpediente, obtenerCarpetaPredeterminada,
 } from "../../../services/fuentes/carpetaLocal";
 import { subcarpetaUnicaDeEmpresa, puedeVincularSola } from "../../../services/fuentes/carpetaBase";
 import { useCarpetaBase } from "../../../hooks/useCarpetaBase";
@@ -32,8 +32,12 @@ const resumirPlan = (plan) => {
 // carpeta de otra empresa no se guarda. Si este navegador aún no la tiene y hay UNA sola subcarpeta
 // de la empresa en la carpeta principal, se vincula sola y se avisa. La carpeta se analiza con la
 // plantilla de estructura; el handle queda en este navegador (IndexedDB) y en el backend solo su nombre.
+// Con Carpeta de empresa (`carpetaExpediente`, del resolvedor), en modo plantilla la carpeta es la del
+// expediente: se abre desde la raíz de la fuente autorizada en este navegador y se cambia en la
+// pestaña Documentación; la carpeta libre sigue igual (y no escribe nada en Documentación).
 export const BloqueCarpeta = ({
   expedienteId, mandanteId, usuarioId, config, empresa, puedeEditar, puedeConfigurarBase = false, onGuardar, onAcceso,
+  carpetaExpediente = null,
 }) => {
   const [registro, setRegistro] = useState(null);
   const [permiso, setPermiso] = useState(null);
@@ -49,6 +53,9 @@ export const BloqueCarpeta = ({
   const [perdida, setPerdida] = useState(null);
   const base = useCarpetaBase(usuarioId, mandanteId);
   const modo = config?.modoEstructura || "plantilla";
+  const deFuente = carpetaExpediente?.origen === "carpetaEmpresa" && carpetaExpediente.tipo === "local" && modo !== "libre";
+  const [raiz, setRaiz] = useState(null); // raíz de la fuente (modo deFuente)
+  const [sinFuente, setSinFuente] = useState(false);
   const carpetaNombre = config?.carpetaNombre || null;
   const cerrarAviso = useCallback(() => setAviso(null), []);
 
@@ -104,6 +111,22 @@ export const BloqueCarpeta = ({
   useEffect(() => {
     let vigente = true;
     (async () => {
+      if (deFuente) {
+        // Carpeta de empresa: desde la raíz de la fuente autorizada en este navegador.
+        const principal = await obtenerCarpetaPredeterminada(usuarioId, mandanteId).catch(() => null);
+        if (!principal) { if (vigente) setSinFuente(true); return; }
+        const estado = await estadoPermiso(principal.handle).catch(() => "prompt");
+        if (!vigente) return;
+        setRaiz(principal.handle);
+        if (estado !== "granted") { setPermiso("prompt"); return; }
+        const handle = await principal.handle.getDirectoryHandle(carpetaExpediente.ruta).catch(() => null);
+        if (!vigente) return;
+        if (!handle) { setPerdida(carpetaExpediente.ruta); return; }
+        setRegistro({ handle });
+        setPermiso("granted");
+        setResumen(resumirPlan(await analizar(handle, modo)));
+        return;
+      }
       const reg = await obtenerCarpetaExpediente(usuarioId, expedienteId).catch(() => null);
       if (reg) {
         const estado = await estadoPermiso(reg.handle).catch(() => "prompt");
@@ -135,7 +158,7 @@ export const BloqueCarpeta = ({
     return () => { vigente = false; };
     // Solo al abrir el expediente: la vinculación automática no se repite en cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usuarioId, expedienteId, empresa?.id]);
+  }, [usuarioId, expedienteId, empresa?.id, deFuente, carpetaExpediente?.ruta]);
 
   // El bloque 3 (Validar) necesita el handle con permiso concedido.
   useEffect(() => {
@@ -165,7 +188,7 @@ export const BloqueCarpeta = ({
 
   const confirmarAcceso = async () => {
     setError(null);
-    if (!(await pedirPermiso(registro.handle).catch(() => false))) {
+    if (!(await pedirPermiso(deFuente ? raiz : registro.handle).catch(() => false))) {
       setPermiso("prompt");
       setError("El navegador no dio permiso para leer la carpeta.");
       return;
@@ -173,7 +196,12 @@ export const BloqueCarpeta = ({
     setPermiso("granted");
     setTrabajando(true);
     try {
-      setResumen(resumirPlan(await analizar(registro.handle, modo)));
+      let handle = registro?.handle;
+      if (deFuente) {
+        handle = await raiz.getDirectoryHandle(carpetaExpediente.ruta);
+        setRegistro({ handle });
+      }
+      setResumen(resumirPlan(await analizar(handle, modo)));
     } catch (err) {
       setError(err.message || "No se pudo analizar la carpeta.");
     } finally {
@@ -197,7 +225,7 @@ export const BloqueCarpeta = ({
 
   // Carpeta configurada que no pasa la validación (de antes de esta regla): se ofrece corregirla.
   const validacionActual = empresa && carpetaNombre && !rechazada ? validarCarpetaEmpresa(carpetaNombre, empresa) : null;
-  const mostrarSelector = puedeEditar && soportaSelectorCarpeta() && (eligiendo || !registro);
+  const mostrarSelector = !deFuente && puedeEditar && soportaSelectorCarpeta() && (eligiendo || !registro);
 
   return (
     <div className="space-y-3">
@@ -224,7 +252,25 @@ export const BloqueCarpeta = ({
           La carpeta «{perdida}» que este navegador tenía vinculada ya no se encuentra (se movió, se renombró o se eliminó). Elíjala de nuevo.
         </p>
       )}
-      {carpetaNombre && !registro && (
+      {deFuente && (
+        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-2">
+          <p>
+            Carpeta de empresa del expediente: <b>{carpetaExpediente.ruta}</b> (se cambia en la pestaña Documentación).
+            {sinFuente && " La fuente documental no está autorizada en este navegador: autorícela en la pestaña Documentación."}
+          </p>
+          {!registro && permiso === "prompt" && raiz && (
+            <button type="button" onClick={confirmarAcceso} disabled={trabajando} className={CLASE_SECUNDARIO}>
+              <KeyRound className="w-3.5 h-3.5" /> Confirmar acceso
+            </button>
+          )}
+          {puedeEditar && soportaSelectorCarpeta() && (
+            <button type="button" onClick={elegirManual} disabled={trabajando} className={CLASE_SECUNDARIO}>
+              <FolderOpen className="w-3.5 h-3.5" /> Usar otra carpeta como carpeta libre
+            </button>
+          )}
+        </div>
+      )}
+      {!deFuente && carpetaNombre && !registro && (
         <p className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
           Carpeta configurada: <b>{carpetaNombre}</b>. Este navegador aún no la tiene vinculada: elíjala desde la carpeta principal.
         </p>
@@ -249,7 +295,7 @@ export const BloqueCarpeta = ({
               <KeyRound className="w-3.5 h-3.5" /> Confirmar acceso
             </button>
           )}
-          {puedeEditar && (
+          {puedeEditar && !deFuente && (
             <>
               <button type="button" onClick={() => setEligiendo((v) => !v)} disabled={trabajando} className={CLASE_SECUNDARIO}>
                 {eligiendo ? "Cancelar cambio" : "Cambiar"}
@@ -262,7 +308,7 @@ export const BloqueCarpeta = ({
         </div>
       )}
 
-      {validacionActual && (
+      {validacionActual && !deFuente && (
         <ValidacionCarpetaEmpresa
           nombreCarpeta={carpetaNombre}
           resultado={validacionActual}

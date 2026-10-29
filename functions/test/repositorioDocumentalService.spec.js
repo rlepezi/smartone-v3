@@ -17,6 +17,16 @@ jest.mock("../src/repositories/empresaRepository", () => ({
   getById: jest.fn().mockResolvedValue({id: "emp1",
     razonSocial: "ADMINISTRADORA PLAZA S.A.", rut: "99.581.960-0"}),
 }));
+// Expedientes legados (sin carpetaEmpresaId): la Carpeta de empresa no
+// interviene.
+jest.mock("../src/services/carpetaEmpresaService", () => ({
+  deExpediente: jest.fn().mockResolvedValue({carpetaEmpresa: null,
+    fuente: null}),
+  publica: jest.fn(), actualizar: jest.fn(), desvincular: jest.fn(),
+}));
+jest.mock("../src/repositories/proyectoRepository", () => ({
+  getById: jest.fn().mockResolvedValue(null),
+}));
 jest.mock("../src/utils/bitacoraLogger", () => ({
   registrarEvento: jest.fn().mockResolvedValue(undefined),
 }));

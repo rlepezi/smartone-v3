@@ -1,10 +1,15 @@
 import { apiClient } from "../api/apiClient";
 
-// Repositorio documental de un Expediente (carpeta local o SharePoint). Es la misma configuración
-// de carpeta que usa la pestaña Revisiones IA.
+// Repositorio documental de un Expediente, leído en el backend con resolverCarpetaExpediente: la
+// Carpeta de empresa del expediente o, si no tiene, la configuración anterior (legado).
 export const repositorioDocumentalService = {
-  // { repositorioDocumental: { tipo, etiqueta, url, updatedAt, updatedByNombre } | null,
+  // { origen: "carpetaEmpresa" | "legado" | "ninguna",
+  //   repositorioDocumental: { tipo, etiqueta, ruta, url, carpetaEmpresaId, fuenteId,
+  //     mapeo: { carpetaPersonas, carpetaRecursos, requerimientos: { id: [{ ruta, tipo, origen }] } },
+  //     updatedAt, updatedByNombre } | null,
+  //   carpetaEmpresa: { id, ruta, empresaNombre, proyectoNombre, estadoMapeo, ... } | null,
   //   modoEstructura, puedeEditar }.
+  // Con Carpeta de empresa, actualizar({ mapeo }) escribe en la carpeta y { tipo: null } la desvincula.
   async obtener(expedienteId) {
     return (await apiClient(`/expedientes/${expedienteId}/repositorio-documental`)).data;
   },

@@ -25,7 +25,8 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useCarpetaWizard } from "../../hooks/useCarpetaWizard";
 import { DocumentacionWizard } from "./wizard/DocumentacionWizard";
 import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
-import { traspasarCarpetaWizard, limpiarCarpetasWizard } from "../../services/fuentes/carpetaLocal";
+import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
+import { limpiarCarpetasWizard } from "../../services/fuentes/carpetaLocal";
 import { MAPEO_VACIO } from "../../utils/repositorioDocumental";
 import { validarCarpetaEmpresa, carpetaDeUrlSharePoint } from "../../utils/carpetaEmpresa";
 
@@ -174,10 +175,15 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   const [seleccion, setSeleccion] = useState(() => leerBorradorValido(mandanteFijo)?.seleccion || []); // [{tipo, id, nombre, perfilRecursoIds}]
   const [fechaInicio, setFechaInicio] = useState(() => leerBorradorValido(mandanteFijo)?.fechaInicio || hoyISO());
   const [previewRequerimientos, setPreviewRequerimientos] = useState(() => leerBorradorValido(mandanteFijo)?.previewRequerimientos || null);
-  // Documentación del futuro expediente (opcional, paso Empresa): { tipo, etiqueta, url } | null. El
-  // handle local vive en IndexedDB con una clave temporal de esta sesión del asistente.
+  // Carpeta de empresa del futuro expediente (opcional, paso Empresa), dentro de la fuente documental
+  // del Mandante: { tipo, ruta, etiqueta, url, fuenteId, mapeo } | null. Al confirmar se vincula
+  // (find-or-create). El handle local de la subcarpeta vive en IndexedDB con una clave temporal de
+  // esta sesión del asistente. Un borrador con el formato anterior (sin ruta) se descarta.
   const [sesionWizard, setSesionWizard] = useState(() => leerBorradorValido(mandanteFijo)?.sesionWizard || nuevaSesionWizard());
-  const [repositorioWizard, setRepositorioWizard] = useState(() => leerBorradorValido(mandanteFijo)?.repositorioWizard || null);
+  const [repositorioWizard, setRepositorioWizard] = useState(() => {
+    const r = leerBorradorValido(mandanteFijo)?.repositorioWizard || null;
+    return r?.ruta ? r : null;
+  });
   const carpetaWizard = useCarpetaWizard(profile?.uid, sesionWizard);
 
   const [ejecutando, setEjecutando] = useState(false);
@@ -337,16 +343,40 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   // Paso Requerimientos: requisitos pendientes (sin documentación reutilizable) del preview ya calculado.
   const pendientesRequerimientos = previewRequerimientos?.total ? previewRequerimientos.total.total - previewRequerimientos.total.reutilizables : 0;
 
+  const claveVerificacion = empresaSel && repositorioWizard
+    ? [mandanteEfectivo, empresaSel.id, proyectoSel?.id || "", repositorioWizard.ruta || "", repositorioWizard.url || ""].join("|")
+    : null;
+  const [verificacion, setVerificacion] = useState({ clave: null, error: null });
+  useEffect(() => {
+    if (!claveVerificacion) return undefined;
+    let vigente = true;
+    carpetaEmpresaService.verificar({
+      mandanteId: mandanteEfectivo, empresaId: empresaSel.id, proyectoId: proyectoSel?.id || null,
+      ...(repositorioWizard.tipo === "sharepoint" ? { url: repositorioWizard.url } : { ruta: repositorioWizard.ruta }),
+    })
+      .then(() => { if (vigente) setVerificacion({ clave: claveVerificacion, error: null }); })
+      .catch((err) => { if (vigente) setVerificacion({ clave: claveVerificacion, error: err.message || "No se pudo verificar la carpeta." }); });
+    return () => { vigente = false; };
+    // claveVerificacion resume todo lo que se verifica.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveVerificacion]);
+
   // La carpeta vinculada (opcional) debe ser de la Empresa elegida: si no, no se avanza.
   const carpetaNoCoincide = Boolean(empresaSel && repositorioWizard) && !validarCarpetaEmpresa(
     repositorioWizard.tipo === "local" ? repositorioWizard.etiqueta : carpetaDeUrlSharePoint(repositorioWizard.url),
     empresaSel,
   ).valida;
 
+  // La carpeta elegida se verifica en el backend (sin escribir): de la empresa, no vinculada a otro
+  // expediente activo y, con el proyecto ya elegido, de ese proyecto. Mientras siga elegida con
+  // error, el asistente no avanza.
+  const verificandoCarpeta = Boolean(claveVerificacion) && verificacion.clave !== claveVerificacion;
+  const errorCarpeta = claveVerificacion && verificacion.clave === claveVerificacion ? verificacion.error : null;
+
   const puedeContinuar =
     step === 1 ? Boolean(mandanteEfectivo) :
-    step === 2 ? Boolean(empresaSel) && !carpetaNoCoincide :
-    step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica :
+    step === 2 ? Boolean(empresaSel) && !carpetaNoCoincide && !errorCarpeta && !verificandoCarpeta :
+    step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica && !errorCarpeta && !verificandoCarpeta :
     step === 4 ? Boolean(perfilSel) :
     step === 5 ? true :
     step === 6 ? true : false;
@@ -585,10 +615,14 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
       let falloRepositorio = false;
       if (repositorioWizard) {
         try {
-          if (repositorioWizard.tipo === "local") await traspasarCarpetaWizard(profile?.uid, sesionWizard, expedienteId);
-          await repositorioDocumentalService.actualizar(expedienteId, repositorioWizard.tipo === "local"
-            ? { tipo: "local", etiqueta: repositorioWizard.etiqueta, mapeo: repositorioWizard.mapeo }
-            : { tipo: "sharepoint", url: repositorioWizard.url, etiqueta: repositorioWizard.etiqueta, mapeo: repositorioWizard.mapeo });
+          // Carpeta de empresa (find-or-create + validación) y, en ella, la carpeta del personal y la
+          // de maquinarias elegidas en Asignaciones.
+          const carpetaEmpresa = await carpetaEmpresaService.vincular(repositorioWizard.tipo === "sharepoint"
+            ? { expedienteId, url: repositorioWizard.url } : { expedienteId, ruta: repositorioWizard.ruta });
+          const { carpetaPersonas = null, carpetaRecursos = null } = repositorioWizard.mapeo || {};
+          if (carpetaPersonas || carpetaRecursos) {
+            await carpetaEmpresaService.actualizar(carpetaEmpresa.id, { carpetaPersonas, carpetaRecursos });
+          }
           // Carpeta de cada persona/maquinaria elegida desde la carpeta (en su participación).
           for (const s of seleccion.filter((x) => x.carpetaRelativa)) {
             await repositorioDocumentalService.asignarCarpetaSujeto(expedienteId, {
@@ -676,8 +710,10 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             empresa={empresaSel}
             usuarioId={profile?.uid}
             mandanteId={mandanteEfectivo}
-            puedeConfigurarBase={["superadmin", "mandante_admin"].includes(profile?.rol)}
+            puedeConfigurarBase={profile?.rol === "superadmin"}
             onCambiar={setRepositorioWizard}
+            errorCarpeta={errorCarpeta}
+            verificando={verificandoCarpeta}
           />
         )}
         {step === 3 && (
@@ -690,6 +726,12 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             onCambiarEmpresa={progreso?.participacionId ? undefined : () => setStep(2)}
             avisoPerfil={perfilSugerido}
           />
+        )}
+        {step === 3 && errorCarpeta && (
+          <p role="alert" className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+            Carpeta de la empresa: {errorCarpeta}{" "}
+            <button type="button" onClick={() => setStep(2)} className="font-bold underline">Cambiarla en el paso Empresa</button>
+          </p>
         )}
         {step === 4 && (
           <PasoPerfil
