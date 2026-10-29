@@ -13,6 +13,7 @@ const usuarioRepository = require("../repositories/usuarioRepository");
 const expedienteService = require("./expedienteService");
 const evaluacionService = require("./evaluacionService");
 const requerimientoReglaIAService = require("./requerimientoReglaIAService");
+const {ORIGENES} = require("./registroConsumoIAService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {aFecha, hoySantiago} = require("../utils/vencimientos");
 const AppError = require("../utils/AppError");
@@ -187,8 +188,13 @@ class RevisionRequerimientoIAService {
     };
     // Si el modelo responde mal tras reintentar, el costo queda registrado
     // en una revisión descartada con el error.
+    const consumo = (registro, ejecucion) =>
+      requerimientoReglaIAService.registrarConsumo({
+        origen: ORIGENES.REVISION_REQUERIMIENTO,
+        coleccion: revisionRepository.COLLECTION, registro, ejecucion,
+        actor});
     const r = await requerimientoReglaIAService.ejecutarReglas(req, piezas,
-        contexto, (f) => revisionRepository.create({...base,
+        contexto, async (f) => consumo(await revisionRepository.create({...base,
           tipoDocumentalId: f.tipo.id, reglasSnapshot: f.snapshot,
           camposExtraidos: null, resultadosReglas: [],
           resultadoPropuesto: null, observacionesPropuestas: null,
@@ -196,7 +202,7 @@ class RevisionRequerimientoIAService {
           tokensEntrada: f.tokensEntrada, tokensSalida: f.tokensSalida,
           costoEstimado: f.costoEstimado, estado: "descartada",
           error: f.mensaje, resueltaAt: FieldValue.serverTimestamp(),
-          resueltaBy: actor.uid}));
+          resueltaBy: actor.uid}), f));
     const propuesta = propuestaEvaluacion({
       resultadoPropuesto: r.resultadoPropuesto,
       resultadosReglas: r.resultadosReglas, camposExtraidos: r.camposExtraidos,
@@ -219,6 +225,7 @@ class RevisionRequerimientoIAService {
       tokensSalida: r.tokensSalida, costoEstimado: r.costoEstimado,
       intentos: r.intentos, latenciaMs: r.latenciaMs, estado: "propuesta",
       error: null});
+    await consumo(revision, r);
     await bitacoraLogger.registrarEvento({
       mandanteId: base.mandanteId, entidad: ENTIDAD_BITACORA,
       entidadId: revision.id, accion: "creada", actor,

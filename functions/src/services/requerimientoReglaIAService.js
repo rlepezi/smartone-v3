@@ -12,6 +12,7 @@ const usuarioRepository = require("../repositories/usuarioRepository");
 const aiConfigService = require("./aiConfigService");
 const modeloReglasIAService = require("./modeloReglasIAService");
 const costoService = require("./costoService");
+const registroConsumoIAService = require("./registroConsumoIAService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {aFecha} = require("../utils/vencimientos");
 const AppError = require("../utils/AppError");
@@ -695,10 +696,11 @@ class RequerimientoReglaIAService {
    * @param {Array<Object>} piezas Archivos (_piezas).
    * @param {Object} contexto Contexto normalizado.
    * @param {Function} alFallar ({snapshot, tipo, modelo, tokensEntrada,
-   *     tokensSalida, costoEstimado, mensaje}) => Promise.
+   *     tokensSalida, costoEstimado, precio, mensaje}) => Promise.
    * @return {Promise<Object>} {tipo, snapshot, modelo, umbralConfianza,
    *     camposExtraidos, resultadosReglas, resultadoPropuesto, tokensEntrada,
-   *     tokensSalida, costoEstimado, intentos, latenciaMs}.
+   *     tokensSalida, costoEstimado, precio, intentos, latenciaMs}. `precio`:
+   *     el vigente del modelo, para el registro de consumo.
    */
   async ejecutarReglas(req, piezas, contexto, alFallar) {
     const tipo = await this._tipo(req);
@@ -732,6 +734,7 @@ class RequerimientoReglaIAService {
         const {tokensEntrada, tokensSalida} = error.tokens;
         await alFallar({snapshot, tipo, modelo, tokensEntrada, tokensSalida,
           costoEstimado: costo(tokensEntrada, tokensSalida),
+          precio: costoService.precioDe(params.preciosPorModelo, modelo),
           mensaje: error.message});
       }
       throw error;
@@ -746,8 +749,34 @@ class RequerimientoReglaIAService {
       tokensEntrada: respuesta.tokensEntrada,
       tokensSalida: respuesta.tokensSalida,
       costoEstimado: costo(respuesta.tokensEntrada, respuesta.tokensSalida),
+      precio: costoService.precioDe(params.preciosPorModelo, modelo),
       intentos: respuesta.intentos, latenciaMs: respuesta.latenciaMs,
     };
+  }
+
+  /**
+   * Registra en consumosIA una llamada de ejecutarReglas ("Probar reglas" o
+   * "Revisar con IA"), asociada al registro que dejó (prueba o revisión).
+   * @param {Object} entrada Datos.
+   * @param {string} entrada.origen Origen (registroConsumoIAService.ORIGENES).
+   * @param {string} entrada.coleccion Colección del registro de origen.
+   * @param {Object} entrada.registro Registro creado (prueba o revisión).
+   * @param {Object} entrada.ejecucion Resultado de ejecutarReglas o datos de
+   *     alFallar ({tipo, modelo, tokensEntrada, tokensSalida, precio}).
+   * @param {Object} entrada.actor Usuario autenticado.
+   * @return {Promise<void>}
+   */
+  async registrarConsumo({origen, coleccion, registro, ejecucion, actor}) {
+    await registroConsumoIAService.registrar({
+      mandanteId: registro.mandanteId || null, origen,
+      expedienteId: registro.expedienteId || null,
+      requerimientoId: registro.requerimientoId || null,
+      tipoDocumentalId: ejecucion.tipo?.id || null,
+      tipoDocumentalNombre: ejecucion.tipo?.nombre || null,
+      modelo: ejecucion.modelo, tokensEntrada: ejecucion.tokensEntrada,
+      tokensSalida: ejecucion.tokensSalida, precio: ejecucion.precio,
+      createdBy: actor.uid, fuente: {coleccion, id: registro.id},
+    });
   }
 
   /**
@@ -779,13 +808,18 @@ class RequerimientoReglaIAService {
     };
     // Una respuesta inválida igual consumió tokens: queda registrada (con su
     // costo) pero no cuenta como prueba para habilitar.
-    const r = await this.ejecutarReglas(req, piezas, contexto, (f) =>
-      pruebaReglaIARepository.create({...base, tipoDocumentalId: f.tipo.id,
+    const consumo = (registro, ejecucion) => this.registrarConsumo({
+      origen: registroConsumoIAService.ORIGENES.PRUEBA_REGLAS,
+      coleccion: pruebaReglaIARepository.COLLECTION, registro, ejecucion,
+      actor});
+    const r = await this.ejecutarReglas(req, piezas, contexto, async (f) =>
+      consumo(await pruebaReglaIARepository.create({...base,
+        tipoDocumentalId: f.tipo.id,
         tipoDocumentalNombre: f.tipo.nombre, reglasSnapshot: f.snapshot,
         modelo: f.modelo, error: f.mensaje, camposExtraidos: null,
         resultadosReglas: [], resultadoPropuesto: null,
         tokensEntrada: f.tokensEntrada, tokensSalida: f.tokensSalida,
-        costoEstimado: f.costoEstimado}));
+        costoEstimado: f.costoEstimado}), f));
     const prueba = await pruebaReglaIARepository.create({...base,
       tipoDocumentalId: r.tipo.id, tipoDocumentalNombre: r.tipo.nombre,
       reglasSnapshot: r.snapshot, modelo: r.modelo,
@@ -794,6 +828,7 @@ class RequerimientoReglaIAService {
       resultadoPropuesto: r.resultadoPropuesto, tokensEntrada: r.tokensEntrada,
       tokensSalida: r.tokensSalida, costoEstimado: r.costoEstimado,
       intentos: r.intentos, latenciaMs: r.latenciaMs});
+    await consumo(prueba, r);
     await bitacoraLogger.registrarEvento({
       mandanteId: req.mandanteId || null, entidad: "requerimiento",
       entidadId: id, accion: "prueba_reglas_ia", actor,

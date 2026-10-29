@@ -1,27 +1,40 @@
-const procesamientoIARepository =
-    require("../repositories/procesamientoIARepository");
+const consumoIARepository = require("../repositories/consumoIARepository");
 const sesionRevisionRepository =
     require("../repositories/sesionRevisionRepository");
 const mandanteRepository = require("../repositories/mandanteRepository");
 const aiConfigService = require("./aiConfigService");
-const {fechaSantiago} = require("../utils/fechaSantiago");
+const {ORIGENES} = require("./registroConsumoIAService");
+const {fechaSantiago, inicioDiaSantiago} = require("../utils/fechaSantiago");
 const {getMandanteDisplayName} = require("../utils/mandanteDisplay");
 const AppError = require("../utils/AppError");
 
 const MESES = 6;
 const ULTIMAS_SESIONES = 10;
-const MS_DIA = 24 * 60 * 60 * 1000;
-const NOTA_LIMITE_GLOBAL = "El límite de gasto es global y lo administra " +
-    "el superadmin.";
+// Rango máximo de un resumen, en días.
+const MAX_DIAS_RANGO = 731;
+// Valor de `mandanteId` para filtrar los consumos sin Mandante.
+const MANDANTE_INTERNO = "interno";
+const RE_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Meses AAAA-MM desde hace (n - 1) meses hasta el actual.
- * @param {string} mesActual AAAA-MM.
+ * Suma días a una fecha AAAA-MM-DD.
+ * @param {string} iso Fecha.
+ * @param {number} dias Días (puede ser negativo).
+ * @return {string} Fecha AAAA-MM-DD.
+ */
+function sumarDias(iso, dias) {
+  const [a, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(a, m - 1, d + dias)).toISOString().slice(0, 10);
+}
+
+/**
+ * Meses AAAA-MM desde hace (n - 1) meses hasta `mesFinal`.
+ * @param {string} mesFinal AAAA-MM.
  * @param {number} n Cantidad.
  * @return {string[]} Meses en orden.
  */
-function ultimosMeses(mesActual, n) {
-  const [anio, mes] = mesActual.split("-").map(Number);
+function ultimosMeses(mesFinal, n) {
+  const [anio, mes] = mesFinal.split("-").map(Number);
   return Array.from({length: n}, (_, i) => {
     const d = new Date(Date.UTC(anio, mes - 1 - (n - 1 - i), 1));
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1)
@@ -29,73 +42,191 @@ function ultimosMeses(mesActual, n) {
   });
 }
 
-const redondear = (v) => Math.round(v * 10000) / 10000;
+/**
+ * Primer día del mes siguiente a un mes AAAA-MM.
+ * @param {string} mes AAAA-MM.
+ * @return {string} AAAA-MM-01.
+ */
+function inicioMesSiguiente(mes) {
+  // Del día 28 de cualquier mes, 4 días después siempre es el mes siguiente.
+  return `${sumarDias(`${mes}-28`, 4).slice(0, 7)}-01`;
+}
+
+const redondear = (v) => Math.round(v * 1000000) / 1000000;
 
 /**
- * Pestaña Consumo de Configuración IA: gasto del mes, últimos 6 meses, por
- * tipo documental, por Mandante (superadmin) y últimas sesiones, en una sola
- * respuesta. superadmin ve todo (o un Mandante); mandante_admin solo lo suyo
- * y sin el límite (es global).
+ * Totales de un conjunto de consumos. "Documentos" son las llamadas que
+ * revisan un documento (todas salvo "Probar conexión").
+ * @param {Object[]} lista Consumos.
+ * @return {Object} {llamadas, documentos, tokensEntrada, tokensSalida,
+ *     costoUsd, costoPromedioDocumentoUsd}.
+ */
+function totales(lista) {
+  const t = {llamadas: 0, documentos: 0, tokensEntrada: 0, tokensSalida: 0,
+    costoUsd: 0};
+  lista.forEach((c) => {
+    t.llamadas++;
+    if (c.origen !== ORIGENES.PROBAR_CONEXION) t.documentos++;
+    t.tokensEntrada += c.tokensEntrada || 0;
+    t.tokensSalida += c.tokensSalida || 0;
+    t.costoUsd += c.costoUsd || 0;
+  });
+  return {...t, costoUsd: redondear(t.costoUsd),
+    costoPromedioDocumentoUsd: t.documentos ?
+      redondear(t.costoUsd / t.documentos) : 0};
+}
+
+/**
+ * Agrupa consumos por una clave y totaliza cada grupo, de mayor a menor
+ * costo.
+ * @param {Object[]} lista Consumos.
+ * @param {Function} clave (consumo) => clave del grupo (null permitido).
+ * @return {Array<{clave: *, items: Object[]}>} Grupos con sus totales.
+ */
+function agrupar(lista, clave) {
+  const mapa = new Map();
+  lista.forEach((c) => {
+    const k = clave(c) ?? null;
+    if (!mapa.has(k)) mapa.set(k, []);
+    mapa.get(k).push(c);
+  });
+  return [...mapa.entries()]
+      .map(([k, items]) => ({clave: k, ejemplo: items[0], ...totales(items)}))
+      .sort((a, b) => b.costoUsd - a.costoUsd);
+}
+
+const pct = (parte, total) =>
+  (total > 0 ? Math.round((parte / total) * 1000) / 10 : 0);
+
+const mesDe = (c) => (c.createdAt?.toDate ?
+  fechaSantiago(c.createdAt.toDate()).slice(0, 7) : null);
+
+/**
+ * Consumo de IA para Configuración → Inteligencia Artificial (solo
+ * superadmin: el gasto de IA es información interna de SmartApplication).
+ * Lee el registro consumosIA, con el costo congelado en cada llamada.
  */
 class ConsumoIAService {
   /**
-   * Consumo agregado.
-   * @param {{mandanteId: (string|undefined)}} filtros Filtros.
+   * Exige superadmin.
    * @param {Object} actor Usuario autenticado.
-   * @return {Promise<Object>} Consumo.
+   * @return {void}
    */
-  async obtener({mandanteId} = {}, actor) {
-    const esSuperadmin = actor.rol === "superadmin";
-    if (!esSuperadmin && actor.rol !== "mandante_admin") {
+  _exigirSuperadmin(actor) {
+    if (actor?.rol !== "superadmin") {
       throw new AppError(403, "No tiene acceso al consumo de IA.");
     }
-    const mandante = esSuperadmin ? (mandanteId || null) : actor.mandanteId;
-    const mesActual = fechaSantiago().slice(0, 7);
-    const meses = ultimosMeses(mesActual, MESES);
-    const desde = new Date(Date.parse(`${meses[0]}-01T00:00:00Z`) - MS_DIA);
+  }
 
-    const [items, sesiones] = await Promise.all([
-      procesamientoIARepository.listConsumoDesde(mandante, desde),
-      sesionRevisionRepository.list(mandante, ULTIMAS_SESIONES),
+  /**
+   * Valida y completa el período (AAAA-MM-DD, en hora de Chile). Sin
+   * fechas: el mes actual hasta hoy.
+   * @param {?string} desde Inicio.
+   * @param {?string} hasta Fin (inclusive).
+   * @return {{desde: string, hasta: string}} Período.
+   */
+  _periodo(desde, hasta) {
+    const hoy = fechaSantiago();
+    const d = desde || `${hoy.slice(0, 7)}-01`;
+    const h = hasta || hoy;
+    const real = (iso) => RE_ISO.test(iso) && sumarDias(iso, 0) === iso;
+    if (!real(d) || !real(h)) {
+      throw new AppError(400, "Las fechas del período no son válidas.");
+    }
+    if (d > h) {
+      throw new AppError(400, "La fecha de inicio es posterior a la de fin.");
+    }
+    if (Date.parse(h) - Date.parse(d) > MAX_DIAS_RANGO * 86400000) {
+      throw new AppError(400, "El período no puede superar los 24 meses.");
+    }
+    return {desde: d, hasta: h};
+  }
+
+  /**
+   * Resumen de consumo del período: total, por Mandante y, si se pide un
+   * Mandante, su desglose por origen, por tipo documental y por mes
+   * (últimos 6 meses hasta el mes de `hasta`).
+   * @param {{desde: ?string, hasta: ?string, mandanteId: ?string}} filtros
+   *     Período (AAAA-MM-DD) y Mandante ("interno": sin Mandante).
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Resumen.
+   */
+  async resumen({desde, hasta, mandanteId} = {}, actor) {
+    this._exigirSuperadmin(actor);
+    const periodo = this._periodo(desde, hasta);
+    // undefined: todos; null: los sin Mandante; string: ese Mandante.
+    let filtro;
+    if (mandanteId) {
+      filtro = mandanteId === MANDANTE_INTERNO ? null : String(mandanteId);
+    }
+    const items = await consumoIARepository.listEntre(
+        inicioDiaSantiago(periodo.desde),
+        inicioDiaSantiago(sumarDias(periodo.hasta, 1)), filtro);
+
+    const total = totales(items);
+    const grupos = agrupar(items, (c) => c.mandanteId);
+    const mandantes = new Map((await mandanteRepository.getByIds(
+        grupos.map((g) => g.clave))).map((m) => [m.id, m]));
+    const porMandante = grupos.map(({clave, ejemplo, ...t}) => ({
+      mandanteId: clave,
+      mandanteNombre: clave ?
+        getMandanteDisplayName(mandantes.get(clave)) || clave : null,
+      logoUrl: mandantes.get(clave)?.logoUrl || null,
+      ...t, porcentaje: pct(t.costoUsd, total.costoUsd),
+    })).sort((a, b) => (a.mandanteId === null) - (b.mandanteId === null) ||
+        b.costoUsd - a.costoUsd);
+
+    const respuesta = {...periodo, mandanteId: mandanteId || null, total,
+      porMandante};
+    if (filtro === undefined) return respuesta;
+
+    const quitarEjemplo = ({ejemplo, clave, ...t}) => t;
+    const porOrigen = agrupar(items, (c) => c.origen).map((g) => ({
+      origen: g.clave, ...quitarEjemplo(g),
+      porcentaje: pct(g.costoUsd, total.costoUsd)}));
+    const porTipoDocumental = agrupar(items, (c) =>
+      c.tipoDocumentalId || c.tipoDocumentalNombre).map((g) => ({
+      tipoDocumentalId: g.ejemplo.tipoDocumentalId || null,
+      tipoDocumentalNombre: g.ejemplo.tipoDocumentalNombre || null,
+      ...quitarEjemplo(g), porcentaje: pct(g.costoUsd, total.costoUsd)}));
+
+    const meses = ultimosMeses(periodo.hasta.slice(0, 7), MESES);
+    const historico = await consumoIARepository.listEntre(
+        inicioDiaSantiago(`${meses[0]}-01`),
+        inicioDiaSantiago(inicioMesSiguiente(meses[MESES - 1])), filtro);
+    const porMes = meses.map((mes) => {
+      const t = totales(historico.filter((c) => mesDe(c) === mes));
+      return {mes, documentos: t.documentos, llamadas: t.llamadas,
+        costoUsd: t.costoUsd};
+    });
+
+    return {...respuesta,
+      detalle: {porOrigen, porTipoDocumental, porMes}};
+  }
+
+  /**
+   * Gasto global del mes contra el límite y las últimas sesiones de
+   * revisión de carpetas (pestaña Consumo).
+   * @param {{mandanteId: (string|undefined)}} filtros Mandante de las
+   *     sesiones (opcional).
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} {mes, gastoMesUsd, limite, ultimasSesiones}.
+   */
+  async obtener({mandanteId} = {}, actor) {
+    this._exigirSuperadmin(actor);
+    const [sesiones, {limiteGastoMensualUsd}, global] = await Promise.all([
+      sesionRevisionRepository.list(mandanteId || null, ULTIMAS_SESIONES),
+      aiConfigService.obtenerParametros(), aiConfigService.gastoMes(),
     ]);
-    const conMes = items.map((i) => ({
-      ...i, mes: i.createdAt?.toDate ?
-        fechaSantiago(i.createdAt.toDate()).slice(0, 7) : null,
-    })).filter((i) => meses.includes(i.mes));
-    const delMes = conMes.filter((i) => i.mes === mesActual);
-
-    const porMes = meses.map((mes) => ({
-      mes,
-      gastoUsd: redondear(conMes.filter((i) => i.mes === mes)
-          .reduce((s, i) => s + (i.costoUsd || 0), 0)),
-    }));
-    const agrupar = (lista, clave) => {
-      const mapa = new Map();
-      lista.forEach((i) => {
-        const k = i[clave] || "sin_tipo";
-        const g = mapa.get(k) || {clave: k, documentos: 0, gastoUsd: 0};
-        g.documentos++;
-        g.gastoUsd += i.costoUsd || 0;
-        mapa.set(k, g);
-      });
-      return [...mapa.values()]
-          .map((g) => ({...g, gastoUsd: redondear(g.gastoUsd)}))
-          .sort((a, b) => b.gastoUsd - a.gastoUsd);
-    };
-
-    const mandanteIds = [
-      ...delMes.map((i) => i.mandanteId), ...sesiones.map((s) => s.mandanteId),
-    ];
-    const nombres = new Map((await mandanteRepository.getByIds(mandanteIds))
+    const nombres = new Map((await mandanteRepository.getByIds(
+        sesiones.map((s) => s.mandanteId)))
         .map((m) => [m.id, getMandanteDisplayName(m) || m.id]));
-
-    const respuesta = {
-      mes: mesActual,
-      gastoMesUsd: redondear(delMes.reduce((s, i) => s + (i.costoUsd || 0),
-          0)),
-      porMes,
-      porTipo: agrupar(delMes, "tipoDetectado")
-          .map(({clave, ...g}) => ({tipo: clave, ...g})),
+    return {
+      mes: global.mes,
+      gastoMesUsd: global.gastoUsd,
+      // El límite es global: se compara con el gasto de todos los Mandantes.
+      limite: {limiteGastoMensualUsd: limiteGastoMensualUsd ?? null,
+        gastoTotalMesUsd: global.gastoUsd},
       ultimasSesiones: sesiones.map((s) => ({
         id: s.id, nombre: s.nombre, createdAt: s.createdAt,
         mandanteId: s.mandanteId,
@@ -104,25 +235,10 @@ class ConsumoIAService {
         costoRealUsd: s.costoRealUsd || 0,
       })),
     };
-    if (!esSuperadmin) {
-      return {...respuesta, limite: null, notaLimite: NOTA_LIMITE_GLOBAL};
-    }
-    const [{limiteGastoMensualUsd}, global] = await Promise.all([
-      aiConfigService.obtenerParametros(), aiConfigService.gastoMes(),
-    ]);
-    return {
-      ...respuesta,
-      porMandante: agrupar(delMes, "mandanteId").map(({clave, ...g}) => ({
-        mandanteId: clave, mandanteNombre: nombres.get(clave) || clave, ...g,
-      })),
-      // El límite es global: se compara con el gasto de todos los Mandantes.
-      limite: {
-        limiteGastoMensualUsd: limiteGastoMensualUsd ?? null,
-        gastoTotalMesUsd: global.gastoUsd,
-      },
-    };
   }
 }
 
 module.exports = new ConsumoIAService();
 module.exports.ultimosMeses = ultimosMeses;
+module.exports.totales = totales;
+module.exports.MANDANTE_INTERNO = MANDANTE_INTERNO;

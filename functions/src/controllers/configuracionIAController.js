@@ -1,4 +1,5 @@
 const aiConfigService = require("../services/aiConfigService");
+const consumoIAService = require("../services/consumoIAService");
 
 /**
  * Controlador HTTP de Configuración → Inteligencia Artificial (solo
@@ -53,6 +54,24 @@ class ConfiguracionIAController {
   }
 
   /**
+   * Resumen de consumo de IA por Mandante del período.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async resumenConsumo(req, res, next) {
+    try {
+      const {desde, hasta, mandanteId} = req.query;
+      const data = await consumoIAService.resumen({desde, hasta, mandanteId},
+          req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Prueba la conexión con la API key vigente.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
@@ -61,7 +80,8 @@ class ConfiguracionIAController {
    */
   async probar(req, res, next) {
     try {
-      res.status(200).json({data: await aiConfigService.probarConexion()});
+      res.status(200).json({data: await aiConfigService.probarConexion(
+          req.user)});
     } catch (error) {
       next(error);
     }

@@ -30,8 +30,8 @@ router.post("/sesiones/:id/finalizar", operan, controller.finalizar);
 router.post("/sesiones/:id/cancelar", operan, controller.cancelar);
 router.post("/resultados/:id/resolver", operan, controller.resolver);
 router.get("/tipos-documentales", leen, controller.listarTipos);
-// Consumo: superadmin y mandante_admin (solo su Mandante).
-router.get("/consumo", requireRole(["superadmin", "mandante_admin"]),
-    controller.consumo);
+// Consumo (límite y últimas sesiones): solo superadmin. El gasto de IA es
+// información interna de SmartApplication.
+router.get("/consumo", requireRole(["superadmin"]), controller.consumo);
 
 module.exports = router;

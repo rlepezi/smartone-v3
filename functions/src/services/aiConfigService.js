@@ -2,20 +2,16 @@ const {AI_CONFIG_ENCRYPTION_KEY} = require("../utils/secretosIA");
 const Anthropic = require("@anthropic-ai/sdk");
 const configuracionIARepository =
     require("../repositories/configuracionIARepository");
-const revisionRequerimientoIARepository =
-    require("../repositories/revisionRequerimientoIARepository");
-const pruebaReglaIARepository =
-    require("../repositories/pruebaReglaIARepository");
+const consumoIARepository = require("../repositories/consumoIARepository");
+const registroConsumoIAService = require("./registroConsumoIAService");
 const {UMBRAL_CONFIANZA_POR_DEFECTO} = require("../reglasIA/resultado");
-const procesamientoIARepository =
-    require("../repositories/procesamientoIARepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {fechaSantiago} = require("../utils/fechaSantiago");
 const {traducirErrorIA} = require("../utils/erroresIA");
 const {esfuerzoPara} = require("../utils/modelosIA");
 const {claveDesdeBase64, cifrar, descifrar} = require("../utils/cifrado");
-const {faltanPrecios} = require("./costoService");
+const {faltanPrecios, precioDe} = require("./costoService");
 const AppError = require("../utils/AppError");
 
 const PROVEEDOR = "anthropic";
@@ -328,23 +324,34 @@ class AIConfigService {
 
   /**
    * Prueba la conexión con la key vigente: una petición mínima (máx. 10
-   * tokens de salida) al modelo por defecto.
+   * tokens de salida) al modelo por defecto. Una respuesta correcta queda
+   * en consumosIA como consumo interno (sin Mandante).
+   * @param {Object} actor Usuario autenticado.
    * @return {Promise<{ok: boolean, modelo: string, mensaje: string}>}
    *     Resultado.
    */
-  async probarConexion() {
+  async probarConexion(actor) {
     const apiKey = await this.obtenerApiKey();
-    const {modeloPorDefecto: modelo} = await this.obtenerParametros();
+    const {modeloPorDefecto: modelo, preciosPorModelo} =
+        await this.obtenerParametros();
     if (!modelo) {
       return {ok: false, modelo: null,
         mensaje: "Configura el modelo por defecto y sus precios."};
     }
     const cliente = new Anthropic({apiKey, maxRetries: 0, timeout: 30000});
     try {
-      await cliente.messages.create({
+      const respuesta = await cliente.messages.create({
         model: modelo, max_tokens: 10,
         messages: [{role: "user", content: "Responde solo: OK"}],
         output_config: esfuerzoPara(modelo),
+      });
+      await registroConsumoIAService.registrar({
+        mandanteId: null,
+        origen: registroConsumoIAService.ORIGENES.PROBAR_CONEXION,
+        modelo, tokensEntrada: respuesta.usage?.input_tokens,
+        tokensSalida: respuesta.usage?.output_tokens,
+        precio: precioDe(preciosPorModelo, modelo),
+        createdBy: actor?.uid || null,
       });
       return {ok: true, modelo, mensaje: `Conexión correcta con ${modelo}.`};
     } catch (error) {
@@ -361,16 +368,9 @@ class AIConfigService {
     // Un día de margen hacia atrás (zona horaria); el corte exacto es por
     // la fecha en Santiago.
     const desde = new Date(Date.parse(`${mes}-01T00:00:00Z`) - MS_DIA);
-    // Procesamientos de carpetas + pruebas de reglas ("Probar reglas") +
-    // revisiones por requerimiento ("Revisar con IA").
-    const [procesamientos, pruebas, revisiones] = await Promise.all([
-      procesamientoIARepository.listCostosDesde(desde),
-      pruebaReglaIARepository.listCostosDesde(desde),
-      revisionRequerimientoIARepository.listCostosDesde(desde),
-    ]);
-    const costos = [...procesamientos,
-      ...[...pruebas, ...revisiones].map((p) => ({createdAt: p.createdAt,
-        costoUsd: p.costoEstimado}))];
+    // Todas las llamadas a la IA (consumosIA): revisión de carpetas, "Probar
+    // reglas", "Revisar con IA" y "Probar conexión".
+    const costos = await consumoIARepository.listCostosDesde(desde);
     const gasto = costos
         .filter((c) => c.createdAt &&
             fechaSantiago(c.createdAt.toDate()).startsWith(mes))

@@ -17,7 +17,8 @@ const PESTANAS = [
   { key: "estructura", label: "Estructura de carpetas", roles: ["superadmin", "mandante_admin"] },
   { key: "tipos", label: "Tipos documentales", roles: ["superadmin"] },
   { key: "reglas", label: "Reglas de revisión", roles: ["superadmin"] },
-  { key: "consumo", label: "Consumo", roles: ["superadmin", "mandante_admin"] },
+  // El gasto de IA es información interna de SmartApplication: solo superadmin.
+  { key: "consumo", label: "Consumo", roles: ["superadmin"] },
 ];
 
 // Configuración → Inteligencia Artificial. La pestaña activa vive en la URL (?tab=), para enlazar
@@ -32,7 +33,6 @@ export const ConfiguracionIAPage = () => {
   }
   const pedida = params.get("tab");
   const activa = visibles.some((p) => p.key === pedida) ? pedida : visibles[0].key;
-  const esSuperadmin = profile?.rol === "superadmin";
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -52,7 +52,7 @@ export const ConfiguracionIAPage = () => {
       {activa === "estructura" && <TabEstructura />}
       {activa === "tipos" && <TabTipos />}
       {activa === "reglas" && <TabReglas />}
-      {activa === "consumo" && <TabConsumo esSuperadmin={esSuperadmin} />}
+      {activa === "consumo" && <TabConsumo />}
     </div>
   );
 };

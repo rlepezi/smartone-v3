@@ -3,7 +3,11 @@
 jest.mock("firebase-admin/firestore", () => ({
   FieldValue: {serverTimestamp: () => "AHORA"},
 }));
+jest.mock("../src/repositories/consumoIARepository", () => ({
+  crear: jest.fn().mockResolvedValue("consumo"),
+}));
 jest.mock("../src/repositories/revisionRequerimientoIARepository", () => ({
+  COLLECTION: "revisionesRequerimientoIA",
   getById: jest.fn(), create: jest.fn(), update: jest.fn(),
   listByExpediente: jest.fn(),
 }));
@@ -44,6 +48,7 @@ jest.mock("../src/services/requerimientoReglaIAService", () => ({
     rutaRelativa: p.rutaRelativa || null, tamanoBytes: p.tamanoBytes,
     ultimaModificacion: null}))),
   ejecutarReglas: jest.fn(),
+  registrarConsumo: jest.fn().mockResolvedValue(undefined),
 }));
 
 const revisionRepository =
@@ -107,6 +112,12 @@ describe("revisar", () => {
         expect(revisionRepository.update).toHaveBeenCalledWith("rv1",
             expect.objectContaining({estado: "descartada",
               motivoDescarte: "reemplazada"}));
+        // El consumo de IA queda registrado con el Mandante del expediente.
+        expect(requerimientoReglaIAService.registrarConsumo)
+            .toHaveBeenCalledWith(expect.objectContaining({
+              origen: "revision_requerimiento",
+              coleccion: "revisionesRequerimientoIA",
+              actor: EVALUADOR}));
         expect(r).toMatchObject({estado: "propuesta",
           archivo: {nombre: "anverso.jpg + reverso.jpg"},
           propuestaEvaluacion: {resultado: "cumple",

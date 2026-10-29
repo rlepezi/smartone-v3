@@ -3,6 +3,9 @@
 jest.mock("firebase-admin/firestore", () => ({
   FieldValue: {serverTimestamp: () => "AHORA"},
 }));
+jest.mock("../src/repositories/consumoIARepository", () => ({
+  crear: jest.fn().mockResolvedValue("consumo"),
+}));
 jest.mock("../src/repositories/requerimientoRepository", () => ({
   getById: jest.fn(), update: jest.fn(), getByIds: jest.fn(),
   listActivosResumenIA: jest.fn(),

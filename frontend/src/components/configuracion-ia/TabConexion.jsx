@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle, BrainCircuit, CheckCircle2, ExternalLink, KeyRound, Plus, Trash2, XCircle } from "lucide-react";
 import { configuracionIAService } from "../../services/configuracionIAService";
 import { ErrorBanner } from "../shared/ErrorBanner";
@@ -22,6 +23,8 @@ const precioValido = (valor) => Number(String(valor).replace(",", ".")) > 0;
 export const TabConexion = () => {
   const [config, setConfig] = useState(null);
   const [gasto, setGasto] = useState(null);
+  // 3 Mandantes con más gasto en el mes (null mientras carga o si falla: es solo informativo).
+  const [topMandantes, setTopMandantes] = useState(null);
   const [error, setError] = useState(null);
   const [aviso, setAviso] = useState(null);
   const [apiKey, setApiKey] = useState("");
@@ -54,6 +57,11 @@ export const TabConexion = () => {
         setGasto(gastoMes);
       })
       .catch((err) => { if (vigente) setError(err.message || "No se pudo cargar la configuración."); });
+    configuracionIAService.resumenConsumo()
+      .then((r) => {
+        if (vigente) setTopMandantes(r.porMandante.filter((m) => m.mandanteId && m.costoUsd > 0).slice(0, 3));
+      })
+      .catch(() => {});
     return () => { vigente = false; };
   }, []);
 
@@ -299,13 +307,33 @@ export const TabConexion = () => {
         </form>
       </Tarjeta>
 
-      <div className="bg-white px-6 py-4 rounded-2xl border border-slate-100 shadow-card flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-carbon-dark">
-          Gasto del mes actual: <span className="font-black">{gasto ? formatUsd(gasto.gastoUsd) : "…"}</span>
-        </p>
-        {config.limiteGastoMensualUsd !== null && config.limiteGastoMensualUsd !== undefined && (
-          <p className="text-xs text-slate-500">Límite: {formatUsd(config.limiteGastoMensualUsd)}</p>
-        )}
+      <div className="bg-white px-6 py-4 rounded-2xl border border-slate-100 shadow-card space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-carbon-dark">
+            Gasto del mes actual: <span className="font-black">{gasto ? formatUsd(gasto.gastoUsd) : "…"}</span>
+          </p>
+          {config.limiteGastoMensualUsd !== null && config.limiteGastoMensualUsd !== undefined && (
+            <p className="text-xs text-slate-500">Límite: {formatUsd(config.limiteGastoMensualUsd)}</p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+          <p className="text-xs text-slate-500">
+            {topMandantes === null ? "Mayor gasto del mes: …" : topMandantes.length === 0
+              ? "Sin gasto de Mandantes este mes."
+              : (
+                <>
+                  Mayor gasto del mes:{" "}
+                  {topMandantes.map((m, i) => (
+                    <span key={m.mandanteId}>
+                      {i > 0 && " · "}
+                      <span className="font-semibold text-carbon-dark">{m.mandanteNombre}</span> {formatUsd(m.costoUsd, 4)}
+                    </span>
+                  ))}
+                </>
+              )}
+          </p>
+          <Link to="/configuracion/ia?tab=consumo" className="text-xs font-bold text-primary hover:text-primary-dark">Ver detalle</Link>
+        </div>
       </div>
 
       {confirmarDesactivar && (

@@ -7,6 +7,9 @@ const tipoDocumentalRepository =
 const extraccionIAService = require("./extraccionIAService");
 const aiConfigService = require("./aiConfigService");
 const costoService = require("./costoService");
+const registroConsumoIAService = require("./registroConsumoIAService");
+
+const {ORIGENES} = registroConsumoIAService;
 
 const {ErrorExtraccion} = extraccionIAService;
 const TIPOS_NORMALIZADOS = ["CEDULA_CL", "LICENCIA_CL"];
@@ -32,6 +35,34 @@ class ProcesamientoService {
     if (!tipo) return;
     await tipoDocumentalRepository.incrementarMetricas(tipo.id, {
       procesados: 1, costoTotalUsd: costoUsd,
+    });
+  }
+
+  /**
+   * Registra en consumosIA la llamada a la IA de un procesamiento (no los
+   * reutilizados: esos no llaman a la IA).
+   * @param {Object} sesion Sesión.
+   * @param {Object} procesamiento Procesamiento creado.
+   * @param {Object} preciosPorModelo Precios vigentes.
+   * @return {Promise<void>}
+   */
+  async _registrarConsumo(sesion, procesamiento, preciosPorModelo) {
+    const codigo = procesamiento.tipoDetectado;
+    const tipo = codigo ?
+      await tipoDocumentalRepository.getByCodigo(codigo).catch(() => null) :
+      null;
+    await registroConsumoIAService.registrar({
+      mandanteId: sesion.mandanteId, origen: ORIGENES.REVISION_CARPETA,
+      expedienteId: sesion.expedienteId || null,
+      tipoDocumentalId: tipo?.id || null,
+      tipoDocumentalNombre: tipo?.nombre || codigo || null,
+      modelo: procesamiento.modelo,
+      tokensEntrada: procesamiento.tokensEntrada,
+      tokensSalida: procesamiento.tokensSalida,
+      precio: costoService.precioDe(preciosPorModelo, procesamiento.modelo),
+      createdBy: sesion.createdBy || null,
+      fuente: {coleccion: procesamientoIARepository.COLLECTION,
+        id: procesamiento.id},
     });
   }
 
@@ -124,6 +155,7 @@ class ProcesamientoService {
         sesionRevisionRepository.incrementar(sesion.id, {procesados: 1},
             costoUsd),
         this._sumarMetricasTipo(datos.tipoDetectado, costoUsd),
+        this._registrarConsumo(sesion, procesamiento, preciosPorModelo),
       ]);
       return procesamiento;
     } catch (error) {
@@ -145,7 +177,11 @@ class ProcesamientoService {
         estado: "error",
         error: error.message,
       });
-      await sesionRevisionRepository.incrementar(sesion.id, {errores: 1});
+      const {preciosPorModelo} = await aiConfigService.obtenerParametros();
+      await Promise.all([
+        sesionRevisionRepository.incrementar(sesion.id, {errores: 1}),
+        this._registrarConsumo(sesion, procesamiento, preciosPorModelo),
+      ]);
       return procesamiento;
     }
   }

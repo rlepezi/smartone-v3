@@ -427,13 +427,18 @@ export const PlanillaEvaluacion = ({
     return instancia?.evaluacionVigenteId ? instancia.resultado : "sin_evaluar";
   };
 
+  const esResuelto = (resultado) => ["cumple", "no_cumple", "no_aplica"].includes(resultado);
+
   // Una fila "modificada" es aquella cuyo resultado, observaciones o fecha
   // de vencimiento difieren de la evaluación vigente de ESTE individuo (o,
   // si nunca hubo vigente, cualquiera que ya tenga un resultado marcado).
+  // Desmarcar un requisito ya evaluado también es un cambio: vuelve a
+  // "pendiente" al guardar.
   const esModificada = (requerimientoId) => {
     const actual = respuestas[requerimientoId];
-    if (!actual || !actual.resultado) return false;
+    if (!actual) return false;
     const vigente = vigenteDe(requerimientoId);
+    if (!actual.resultado) return Boolean(vigente && esResuelto(vigente.resultado));
     if (!vigente) return true;
     const observacionesActual = (actual.observaciones || "").trim();
     const observacionesVigente = (vigente.observaciones || "").trim();
@@ -447,7 +452,6 @@ export const PlanillaEvaluacion = ({
     );
   };
 
-  const esResuelto = (resultado) => ["cumple", "no_cumple", "no_aplica"].includes(resultado);
 
   // La evidencia es opcional. Solo un "Cumple" sin documento exige una justificación; un "Cumple"
   // de un requisito con vencimiento exige la fecha. Devuelve el motivo si falta algo.
@@ -492,7 +496,8 @@ export const PlanillaEvaluacion = ({
         const respuesta = respuestas[r.id];
         const payload = {
           expedienteRequerimientoId: r.id,
-          resultado: respuesta.resultado,
+          // Sin resultado marcado (se desmarcó): vuelve a pendiente.
+          resultado: respuesta.resultado || "pendiente",
           observaciones: respuesta.observaciones?.trim() || null,
         };
         if (r.requiereVencimiento && respuesta.fechaVencimiento) {
@@ -1062,6 +1067,9 @@ export const PlanillaEvaluacion = ({
                             checked={respuesta.resultado === opt.value}
                             disabled={soloLectura}
                             onChange={() => handleResultadoChange(r.id, opt.value)}
+                            // Volver a presionar la opción marcada la desmarca (onChange no se
+                            // dispara en un radio ya marcado).
+                            onClick={() => { if (respuesta.resultado === opt.value) handleResultadoChange(r.id, null); }}
                             className="w-4 h-4 accent-primary disabled:cursor-not-allowed"
                           />
                         </td>
