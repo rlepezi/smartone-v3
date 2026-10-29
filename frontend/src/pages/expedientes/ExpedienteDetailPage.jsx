@@ -551,6 +551,7 @@ export const ExpedienteDetailPage = () => {
       carpetaSujeto={sujeto ? carpetaDeSujeto(tipo, sujeto.id) : null}
       puedeEditar={puedeConfigurarDocumentos}
       onRepositorio={setRepositorioDoc}
+      empresa={empresa}
       onIrADocumentacion={() => { setRequisitosAbiertos(false); cambiarNivel("documentacion"); }}
       onCarpetaAsignada={() => cargarDatos(true)}
     />
@@ -957,6 +958,7 @@ export const ExpedienteDetailPage = () => {
                 usuarioId={profile?.uid}
                 datos={repositorioDoc}
                 onActualizado={setRepositorioDoc}
+                empresa={empresa}
               />
             )}
 

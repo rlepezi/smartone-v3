@@ -27,6 +27,7 @@ import { DocumentacionWizard } from "./wizard/DocumentacionWizard";
 import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
 import { traspasarCarpetaWizard, limpiarCarpetasWizard } from "../../services/fuentes/carpetaLocal";
 import { MAPEO_VACIO } from "../../utils/repositorioDocumental";
+import { validarCarpetaEmpresa, carpetaDeUrlSharePoint } from "../../utils/carpetaEmpresa";
 
 // Identificador de esta sesión del asistente: clave temporal de la carpeta local elegida antes de
 // que exista el expediente.
@@ -177,7 +178,6 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   // handle local vive en IndexedDB con una clave temporal de esta sesión del asistente.
   const [sesionWizard, setSesionWizard] = useState(() => leerBorradorValido(mandanteFijo)?.sesionWizard || nuevaSesionWizard());
   const [repositorioWizard, setRepositorioWizard] = useState(() => leerBorradorValido(mandanteFijo)?.repositorioWizard || null);
-  const [avisoDocumentacion, setAvisoDocumentacion] = useState(null);
   const carpetaWizard = useCarpetaWizard(profile?.uid, sesionWizard);
 
   const [ejecutando, setEjecutando] = useState(false);
@@ -337,9 +337,15 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   // Paso Requerimientos: requisitos pendientes (sin documentación reutilizable) del preview ya calculado.
   const pendientesRequerimientos = previewRequerimientos?.total ? previewRequerimientos.total.total - previewRequerimientos.total.reutilizables : 0;
 
+  // La carpeta vinculada (opcional) debe ser de la Empresa elegida: si no, no se avanza.
+  const carpetaNoCoincide = Boolean(empresaSel && repositorioWizard) && !validarCarpetaEmpresa(
+    repositorioWizard.tipo === "local" ? repositorioWizard.etiqueta : carpetaDeUrlSharePoint(repositorioWizard.url),
+    empresaSel,
+  ).valida;
+
   const puedeContinuar =
     step === 1 ? Boolean(mandanteEfectivo) :
-    step === 2 ? Boolean(empresaSel) :
+    step === 2 ? Boolean(empresaSel) && !carpetaNoCoincide :
     step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica :
     step === 4 ? Boolean(perfilSel) :
     step === 5 ? true :
@@ -393,7 +399,6 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     setErrorEjecucion(null);
     carpetaWizard.olvidar();
     setRepositorioWizard(null);
-    setAvisoDocumentacion(null);
     setSesionWizard(nuevaSesionWizard());
   };
 
@@ -454,12 +459,8 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
       return;
     }
     setEmpresaSel(empresa);
-    // La carpeta vinculada era de la Empresa anterior: se limpia, con aviso.
-    if (repositorioWizard) {
-      carpetaWizard.olvidar();
-      setRepositorioWizard(null);
-      setAvisoDocumentacion("Se quitó la documentación vinculada porque cambiaste de empresa.");
-    }
+    // La carpeta vinculada se conserva: se vuelve a validar contra la nueva Empresa (si no es suya,
+    // se muestra la advertencia y no se puede continuar).
     setPerfilFijo(false);
     setPerfilSugerido(null);
     // Cambiar de Empresa invalida el Proyecto/Perfil ya elegidos — el
@@ -667,13 +668,13 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             onSeleccionar={handleSeleccionarEmpresa}
           />
         )}
-        {step === 2 && (empresaSel || avisoDocumentacion) && (
+        {step === 2 && empresaSel && (
           <DocumentacionWizard
             key={`${sesionWizard}|${empresaSel?.id || ""}`}
             valor={repositorioWizard}
             carpeta={carpetaWizard}
-            aviso={avisoDocumentacion}
-            onCambiar={(valor) => { setRepositorioWizard(valor); setAvisoDocumentacion(null); }}
+            empresa={empresaSel}
+            onCambiar={setRepositorioWizard}
           />
         )}
         {step === 3 && (
@@ -775,6 +776,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
               type="button"
               onClick={handleContinuar}
               disabled={!puedeContinuar}
+              title={step === 2 && carpetaNoCoincide ? "La carpeta vinculada no corresponde a la empresa seleccionada" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
             >
               {step === 6 && pendientesRequerimientos > 0 ? `Continuar con ${pendientesRequerimientos} ${pendientesRequerimientos === 1 ? "pendiente" : "pendientes"} →` : step === 6 ? "Continuar →" : "Continuar"}

@@ -30,9 +30,10 @@ const BOTON_ICONO = "p-1 rounded text-slate-500 hover:bg-slate-100 hover:text-ca
 // La evaluación de la izquierda sigue usable mientras tanto. Acceso de solo lectura.
 export const PanelDocumentos = ({
   expedienteId, usuarioId, repositorio, tipo, sujeto, carpetaSujeto = null, puedeEditar,
-  onIrADocumentacion, onRepositorio, onCarpetaAsignada,
+  onIrADocumentacion, onRepositorio, onCarpetaAsignada, empresa = null,
 }) => {
-  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio });
+  // Con `empresa`, solo se puede vincular una carpeta de esa Empresa (validarCarpetaEmpresa).
+  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio, empresa });
   const { expandible, expandido, alternarExpandido, informarArchivo } = usePanelDocumentos();
   const mapeo = repositorio?.mapeo || MAPEO_VACIO;
   const local = repositorio?.tipo === "local";
@@ -165,6 +166,9 @@ export const PanelDocumentos = ({
       <Mensaje>
         <p>La carpeta «{repositorio.etiqueta}» no está vinculada en este equipo.</p>
         <button type="button" onClick={carpeta.vincular} className={CLASE_PRIMARIO}><Link2 className="w-4 h-4" /> Vincular carpeta</button>
+        {carpeta.rechazada && (
+          <p className="text-amber-700">La carpeta «{carpeta.rechazada}» no contiene el nombre de la empresa {empresa?.razonSocial}. Elige la carpeta correcta.</p>
+        )}
         {carpeta.error && <p className="text-red-600">{carpeta.error}</p>}
       </Mensaje>
     );

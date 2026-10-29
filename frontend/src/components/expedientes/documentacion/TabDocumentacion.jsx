@@ -10,10 +10,11 @@ import { ConfiguracionRepositorio } from "./ConfiguracionRepositorio";
 // La carpeta local se vincula en cada equipo (el navegador recuerda el acceso; en SmartOne solo
 // queda su nombre); es la misma carpeta que usa la pestaña Revisiones IA. Con la carpeta vinculada
 // se muestra el mapeo de carpetas (personal y maquinarias) y la estructura de primer y segundo nivel.
-export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado }) => {
+// `empresa`: la del expediente; la carpeta debe ser suya (si no, advertencia y no se guarda).
+export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado, empresa = null }) => {
   const repo = datos?.repositorioDocumental || null;
   const puedeEditar = Boolean(datos?.puedeEditar);
-  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio: onActualizado });
+  const carpeta = useCarpetaExpediente(usuarioId, expedienteId, { onRepositorio: onActualizado, empresa });
   const [error, setError] = useState(null);
   const [niveles, setNiveles] = useState(null);
 
@@ -69,6 +70,8 @@ export const TabDocumentacion = ({ expedienteId, usuarioId, datos, onActualizado
         onQuitar={quitar}
         puedeEditar={puedeEditar}
         error={error || carpeta.error}
+        empresa={empresa}
+        carpetaRechazada={carpeta.rechazada}
       >
         {carpeta.lista && (
           <div className="space-y-2 pt-2 border-t border-slate-100">

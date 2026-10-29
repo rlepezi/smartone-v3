@@ -6,12 +6,16 @@ const participacionPersonaRepository =
 const participacionRecursoRepository =
     require("../repositories/participacionRecursoRepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
+const empresaRepository = require("../repositories/empresaRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const {aFecha} = require("../utils/vencimientos");
 const {
   validarRepositorio, validarMapeo, validarRutaRelativa,
 } = require("../utils/repositorioDocumental");
 const AppError = require("../utils/AppError");
+const {
+  validarCarpetaEmpresa, carpetaDeUrlSharePoint, mensajeCarpetaNoCoincide,
+} = require("../utils/carpetaEmpresa");
 
 const ROLES_EDITAN = ["superadmin", "evaluador", "mandante_admin"];
 const MAPEO_VACIO = {carpetaPersonas: null, carpetaRecursos: null,
@@ -60,6 +64,27 @@ class RepositorioDocumentalService {
       throw new AppError(409, "El expediente está cerrado.");
     }
     return expediente;
+  }
+
+  /**
+   * Exige que la carpeta (nombre de la carpeta local, o la carpeta de la URL
+   * de SharePoint) sea de la Empresa del Expediente: debe contener su razón
+   * social, su nombre de fantasía o su RUT (misma regla que el frontend).
+   * @param {Object} expediente Expediente.
+   * @param {{tipo: string, etiqueta: string, url: ?string}} valor
+   *     Repositorio ya validado.
+   * @return {Promise<void>}
+   */
+  async _exigirCarpetaDeEmpresa(expediente, valor) {
+    const empresa = await empresaRepository.getById(expediente.empresaId);
+    if (!empresa) throw new AppError(404, "Empresa no encontrada.");
+    const nombre = valor.tipo === "local" ? valor.etiqueta :
+      carpetaDeUrlSharePoint(valor.url);
+    const r = validarCarpetaEmpresa(nombre, empresa);
+    if (!r.valida) {
+      throw new AppError(400, mensajeCarpetaNoCoincide(nombre, empresa,
+          r.terminosBuscados));
+    }
   }
 
   /**
@@ -124,6 +149,7 @@ class RepositorioDocumentalService {
     } else if (!quitar) {
       const r = validarRepositorio(p);
       if (!r.ok) throw new AppError(400, r.error);
+      await this._exigirCarpetaDeEmpresa(expediente, r.valor);
       valor = {...r.valor, mapeo: r.valor.mapeo || anterior?.mapeo ||
         MAPEO_VACIO};
     }
