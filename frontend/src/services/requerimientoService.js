@@ -40,16 +40,6 @@ export const requerimientoService = {
     return mapa;
   },
 
-  // Ubicación en la plantilla de estructura (campo del formulario): { plantilla: { id, nombre,
-  // version } | null, opciones: [{ seccionClave, seccion, documentoClave, documento,
-  // tipoDocumentalCodigo, habilitado, sensible, requerimientoId, requerimientoNombre }] }.
-  async ubicacionesPlantilla({ mandanteId, tipoEntidad }) {
-    const params = new URLSearchParams({ tipoEntidad });
-    if (mandanteId) params.set("mandanteId", mandanteId);
-    const res = await apiClient(`/requerimientos/ubicaciones-plantilla?${params.toString()}`);
-    return res.data;
-  },
-
   async obtenerPorId(id) {
     const res = await apiClient(`/requerimientos/${id}`);
     return res.data;

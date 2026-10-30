@@ -26,6 +26,10 @@ const revisionRequerimientoIAController = {
       req.body || {}, req.user), 201),
   descartar: responder((req) => servicio.descartar(req.params.revisionId,
       req.user)),
+  estimarLote: responder((req) => servicio.estimarLote(req.params.id,
+      req.body || {}, req.user)),
+  confirmarLote: responder((req) => servicio.confirmarLote(req.params.id,
+      (req.body || {}).revisionIds, req.user)),
 };
 
 module.exports = revisionRequerimientoIAController;

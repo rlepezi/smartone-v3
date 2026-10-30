@@ -40,6 +40,14 @@ jest.mock("../src/services/expedienteService", () => ({
 }));
 jest.mock("../src/services/evaluacionService", () => ({
   exigirInstanciaEvaluable: jest.fn(),
+  crearEvaluacion: jest.fn(),
+}));
+jest.mock("../src/repositories/evaluacionRepository", () => ({
+  getByExpediente: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("../src/services/aiConfigService", () => ({
+  obtenerParametros: jest.fn(),
+  gastoMes: jest.fn(),
 }));
 jest.mock("../src/services/requerimientoReglaIAService", () => ({
   _piezas: jest.fn((archivos) => archivos.map((a) => ({...a,
@@ -49,6 +57,7 @@ jest.mock("../src/services/requerimientoReglaIAService", () => ({
     ultimaModificacion: null}))),
   ejecutarReglas: jest.fn(),
   registrarConsumo: jest.fn().mockResolvedValue(undefined),
+  MAX_ARCHIVOS: 6,
 }));
 
 const revisionRepository =
@@ -153,5 +162,133 @@ describe("confirmar y descartar", () => {
     revisionRepository.update.mockImplementation(async (id, c) => ({id, ...c}));
     const r = await servicio.descartar("rv1", EVALUADOR);
     expect(r.estado).toBe("descartada");
+  });
+});
+
+describe("revisión en lote (E5)", () => {
+  const evaluacionService = require("../src/services/evaluacionService");
+  const evaluacionRepository =
+      require("../src/repositories/evaluacionRepository");
+  const aiConfigService = require("../src/services/aiConfigService");
+  const CON_CARPETA = {id: "e1", mandanteId: "m1", empresaId: "emp1",
+    proyectoId: "pr1", estado: "en_ejecucion",
+    repositorioDocumental: {carpetaEmpresaId: "c1"}};
+  const INSTANCIAS = [
+    {id: "i1", expedienteId: "e1", requerimientoId: "r1", personaId: "p1",
+      requiereVencimiento: true},
+    {id: "i2", expedienteId: "e1", requerimientoId: "r2"},
+    {id: "i3", expedienteId: "e1", requerimientoId: "r3", recursoId: "x1"},
+  ];
+  beforeEach(() => {
+    expedienteService.getExpedienteById.mockResolvedValue(CON_CARPETA);
+    expedienteRequerimientoRepository.listByExpediente
+        .mockResolvedValue(INSTANCIAS);
+    requerimientoRepository.getByIds.mockResolvedValue([
+      {id: "r1", estadoIA: "habilitado"},
+      {id: "r2", estadoIA: "habilitado", modeloPreferidoIA: "modelo-b"},
+      {id: "r3", estadoIA: "en_prueba", nombre: "Revisión técnica"}]);
+    aiConfigService.obtenerParametros.mockResolvedValue({
+      modeloPorDefecto: "modelo-a", limiteGastoMensualUsd: 5,
+      preciosPorModelo: {"modelo-a": {entrada: 3, salida: 15},
+        "modelo-b": {entrada: 1, salida: 5}}});
+    aiConfigService.gastoMes.mockResolvedValue({mes: "2026-10",
+      gastoUsd: 4.99});
+  });
+
+  it("estimar: documentos por entidad, costo y límite mensual", async () => {
+    const r = await servicio.estimarLote("e1", {items: [
+      {expedienteRequerimientoId: "i1",
+        archivos: [{mime: "image/jpeg"}, {mime: "image/jpeg"}]},
+      {expedienteRequerimientoId: "i2",
+        archivos: [{mime: "application/pdf", paginas: 3}]},
+    ]}, EVALUADOR);
+    expect(r).toMatchObject({documentos: 2, archivos: 3,
+      porEntidad: {empresa: 1, persona: 1, recurso: 0},
+      modelos: ["modelo-a", "modelo-b"], faltanPrecios: [],
+      limiteMensualUsd: 5, gastoMesUsd: 4.99, disponibleUsd: 0.01,
+      alcanza: false});
+    expect(r.costoEstimadoUsd).toBeGreaterThan(0);
+  });
+
+  it("estimar rechaza requisitos sin IA habilitada y expedientes sin " +
+      "Carpeta de empresa", async () => {
+    await expect(servicio.estimarLote("e1", {items: [
+      {expedienteRequerimientoId: "i3", archivos: [{mime: "image/png"}]},
+    ]}, EVALUADOR)).rejects.toThrow(/habilitada/);
+    expedienteService.getExpedienteById.mockResolvedValue({...CON_CARPETA,
+      repositorioDocumental: null});
+    await expect(servicio.estimarLote("e1", {items: [
+      {expedienteRequerimientoId: "i1", archivos: [{mime: "image/png"}]},
+    ]}, EVALUADOR)).rejects.toMatchObject({status: 409});
+  });
+
+  it("revisar en lote registra el consumo como revision_lote", async () => {
+    expedienteRequerimientoRepository.getById.mockResolvedValue(INSTANCIAS[0]);
+    revisionRepository.listByExpediente.mockResolvedValue([]);
+    requerimientoReglaIAService.ejecutarReglas.mockResolvedValue({
+      tipo: null, snapshot: [], modelo: "modelo-a", umbralConfianza: 0.7,
+      camposExtraidos: {}, resultadosReglas: [],
+      resultadoPropuesto: {resultado: "revision_manual", motivos: []},
+      tokensEntrada: 1, tokensSalida: 1, costoEstimado: 0.001, intentos: 1,
+      latenciaMs: 1});
+    const r = await servicio.revisar("e1", {expedienteRequerimientoId: "i1",
+      archivos: [{nombre: "ci.pdf"}], lote: true, loteId: "L-1"}, EVALUADOR);
+    expect(r).toMatchObject({modo: "lote", loteId: "L-1"});
+    expect(requerimientoReglaIAService.registrarConsumo)
+        .toHaveBeenCalledWith(expect.objectContaining({
+          origen: "revision_lote"}));
+    await expect(servicio.revisar("e1", {expedienteRequerimientoId: "i1",
+      archivos: [{nombre: "ci.pdf"}], lote: true, loteId: "mal id"},
+    EVALUADOR)).rejects.toThrow(/lote no válido/);
+  });
+
+  it("confirmar en bloque: guarda las aplicables y omite con motivo",
+      async () => {
+        const rev = (id, extra) => ({id, expedienteId: "e1",
+          estado: "propuesta", createdAt: new Date("2026-10-30T10:00:00Z"),
+          ...extra});
+        const revisiones = {
+          a: rev("a", {expedienteRequerimientoId: "i2",
+            propuestaEvaluacion: {resultado: "no_cumple",
+              observaciones: "Revisión IA: no cumple."}}),
+          b: rev("b", {expedienteRequerimientoId: "i1",
+            propuestaEvaluacion: {resultado: "cumple",
+              fechaVencimiento: null}}),
+          c: rev("c", {expedienteRequerimientoId: "i3",
+            propuestaEvaluacion: {resultado: null}}),
+          d: rev("d", {expedienteRequerimientoId: "i2",
+            estado: "confirmada"}),
+        };
+        revisionRepository.getById.mockImplementation(async (id) =>
+          revisiones[id] || null);
+        evaluacionService.crearEvaluacion.mockResolvedValue({id: "ev1"});
+        const r = await servicio.confirmarLote("e1", ["a", "b", "c", "d", "z"],
+            EVALUADOR);
+        expect(evaluacionService.crearEvaluacion).toHaveBeenCalledTimes(1);
+        expect(evaluacionService.crearEvaluacion).toHaveBeenCalledWith(
+            expect.objectContaining({expedienteRequerimientoId: "i2",
+              resultado: "no_cumple", revisionIAId: "a"}), EVALUADOR);
+        expect(r.aplicadas).toEqual([{revisionId: "a", evaluacionId: "ev1",
+          resultado: "no_cumple"}]);
+        expect(Object.fromEntries(r.omitidas.map((o) =>
+          [o.revisionId, o.motivo]))).toEqual({b: "sin_fecha_vencimiento",
+          c: "revision_manual", d: "ya_resuelta", z: "no_encontrada"});
+        expect(evaluacionRepository.getByExpediente).toHaveBeenCalledWith("e1");
+      });
+});
+
+describe("motivoNoConfirmable", () => {
+  const {motivoNoConfirmable} = require("../src/reglasIA/lote");
+  it("una evaluación posterior a la propuesta la deja fuera", () => {
+    const r = {expedienteId: "e1", estado: "propuesta",
+      createdAt: new Date("2026-10-30T10:00:00Z"),
+      propuestaEvaluacion: {resultado: "cumple"}};
+    expect(motivoNoConfirmable(r, "e1", {id: "i"},
+        {createdAt: new Date("2026-10-30T11:00:00Z")}))
+        .toBe("evaluado_despues");
+    expect(motivoNoConfirmable(r, "e1", {id: "i"},
+        {createdAt: new Date("2026-10-29T11:00:00Z")})).toBeNull();
+    expect(motivoNoConfirmable(r, "otro", {id: "i"}, null))
+        .toBe("no_encontrada");
   });
 });

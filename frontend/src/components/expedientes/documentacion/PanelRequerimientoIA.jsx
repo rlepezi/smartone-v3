@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Bot, CheckCircle2, ChevronDown, CircleHelp, ClipboardCheck, FileCheck2, Loader2, RotateCcw, X, XCircle } from "lucide-react";
+import { BookmarkPlus, Bot, CheckCircle2, ChevronDown, CircleHelp, ClipboardCheck, FileCheck2, Loader2, RotateCcw, X, XCircle } from "lucide-react";
+import { patronService } from "../../../services/patronService";
+import { nombreSujetoPatron } from "../../../utils/loteRevision";
 import { revisionRequerimientoIAService } from "../../../services/revisionRequerimientoIAService";
 import { ESTADOS_IA_REQ, RESULTADOS_PROPUESTOS, SEVERIDADES } from "../../../utils/reglasIA";
 import { describirRegla } from "../../../utils/describirRegla";
@@ -46,7 +48,9 @@ const Instruccion = ({ texto }) => {
 //  - carpeta: dónde está el documento (controles de carpeta del panel), entre el encabezado y las reglas.
 //  - mapeoExpediente: mapeo de la carpeta de este expediente (Empresa), para mostrar en Reglas IA
 //    dónde está ubicado el requerimiento en ella.
-export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto, documento, puedeDefinirReglas, onCerrar, carpeta = null, mapeoExpediente = null }) => {
+//  - recordar (Persona / Maquinaria): { carpetaEmpresaId, ambito, sujeto, ubicado(ruta), onRecordado }
+//    para "Recordar" el archivo elegido: aprende el patrón y la próxima vez se ubica solo.
+export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto, documento, puedeDefinirReglas, onCerrar, carpeta = null, mapeoExpediente = null, recordar = null }) => {
   const { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones } = datos;
   const reglas = pauta?.reglas || [];
   const estadoIA = pauta?.estadoIA || "sin_reglas";
@@ -56,6 +60,25 @@ export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto,
   const [revisando, setRevisando] = useState(false);
   const [error, setError] = useState(null);
   const [editandoReglas, setEditandoReglas] = useState(false);
+  const [recordado, setRecordado] = useState(null); // ruta del archivo recordado
+  const [recordando, setRecordando] = useState(false);
+  const recordarArchivo = async () => {
+    setRecordando(true);
+    setError(null);
+    try {
+      await patronService.confirmar({
+        carpetaEmpresaId: recordar.carpetaEmpresaId, ambito: recordar.ambito,
+        items: [{ requerimientoId: instancia.requerimientoId, nombreArchivo: archivoAbierto.file.name,
+          nombreSujeto: nombreSujetoPatron(recordar.ambito, recordar.sujeto) }],
+      });
+      setRecordado(archivoAbierto.rutaRelativa);
+      recordar.onRecordado?.();
+    } catch (err) {
+      setError(err.message || "No se pudo recordar el archivo.");
+    } finally {
+      setRecordando(false);
+    }
+  };
   const cerrarReglas = () => {
     setEditandoReglas(false);
     acciones.current.recargarPautas?.();
@@ -229,7 +252,12 @@ export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto,
         </div>
         {documento && (
           <div className="space-y-1 pl-5">
-            {documento.noEncontrado && <p className="text-[11px] text-amber-700">No se encontró automáticamente el documento de este requerimiento: elíjalo en la lista.</p>}
+            {documento.noEncontrado && (
+              <p className="text-[11px] text-amber-700">
+                {recordar ? "Sin documento ubicado: elíjalo en la lista y use «Recordar» para que la próxima vez se ubique solo."
+                  : "No se encontró automáticamente el documento de este requerimiento: elíjalo en la lista."}
+              </p>
+            )}
             {documento.opciones.length > 1 && (
               <label className="block text-[11px] text-slate-500">
                 Documento
@@ -239,6 +267,22 @@ export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto,
                   {documento.opciones.map((o) => <option key={o.ruta} value={o.ruta}>{o.candidato ? "★ " : ""}{o.nombre}</option>)}
                 </select>
               </label>
+            )}
+          </div>
+        )}
+
+        {recordar && puedeRevisar && archivoAbierto && (
+          <div className="pl-5">
+            {recordar.ubicado(archivoAbierto.rutaRelativa) ? (
+              <p className="text-[11px] text-sage-darker">Ubicado por patrón aprendido.</p>
+            ) : recordado === archivoAbierto.rutaRelativa ? (
+              <p className="text-[11px] text-sage-darker">Recordado: la próxima vez se ubicará solo (también en la revisión en lote).</p>
+            ) : (
+              <button type="button" onClick={recordarArchivo} disabled={recordando}
+                className={`${CLASE_BOTON} border border-primary/30 bg-white text-primary hover:bg-primary-lighter`}>
+                {recordando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookmarkPlus className="w-3.5 h-3.5" />}
+                Recordar este archivo para «{instancia.nombreCorto || instancia.nombre}»
+              </button>
             )}
           </div>
         )}

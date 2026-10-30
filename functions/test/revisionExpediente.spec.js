@@ -26,24 +26,27 @@ describe("elegibilidadRequerimiento", () => {
         {nombre: "Cédula de identidad", seccion: "Carpetas Personales"});
   });
 
-  it("sin tipo documental", () => {
-    expect(elegibilidadRequerimiento({requerimiento: {id: "r"}, tipo: null,
-      plantilla: plantilla()}).motivo).toBe("sin_tipo");
-  });
+  // E5: la elegibilidad depende de la ubicación, no del tipo documental.
+  it("sin tipo y sin ubicación: no está en la plantilla (no sin_tipo)",
+      () => {
+        expect(elegibilidadRequerimiento({requerimiento: {id: "r"},
+          tipo: null, plantilla: plantilla()}).motivo).toBe("no_en_plantilla");
+      });
 
-  it("tipo inactivo o no normalizado", () => {
+  it("un tipo inactivo o no normalizado no excluye un requerimiento " +
+      "ubicado", () => {
     expect(elegibilidadRequerimiento({requerimiento: req,
-      tipo: {...tipoActivo, estado: "inactivo"}, plantilla: plantilla()})
-        .motivo).toBe("tipo_inactivo");
+      tipo: {...tipoActivo, estado: "inactivo"}, plantilla: plantilla()}))
+        .toMatchObject({elegible: true, motivo: null});
     expect(elegibilidadRequerimiento({requerimiento: req,
       tipo: {...tipoActivo, estadoIA: "no_normalizado"},
-      plantilla: plantilla()}).motivo).toBe("tipo_inactivo");
+      plantilla: plantilla()})).toMatchObject({elegible: true});
   });
 
-  it("tipo soloReglas: no elegible ni en carpeta libre", () => {
+  it("tipo soloReglas en carpeta libre: elegible", () => {
     expect(elegibilidadRequerimiento({requerimiento: req,
-      tipo: {...tipoActivo, soloReglas: true}, plantilla: null, libre: true})
-        .motivo).toBe("solo_reglas");
+      tipo: {...tipoActivo, soloReglas: true}, plantilla: null, libre: true}))
+        .toMatchObject({elegible: true, motivo: null});
   });
 
   it("no existe en la plantilla", () => {

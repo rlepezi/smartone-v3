@@ -12,6 +12,8 @@ router.use(authMiddleware, requireRole(["superadmin", "evaluador"]));
 router.get("/expedientes/:id/estado", controller.estado);
 router.get("/expedientes/:id", controller.listar);
 router.post("/expedientes/:id/revisar", controller.revisar);
+router.post("/expedientes/:id/lote/estimar", controller.estimarLote);
+router.post("/expedientes/:id/lote/confirmar", controller.confirmarLote);
 router.post("/:revisionId/descartar", controller.descartar);
 
 module.exports = router;
