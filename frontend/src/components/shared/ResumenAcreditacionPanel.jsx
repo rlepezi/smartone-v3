@@ -1,6 +1,6 @@
 import React from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { Info, Landmark, Building2, FolderKanban, FolderOpen, IdCard, Users, Truck } from "lucide-react";
+import { Info, Landmark, Building2, FolderKanban, FolderOpen, IdCard, Users, Truck, Eye, EyeOff } from "lucide-react";
 import { textoRepositorio } from "../../utils/repositorioDocumental";
 import { MandanteChip } from "./MandanteChip";
 
@@ -44,6 +44,7 @@ export const ResumenAcreditacionPanel = ({
   mostrarExpediente = false, requisitosTotal = null, reutilizadosEmpresa = null,
   mostrarDocumentacion = false, documentacion = null, proyectoActualId = null,
   repositorio, // { tipo, etiqueta, url } | null; undefined = no mostrar la fila
+  carpetaAbierta = false, onVerCarpeta = null, // Botón "Ver carpeta" (solo con carpeta local)
 }) => {
   const personasCount = seleccion.filter((s) => s.tipo === "persona").length;
   const recursosCount = seleccion.filter((s) => s.tipo === "recurso").length;
@@ -78,6 +79,15 @@ export const ResumenAcreditacionPanel = ({
                   </p>
                 ) : (
                   <p className="text-xs text-slate-400 italic font-medium">Sin vincular</p>
+                )}
+                {repositorio && onVerCarpeta && (
+                  <button type="button" onClick={onVerCarpeta}
+                    className={`mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors ${carpetaAbierta
+                      ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      : "border-primary/30 bg-primary-lighter text-primary-dark hover:bg-primary hover:text-white"}`}>
+                    {carpetaAbierta ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {carpetaAbierta ? "Ocultar carpeta" : "Ver carpeta"}
+                  </button>
                 )}
               </div>
             </div>

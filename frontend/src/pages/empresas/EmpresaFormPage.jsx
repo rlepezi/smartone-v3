@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { EmpresaEdicionForm } from "../../components/empresas/EmpresaEdicionForm";
+import { NuevaEmpresaForm } from "../../components/empresas/NuevaEmpresaForm";
 
 // Pantalla para CREAR. Editar ya no es una ruta aparte: se hace in-place en el
 // detalle (botón "Editar"), así que /empresas/:id/editar redirige allí con la
@@ -9,11 +9,13 @@ import { EmpresaEdicionForm } from "../../components/empresas/EmpresaEdicionForm
 export const EmpresaFormPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
+  // Con la carpeta de la empresa elegida, el formulario se ensancha (documentos a la izquierda).
+  const [ancho, setAncho] = useState(false);
 
   if (id) return <Navigate to={`/empresas/${id}?editar=1`} replace />;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className={`${ancho ? "max-w-7xl" : "max-w-4xl"} mx-auto space-y-6`}>
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -28,10 +30,11 @@ export const EmpresaFormPage = () => {
         </div>
       </div>
 
-      <EmpresaEdicionForm
-        formId="empresa-form"
-        onGuardado={() => navigate("/empresas")}
+      <NuevaEmpresaForm
+        variante="completa"
+        onCreada={() => navigate("/empresas")}
         onCancelar={() => navigate("/empresas")}
+        onAncho={setAncho}
       />
     </div>
   );

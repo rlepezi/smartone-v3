@@ -2,11 +2,15 @@
 
 | Ambiente | Proyecto Firebase | Alias | Frontend (modo Vite) |
 |---|---|---|---|
-| QA | `smartone-v3-qa` | `qa` (por defecto) | `.env.qa` · `npm run dev`, `npm run deploy:qa` |
+| Pruebas (actual) | `smartone-v3` | `prod` | `.env.pruebas` · `npm run dev` (localhost); `.env.production` · `npm run deploy:prod` |
+| Producción definitiva (en pausa) | `smartone-v3-qa` | `qa` (por defecto) | `.env.qa` · `npm run dev:qa`, `npm run deploy:qa` |
 | Emuladores | `smartone-v3-qa` (local) | — | `.env.emuladores` · `npm run dev:emuladores` |
-| Producción | `smartone-v3` | `prod` | `.env.production` · `npm run deploy:prod` |
 
-Localhost nunca apunta a producción: `vite.config.js` se detiene si el modo no coincide con el proyecto, la API o los emuladores, o si `frontend/.env.local` define variables del ambiente.
+`vite.config.js` se detiene si el modo no coincide con el proyecto, la API o los emuladores, o si `frontend/.env.local` define variables del ambiente. Además, localhost nunca apunta al proyecto **productivo**, que se define en `frontend/.env`:
+
+```
+SMARTONE_PROYECTO_PRODUCTIVO=        # vacío mientras no haya producción; p. ej. smartone-v3-qa
+```
 
 ## Desplegar
 
