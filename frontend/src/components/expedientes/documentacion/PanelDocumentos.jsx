@@ -333,7 +333,7 @@ const ContenidoPanel = ({
       puedeDefinirReglas={puedeDefinirReglas}
       onCerrar={() => abrirRequerimiento?.(null)}
       carpeta={controlesCarpetaEmpresa}
-      carpetaExpediente={tipo === "empresa" ? rutaRequerimiento : null}
+      mapeoExpediente={tipo === "empresa" ? mapeo : null}
       documento={listoParaUbicar ? {
         opciones: [
           ...candidatos.map((a) => ({ ruta: a.ruta, nombre: a.nombre, candidato: true })),

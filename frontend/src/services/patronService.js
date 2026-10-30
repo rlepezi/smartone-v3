@@ -15,6 +15,11 @@ export const patronService = {
     return (await apiClient("/patrones-requerimiento/confirmar", { method: "POST", body: datos })).data;
   },
 
+  // Activa o desactiva un patrón (queda en la Bitácora).
+  async cambiarEstado(id, estado) {
+    return (await apiClient(`/patrones-requerimiento/${id}/estado`, { method: "PATCH", body: { estado } })).data;
+  },
+
   async quitar(datos) {
     return (await apiClient("/patrones-requerimiento/quitar", { method: "POST", body: datos })).data;
   },

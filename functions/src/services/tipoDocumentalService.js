@@ -27,6 +27,11 @@ const UMBRAL_MAXIMO = 1;
 // respuesta lo indica con `truncado`).
 const LIMITE_POR_NORMALIZAR = 5000;
 
+// Tipos documentales en desuso (E4 del mapeo documental): ya no se crean.
+const MENSAJE_SIN_CREACION = "Los tipos documentales están en desuso: ya no " +
+    "se crean tipos nuevos. Configure lo que la IA lee en las reglas de " +
+    "revisión del requerimiento.";
+
 /**
  * Administración de Tipos Documentales de Revisiones IA (superadmin):
  * listado con métricas y requerimientos que los usan, edición y los tipos
@@ -124,53 +129,12 @@ class TipoDocumentalService {
   }
 
   /**
-   * Crea un tipo documental para las reglas de revisión IA. Queda con
-   * `soloReglas: true`: la revisión por carpetas (plantillas) solo sabe
-   * extraer los tipos del seed, así que este no se ofrece ahí.
-   * @param {Object} payload codigo, nombre, entidades, campos y,
-   *     opcionales, estadoIA (por defecto "piloto"), modeloPreferido y
-   *     umbralLegibilidad (por defecto 0,8).
-   * @param {Object} actor Usuario autenticado.
-   * @return {Promise<Object>} Tipo creado.
+   * Crear tipos nuevos ya no se permite: los reemplazan el mapeo documental y
+   * las reglas de revisión del requerimiento. Los existentes se editan.
+   * @return {Promise<never>} Siempre rechaza (409).
    */
-  async crear(payload, actor) {
-    const codigo = String(payload.codigo || "").trim().toUpperCase();
-    if (!/^[A-Z][A-Z0-9_]{1,39}$/.test(codigo)) {
-      throw new AppError(400, "Código no válido: use mayúsculas, números y " +
-          "_ (2 a 40 caracteres, empieza con letra).");
-    }
-    const nombre = String(payload.nombre || "").trim();
-    if (!nombre || nombre.length > 80) {
-      throw new AppError(400, "Indique un nombre (máx. 80 caracteres).");
-    }
-    if (payload.entidades === undefined || payload.campos === undefined) {
-      throw new AppError(400, "Indique las entidades y los campos.");
-    }
-    const existentes = await Promise.all([
-      tipoDocumentalRepository.getById(codigo),
-      tipoDocumentalRepository.getByCodigo(codigo),
-    ]);
-    if (existentes.some(Boolean)) {
-      throw new AppError(409, `Ya existe un tipo con el código ${codigo}.`);
-    }
-    const cambios = await this._cambiosValidados(payload);
-    const creado = await tipoDocumentalRepository.create(codigo, {
-      codigo, nombre,
-      estadoIA: "piloto", modeloPreferido: null, umbralLegibilidad: 0.8,
-      ...cambios,
-      version: 1, reglas: [], soloReglas: true,
-      metricas: {procesados: 0, aceptadosSinCambio: 0, corregidos: 0,
-        costoTotalUsd: 0},
-      estado: "activo",
-    });
-    await bitacoraLogger.registrarEvento({
-      mandanteId: null, entidad: "tiposDocumentales", entidadId: codigo,
-      accion: "creado", actor,
-      detalle: {codigo, nombre, estadoIA: creado.estadoIA,
-        entidades: creado.entidades,
-        campos: (creado.campos || []).map((c) => c.clave)},
-    });
-    return conDefaults(creado);
+  async crear() {
+    throw new AppError(409, MENSAJE_SIN_CREACION);
   }
 
   /**

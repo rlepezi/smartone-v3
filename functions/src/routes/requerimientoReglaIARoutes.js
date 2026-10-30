@@ -12,6 +12,7 @@ router.get("/cobertura", controller.cobertura);
 router.get("/:id", controller.obtener);
 router.put("/:id/tipo", controller.asignarTipo);
 router.put("/:id/modelo", controller.asignarModelo);
+router.put("/:id/campos-adicionales", controller.asignarCamposAdicionales);
 router.patch("/:id/estado", controller.cambiarEstadoIA);
 router.post("/:id/reglas", controller.agregarRegla);
 router.patch("/:id/reglas/:vinculoId", controller.actualizarVinculo);

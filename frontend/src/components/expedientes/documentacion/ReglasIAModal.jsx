@@ -1,12 +1,14 @@
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ReglasIARequerimiento } from "../../requerimientos/reglas-ia/ReglasIARequerimiento";
+import { UbicacionEnExpediente } from "../../requerimientos/reglas-ia/UbicacionMapeo";
 
 // "Definir reglas" / "Editar reglas" desde el panel de evaluación (solo superadmin): la pestaña
 // Reglas IA del requerimiento en un modal, sin salir del expediente. Cada cambio se guarda al
 // momento; al cerrar, la planilla recarga la pauta (estado IA y reglas).
-// `carpetaExpediente`: carpeta asignada al requerimiento en el expediente desde el que se abre.
-export const ReglasIAModal = ({ requerimientoId, nombre, onCerrar, carpetaExpediente = null }) => createPortal(
+// `mapeoExpediente`: mapeo de la carpeta del expediente desde el que se abre (Empresa); se muestra
+// dónde está ubicado el requerimiento en ESA carpeta (no la cobertura global).
+export const ReglasIAModal = ({ requerimientoId, nombre, onCerrar, mapeoExpediente = null }) => createPortal(
   // Los eventos de un portal suben por el árbol de React: sin cortarlos, un clic acá llegaría al
   // modal de requisitos que está debajo.
   <div className="fixed inset-0 z-[58] flex items-center justify-center p-4 bg-black/40"
@@ -21,7 +23,8 @@ export const ReglasIAModal = ({ requerimientoId, nombre, onCerrar, carpetaExpedi
         <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
-        <ReglasIARequerimiento requerimientoId={requerimientoId} carpetaExpediente={carpetaExpediente} />
+        <ReglasIARequerimiento requerimientoId={requerimientoId}
+          ubicacion={mapeoExpediente ? <UbicacionEnExpediente entradas={mapeoExpediente.requerimientos?.[requerimientoId] || []} /> : null} />
       </div>
     </div>
   </div>,

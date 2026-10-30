@@ -22,6 +22,8 @@ const CONOCIDOS = {
   fechaVencimiento: {clave: "fechaVencimiento",
     etiqueta: "Fecha de vencimiento", tipo: "fecha"},
   clases: {clave: "clases", etiqueta: "Clases de la licencia", tipo: "texto"},
+  legibilidad: {clave: "legibilidad", etiqueta: "Legibilidad del documento " +
+    "(de 0 a 1; 1 = se lee completo y nítido)", tipo: "numero"},
 };
 
 /**

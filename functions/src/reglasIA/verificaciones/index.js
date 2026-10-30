@@ -132,6 +132,36 @@ function campoValor(campos, contexto, parametros) {
       "contuviera" : "fuera"} ${lista}.`);
 }
 
+/**
+ * El documento es legible: la legibilidad que estima la IA (0 a 1, o 0 a 100)
+ * alcanza el mínimo del parámetro (en %). Reemplaza al umbral del tipo
+ * documental en el motor por requerimiento.
+ * @param {Object} campos Campos extraídos ({legibilidad}).
+ * @param {Object} contexto No se usa.
+ * @param {Object} parametros {umbral}: legibilidad mínima en %.
+ * @return {{resultado: string, detalle: string}} Resultado.
+ */
+function documentoLegible(campos, contexto, parametros) {
+  const umbral = Number(parametros?.umbral);
+  if (!Number.isFinite(umbral)) {
+    return noDeterminable("Falta la legibilidad mínima.");
+  }
+  const leido = valorDe(campos, "legibilidad");
+  const n = Number(String(leido ?? "").replace("%", "").replace(",", ".")
+      .trim());
+  if (leido === null || !Number.isFinite(n) || n < 0) {
+    return noDeterminable("No se pudo estimar la legibilidad.");
+  }
+  const pct = Math.round(Math.min(n <= 1 ? n * 100 : n, 100));
+  return pct >= umbral ?
+    cumple(`Legibilidad ${pct}%, sobre el mínimo de ${umbral}%.`) :
+    noCumple(`Legibilidad ${pct}%, bajo el mínimo de ${umbral}%.`);
+}
+
+// Legibilidad mínima por defecto (%): la misma que el umbral por defecto de
+// los tipos documentales (0,8).
+const UMBRAL_LEGIBLE_POR_DEFECTO = 80;
+
 const TODAS = ["persona", "empresa", "recurso"];
 
 const VERIFICACIONES = {
@@ -249,6 +279,18 @@ const VERIFICACIONES = {
     },
     verificar: campoValor,
   },
+  documento_legible: {
+    nombre: "Documento legible",
+    descripcion: "La legibilidad del documento que estima la IA alcanza el " +
+        "mínimo indicado.",
+    campos: ["legibilidad"], contexto: [], entidades: TODAS,
+    parametros: {
+      umbral: {tipo: "numero", etiqueta: "Legibilidad mínima (%)",
+        requerido: true, default: UMBRAL_LEGIBLE_POR_DEFECTO, min: 1,
+        max: 100},
+    },
+    verificar: documentoLegible,
+  },
   coincide_empresa: {
     nombre: "Empleador coincide con la empresa",
     descripcion: "El RUT del empleador del documento coincide con la " +
@@ -365,4 +407,4 @@ function catalogo() {
 }
 
 module.exports = {VERIFICACIONES, validarParametros, camposDe, ejecutar,
-  catalogo};
+  catalogo, UMBRAL_LEGIBLE_POR_DEFECTO};

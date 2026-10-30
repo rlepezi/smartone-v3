@@ -20,6 +20,9 @@ const MAPEO = requireRole(["superadmin", "evaluador"]);
 router.get("/", requireRole(["superadmin", "mandante_admin", "evaluador"]),
     controller.listar);
 router.post("/registrar", MAPEO, controller.registrar);
+router.get("/cobertura",
+    requireRole(["superadmin", "mandante_admin", "evaluador"]),
+    controller.cobertura);
 router.get("/:id/requerimientos", MAPEO, controller.requerimientos);
 router.post("/verificar", EDITAN, controller.verificar);
 router.post("/vincular", EDITAN, controller.vincular);

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ListChecks, Pencil, Plus, Search } from "lucide-react";
 import { reglaIAService } from "../../services/reglaIAService";
 import { ErrorBanner } from "../shared/ErrorBanner";
@@ -7,12 +8,13 @@ import { ENTIDADES_IA, TIPOS_REGLA, etiquetaEntidad } from "../../utils/reglasIA
 import { Tarjeta } from "./Tarjeta";
 import { ReglaModal } from "./ReglaModal";
 import { CLASE_INPUT, CLASE_PRIMARIO } from "./estilos";
+import { ReglasPorRequerimiento } from "./reglas/ReglasPorRequerimiento";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
 
-// Pestaña "Reglas de revisión" (solo superadmin): biblioteca reutilizable de reglas para la revisión
-// IA de los requerimientos. Filtros por tipo, entidad y estado, buscador, y crear / editar / activar.
-export const TabReglas = () => {
+// Biblioteca reutilizable de reglas para la revisión IA de los requerimientos. Filtros por tipo,
+// entidad y estado, buscador, y crear / editar / activar.
+const BibliotecaReglas = () => {
   const [reglas, setReglas] = useState(null);
   const [verificaciones, setVerificaciones] = useState([]);
   const [filtros, setFiltros] = useState({ tipo: "", entidad: "", estado: "" });
@@ -180,5 +182,32 @@ export const TabReglas = () => {
         />
       )}
     </Tarjeta>
+  );
+};
+
+const VISTAS = [
+  { key: "requerimientos", label: "Por requerimiento" },
+  { key: "biblioteca", label: "Biblioteca de reglas" },
+];
+
+// Pestaña "Reglas de revisión" (solo superadmin): la configuración de cada requerimiento en un solo
+// lugar (reglas, campos que lee la IA, modelo, ubicación en el mapeo y patrones) y la biblioteca de
+// reglas. La vista vive en la URL (?vista=biblioteca).
+export const TabReglas = () => {
+  const [params, setParams] = useSearchParams();
+  const vista = params.get("vista") === "biblioteca" ? "biblioteca" : "requerimientos";
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Vista de reglas" className="inline-flex p-1 rounded-xl bg-slate-100">
+        {VISTAS.map((v) => (
+          <button key={v.key} type="button" role="tab" aria-selected={vista === v.key}
+            onClick={() => setParams((p) => { const n = new URLSearchParams(p); n.set("vista", v.key); return n; }, { replace: true })}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${vista === v.key ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-carbon-dark"}`}>
+            {v.label}
+          </button>
+        ))}
+      </div>
+      {vista === "biblioteca" ? <BibliotecaReglas /> : <ReglasPorRequerimiento />}
+    </div>
   );
 };

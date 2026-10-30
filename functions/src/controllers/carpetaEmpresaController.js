@@ -123,6 +123,23 @@ class CarpetaEmpresaController {
       next(error);
     }
   }
+
+  /**
+   * Cobertura del mapeo por requerimiento en las carpetas del Mandante.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async cobertura(req, res, next) {
+    try {
+      const data = await carpetaEmpresaService.cobertura({
+        mandanteId: req.query.mandanteId}, req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = new CarpetaEmpresaController();

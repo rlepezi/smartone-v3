@@ -62,3 +62,25 @@ describe("calcularEstadoMapeo", () => {
     });
   });
 });
+
+describe("coberturaMapeo", () => {
+  it("cuenta las carpetas mapeadas y agrupa las ubicaciones por " +
+      "requerimiento, ordenadas por ruta", () => {
+    const c = backend.coberturaMapeo([
+      {id: "c2", ruta: "10. BETA", empresaNombre: "Beta", mapeo: {
+        r1: [{ruta: "10. BETA/01 ODI", tipo: "carpeta"}],
+        r2: [{ruta: "10. BETA/x.pdf", tipo: "archivo"}]}},
+      {id: "c1", ruta: "2. ALFA", empresaNombre: "Alfa", estadoMapeo:
+        "parcial", mapeo: {r1: "2. ALFA/ODI"}},
+      {id: "c3", ruta: "3. VACIA", mapeo: {r1: []}},
+    ]);
+    expect(c.carpetasMapeadas).toBe(2);
+    expect(c.porRequerimiento.r1.map((x) => x.carpetaEmpresaId))
+        .toEqual(["c1", "c2"]);
+    expect(c.porRequerimiento.r1[0]).toMatchObject({estadoMapeo: "parcial",
+      ubicaciones: [{ruta: "2. ALFA/ODI", tipo: "carpeta"}]});
+    expect(c.porRequerimiento.r2[0].ubicaciones[0].tipo).toBe("archivo");
+    expect(backend.coberturaMapeo([])).toEqual({carpetasMapeadas: 0,
+      porRequerimiento: {}});
+  });
+});

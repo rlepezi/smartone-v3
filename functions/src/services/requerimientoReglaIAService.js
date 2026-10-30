@@ -17,7 +17,7 @@ const bitacoraLogger = require("../utils/bitacoraLogger");
 const {aFecha} = require("../utils/vencimientos");
 const AppError = require("../utils/AppError");
 const {
-  ENTIDADES, conDefaults, disponibleParaIA,
+  ENTIDADES, conDefaults, disponibleParaIA, validarCampos,
 } = require("../reglasIA/tiposDocumentales");
 const {
   estadoIADe, estadoTrasCambio, errorTransicion,
@@ -37,6 +37,13 @@ const ETIQUETA_ENTIDAD = {persona: "Persona", empresa: "Empresa",
 // Los campos del tipo se suman a los de las reglas SOLO si el tipo sale del
 // documento de la plantilla vinculado (no del guardado de respaldo).
 const tipoDePlantilla = (tipo) => (tipo?.origen === "plantilla" ? tipo : null);
+// Campos que la IA lee además de los de las reglas: los propios del
+// requerimiento (copiados del tipo cuando un superadmin lo guarda) o, si aún
+// no los tiene, los del tipo del documento de la plantilla (como hasta ahora).
+const camposAdicionalesDe = (req, tipo) =>
+  (Array.isArray(req.camposAdicionales) ? req.camposAdicionales :
+    tipoDePlantilla(tipo)?.campos || []);
+const soloCampo = ({clave, etiqueta, tipo}) => ({clave, etiqueta, tipo});
 const MIMES_PRUEBA = ["image/jpeg", "image/png", "image/webp",
   "application/pdf"];
 // Límites de "Probar reglas": el mismo tope por archivo que el motor de
@@ -203,6 +210,13 @@ class RequerimientoReglaIAService {
   async _registrarCambio(req, actor, accion, detalle, extra = {}) {
     const anterior = estadoIADe(req);
     const {estado, aviso} = estadoTrasCambio(anterior);
+    const copia = extra.camposAdicionales === undefined ?
+      await this.copiaCamposAdicionales(req) : null;
+    if (copia) {
+      extra = {...extra, camposAdicionales: copia};
+      detalle = {...detalle,
+        camposAdicionalesCopiados: copia.map((c) => c.clave)};
+    }
     await requerimientoRepository.update(req.id, {...extra, estadoIA: estado,
       reglasIAActualizadasAt: FieldValue.serverTimestamp(),
       updatedBy: actor.uid});
@@ -213,6 +227,52 @@ class RequerimientoReglaIAService {
         {estadoIAAnterior: anterior, estadoIANuevo: estado} : {})},
     });
     return aviso;
+  }
+
+  /**
+   * Campos adicionales a copiar del tipo al requerimiento al guardarlo: los
+   * del tipo del documento de la plantilla, si el requerimiento aún no tiene
+   * los suyos (así lo que la IA lee no cambia). null si no hay que copiar.
+   * @param {Object} req Requerimiento.
+   * @return {Promise<?Array<Object>>} Campos, o null.
+   */
+  async copiaCamposAdicionales(req) {
+    if (Array.isArray(req.camposAdicionales)) return null;
+    const campos = tipoDePlantilla(await this._tipo(req))?.campos || [];
+    return campos.length ? campos.map(soloCampo) : null;
+  }
+
+  /**
+   * Edita los campos adicionales que la IA lee en este requerimiento (además
+   * de los que piden las reglas). Una lista vacía deja solo los de las reglas.
+   * @param {string} id ID del requerimiento.
+   * @param {*} campos [{clave, etiqueta, tipo}].
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Configuración actualizada (+ aviso).
+   */
+  async asignarCamposAdicionales(id, campos, actor) {
+    this._exigirSuperadmin(actor);
+    const req = await this._requerimiento(id);
+    if (!Array.isArray(campos)) {
+      throw new AppError(400, "Indique la lista de campos.");
+    }
+    let nuevos = [];
+    if (campos.length) {
+      const v = validarCampos(campos);
+      if (!v.ok) throw new AppError(400, v.error);
+      nuevos = v.valor.map(soloCampo);
+    }
+    const anteriores = camposAdicionalesDe(req, await this._tipo(req));
+    if (Array.isArray(req.camposAdicionales) &&
+        JSON.stringify(req.camposAdicionales) === JSON.stringify(nuevos)) {
+      return this.obtener(id, actor);
+    }
+    const aviso = await this._registrarCambio(req, actor,
+        "campos_adicionales_ia", {
+          anteriores: anteriores.map((c) => c.clave),
+          nuevos: nuevos.map((c) => c.clave),
+        }, {camposAdicionales: nuevos});
+    return {...await this.obtener(id, actor), aviso};
   }
 
   /**
@@ -308,8 +368,12 @@ class RequerimientoReglaIAService {
         reglasIAActualizadasAt: aISO(req.reglasIAActualizadasAt)},
       // Lo que la IA leerá al revisar: los campos de las reglas aplicables
       // (más los del tipo, si sale del documento de la plantilla).
-      camposIA: camposEfectivos(tipoDePlantilla(tipo),
+      camposIA: camposEfectivos({campos: camposAdicionalesDe(req, tipo)},
           aplicables.map((i) => i.snapshot)),
+      // Campos adicionales: propios (del requerimiento) o heredados del tipo.
+      camposAdicionales: {propios: Array.isArray(req.camposAdicionales),
+        campos: camposAdicionalesDe(req, tipo).map(soloCampo),
+        tipoNombre: tipoDePlantilla(tipo)?.nombre || null},
       tipo: tipo ? {id: tipo.id, codigo: tipo.codigo, nombre: tipo.nombre,
         estadoIA: tipo.estadoIA, entidades: tipo.entidades,
         campos: tipo.campos, origen: tipo.origen} : null,
@@ -402,9 +466,17 @@ class RequerimientoReglaIAService {
     if (!regla) throw new AppError(404, "Regla no encontrada.");
     const items = await this._vinculos(id);
     const tipo = await this._tipo(req);
+    // "Documento legible": sin umbral indicado, parte del umbral del tipo.
+    let parametros = payload.parametros;
+    if (regla.verificacion === "documento_legible" &&
+        parametros?.umbral === undefined &&
+        typeof tipo?.umbralLegibilidad === "number") {
+      parametros = {...(parametros || {}),
+        umbral: Math.round(tipo.umbralLegibilidad * 100)};
+    }
     const vinculo = await this._crearVinculo(req, regla, items, tipo, {
       severidad: this._severidad(payload.severidad),
-      parametros: this._parametros(regla, payload.parametros),
+      parametros: this._parametros(regla, parametros),
       activa: true,
     }, actor);
     const aviso = await this._registrarCambio(req, actor, "regla_ia_vinculada",
@@ -758,7 +830,8 @@ class RequerimientoReglaIAService {
     const snapshot = aplicables.map((i) => i.snapshot);
     const interpretativas = snapshot.filter((r) =>
       r.tipo === "interpretativa");
-    const campos = camposEfectivos(tipoDePlantilla(tipo), snapshot);
+    const campos = camposEfectivos({campos: camposAdicionalesDe(req, tipo)},
+        snapshot);
     const costo = (e, s) => costoService.calcular(params.preciosPorModelo,
         modelo, e, s);
     let respuesta;

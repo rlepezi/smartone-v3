@@ -17,7 +17,9 @@ const PESTANAS = [
   // Mapeo documental (reemplaza a "Estructura de carpetas"; la plantilla queda como "Plantilla
   // anterior" dentro de ella): superadmin y evaluador.
   { key: "mapeo", label: "Mapeo documental", roles: ["superadmin", "evaluador"] },
-  { key: "tipos", label: "Tipos documentales", roles: ["superadmin"] },
+  // Tipos documentales: en desuso, fuera del menú. La URL (?tab=tipos) sigue abriéndola para los
+  // enlaces de la revisión por carpetas, que aún usa los tipos (hasta la E5).
+  { key: "tipos", label: "Tipos documentales", roles: ["superadmin"], oculta: true },
   { key: "reglas", label: "Reglas de revisión", roles: ["superadmin"] },
   // El gasto de IA es información interna de SmartApplication: solo superadmin.
   { key: "consumo", label: "Consumo", roles: ["superadmin"] },
@@ -28,20 +30,21 @@ const PESTANAS = [
 export const ConfiguracionIAPage = () => {
   const { profile } = useAuth();
   const [params, setParams] = useSearchParams();
-  const visibles = PESTANAS.filter((p) => p.roles.includes(profile?.rol));
+  const permitidas = PESTANAS.filter((p) => p.roles.includes(profile?.rol));
+  const visibles = permitidas.filter((p) => !p.oculta);
 
   if (visibles.length === 0) {
     return <Navigate to="/dashboard" replace state={{ mensaje: "No tiene acceso a la configuración de Inteligencia Artificial." }} />;
   }
   // Enlaces anteriores a "Estructura de carpetas" abren la plantilla dentro de Mapeo documental.
   const pedida = params.get("tab") === "estructura" ? "mapeo" : params.get("tab");
-  const activa = visibles.some((p) => p.key === pedida) ? pedida : visibles[0].key;
+  const activa = permitidas.some((p) => p.key === pedida) ? pedida : visibles[0].key;
 
   return (
-    <div className={`space-y-6 ${activa === "mapeo" ? "max-w-7xl" : "max-w-6xl"}`}>
+    <div className={`space-y-6 ${["mapeo", "reglas"].includes(activa) ? "max-w-7xl" : "max-w-6xl"}`}>
       <PageHeader
         title="Inteligencia Artificial"
-        subtitle="Conexión, fuentes documentales, mapeo documental, tipos documentales, reglas de revisión y consumo"
+        subtitle="Conexión, fuentes documentales, mapeo documental, reglas de revisión y consumo"
         icon={BrainCircuit}
         onRefresh={() => window.location.reload()}
       />

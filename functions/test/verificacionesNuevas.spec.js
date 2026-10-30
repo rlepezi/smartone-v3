@@ -69,3 +69,24 @@ describe("carpeta_presente", () => {
         .resultado).toBe("no_cumple");
   });
 });
+
+describe("documento_legible", () => {
+  const p = (x) => validarParametros("documento_legible", x).valor;
+  test("umbral por defecto 80% y pide el campo legibilidad", () => {
+    expect(p({})).toEqual({umbral: 80});
+    expect(camposDe("documento_legible", p({}))).toEqual(["legibilidad"]);
+    expect(validarParametros("documento_legible", {umbral: 0}).ok)
+        .toBe(false);
+  });
+  test("compara la legibilidad (0 a 1 o en %) con el mínimo", () => {
+    const leer = (valor, umbral = 80) => ejecutar("documento_legible",
+        {legibilidad: {valor}}, {}, {umbral}).resultado;
+    expect(leer("0.92")).toBe("cumple");
+    expect(leer("0,8")).toBe("cumple");
+    expect(leer("0.79")).toBe("no_cumple");
+    expect(leer("85%")).toBe("cumple");
+    expect(leer("0.5", 40)).toBe("cumple");
+    expect(leer(null)).toBe("no_determinable");
+    expect(leer("ilegible")).toBe("no_determinable");
+  });
+});

@@ -13,7 +13,7 @@ import { AgregarReglaModal } from "./AgregarReglaModal";
 import { CopiarReglasModal } from "./CopiarReglasModal";
 import { ProbarReglasModal } from "./ProbarReglasModal";
 import { ResultadoPrueba } from "./ResultadoPrueba";
-import { UbicacionPlantillaResumen } from "./UbicacionPlantillaResumen";
+import { CamposAdicionales } from "./CamposAdicionales";
 import { configuracionIAService } from "../../../services/configuracionIAService";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
@@ -104,10 +104,11 @@ const FilaRegla = ({ vinculo, indice, total, esquema, ocupado, onMover, onCambia
 // leerá (sale de las reglas; si el requerimiento está vinculado a un documento de la estructura de
 // carpetas, se suman los campos del tipo de ese documento), el modelo, "Probar reglas" y las últimas
 // pruebas. El tipo documental no se elige aquí: sale del vínculo en la plantilla. Cada cambio se guarda al momento y queda en la Bitácora.
-// Muestra también la ubicación del requerimiento en la estructura de carpetas (`onIrADatos`: a la
-// pestaña Datos, donde se asigna).
-// `carpetaExpediente`: abierto desde un expediente, la carpeta asignada ahí al requerimiento.
-export const ReglasIARequerimiento = ({ requerimientoId, onIrADatos, carpetaExpediente = null }) => {
+// `ubicacion`: dónde está ubicado el requerimiento, según desde dónde se abre (la cobertura global
+// del mapeo documental en el formulario; la carpeta del expediente en el expediente). La plantilla
+// de estructura ya no se muestra (en desuso).
+// `onCambio(config)`: avisa a quien lo contiene cuando cambia la configuración (estado IA, reglas).
+export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCambio = null }) => {
   const [config, setConfig] = useState(null);
   const [verificaciones, setVerificaciones] = useState([]);
   const [error, setError] = useState(null);
@@ -137,7 +138,7 @@ export const ReglasIARequerimiento = ({ requerimientoId, onIrADatos, carpetaExpe
     setError(null);
     try {
       const r = await promesa();
-      if (r?.requerimiento) setConfig(r);
+      if (r?.requerimiento) { setConfig(r); onCambio?.(r); }
       setAviso(r?.aviso || exito);
       return r;
     } catch (err) {
@@ -202,7 +203,7 @@ export const ReglasIARequerimiento = ({ requerimientoId, onIrADatos, carpetaExpe
         ))}
       </div>
 
-      <UbicacionPlantillaResumen requerimiento={{ ...requerimiento, id }} tipoCodigo={tipo?.codigo || null} onIrADatos={onIrADatos} carpetaExpediente={carpetaExpediente} />
+      {ubicacion}
 
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -246,7 +247,9 @@ export const ReglasIARequerimiento = ({ requerimientoId, onIrADatos, carpetaExpe
           <span className="font-bold text-carbon-dark">La IA leerá:</span>{" "}
           {camposIA.map((c) => <span key={c.clave} className="inline-block mr-1 mb-0.5 px-1.5 py-px rounded bg-white border border-slate-200 text-slate-600">{c.etiqueta}</span>)}
         </p>
-        <p className="text-[11px] text-slate-400">Se calcula con las reglas activas{tipo?.origen === "plantilla" ? ` y los campos de ${tipo.nombre} (documento vinculado en la estructura de carpetas)` : ""}.</p>
+        <p className="text-[11px] text-slate-400">Se calcula con las reglas activas y los campos adicionales.</p>
+        <CamposAdicionales datos={config.camposAdicionales} ocupado={ocupado}
+          onGuardar={(campos) => conAviso(() => silencioso(() => reglaIAService.asignarCamposAdicionales(id, campos), "Campos adicionales guardados."))} />
         <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
           <span className="font-bold text-carbon-dark">Modelo:</span>
           <select aria-label="Modelo de IA" value={requerimiento.modeloPreferidoIA || ""} disabled={ocupado} className={`${CLASE_INPUT} w-auto`}

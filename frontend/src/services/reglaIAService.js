@@ -96,6 +96,12 @@ export const reglaIAService = {
     return (await apiClient(`${REQ}/${id}/modelo`, { method: "PUT", body: { modelo } })).data;
   },
 
+  // Campos que la IA lee además de los de las reglas ([{ clave, etiqueta, tipo }]; [] = solo los
+  // de las reglas). Reemplazan a los del tipo documental.
+  async asignarCamposAdicionales(id, campos) {
+    return (await apiClient(`${REQ}/${id}/campos-adicionales`, { method: "PUT", body: { campos } })).data;
+  },
+
   // Reglas sugeridas [{ verificacion, nombre, etiqueta }] → agregadas al requerimiento como
   // bloqueantes: se reutiliza la regla activa de la biblioteca con esa verificación (sin listas
   // propias, p. ej. carpeta_presente con nombres de carpeta) o, si no hay, se crea.

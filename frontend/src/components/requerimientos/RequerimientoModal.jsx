@@ -10,6 +10,7 @@ import { ordenarPerfilesParticipacion } from "../../utils/ordenPerfiles";
 import { Tabs } from "../shared/Tabs";
 import { ReglasIARequerimiento } from "./reglas-ia/ReglasIARequerimiento";
 import { CampoUbicacionPlantilla } from "./CampoUbicacionPlantilla";
+import { CoberturaMapeoRequerimiento } from "./reglas-ia/UbicacionMapeo";
 
 const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
 const CLASE_LABEL = "block text-xs font-semibold text-gray-700 mb-1.5";
@@ -245,7 +246,13 @@ export const RequerimientoModal = ({
         )}
         {pestana === "reglas" && conReglasIA ? (
           <div className="flex-1 min-h-0 overflow-y-auto p-5">
-            <ReglasIARequerimiento requerimientoId={requerimiento.id} onIrADatos={() => setPestana("datos")} />
+            <ReglasIARequerimiento requerimientoId={requerimiento.id}
+              ubicacion={tipoEntidad === "empresa" ? (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1.5">
+                  <p className="text-xs font-bold text-carbon-dark">Ubicación en el mapeo documental</p>
+                  <CoberturaMapeoRequerimiento mandanteId={mandante.id} requerimientoId={requerimiento.id} />
+                </div>
+              ) : null} />
           </div>
         ) : (
         <form onSubmit={alEnviar} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
@@ -270,6 +277,16 @@ export const RequerimientoModal = ({
               <p className="text-[11px] text-slate-400 mt-1">Heredado de la pestaña seleccionada</p>
             </div>
 
+            {/* Empresa: dónde está ubicado en las carpetas mapeadas (Mapeo documental). Personas y
+                maquinarias: la plantilla, que aún usa la revisión por carpetas (hasta la E5). */}
+            {tipoEntidad === "empresa" ? (
+              <div>
+                <label className={CLASE_LABEL}>Ubicación en el mapeo documental</label>
+                {requerimiento?.id
+                  ? <CoberturaMapeoRequerimiento mandanteId={mandante.id} requerimientoId={requerimiento.id} />
+                  : <p className="text-[11px] text-slate-400">Se verá al ubicarlo en Configuración › Inteligencia Artificial › Mapeo documental.</p>}
+              </div>
+            ) : (
             <div>
               <label className={CLASE_LABEL}>Ubicación en la estructura de carpetas</label>
               <CampoUbicacionPlantilla
@@ -283,6 +300,7 @@ export const RequerimientoModal = ({
                 onChange={(claves) => setUbicacion((u) => ({ ...u, actual: claves }))}
               />
             </div>
+            )}
 
             <div>
               <label className={CLASE_LABEL}>Perfiles de Participación a los que aplica *</label>

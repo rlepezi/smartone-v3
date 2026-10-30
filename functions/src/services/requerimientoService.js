@@ -539,6 +539,15 @@ class RequerimientoService {
       cambios.estado = entrada.estado;
     }
 
+    // Al guardarlo un superadmin, los campos que la IA lee del tipo pasan al
+    // requerimiento (camposAdicionales), sin cambiar lo que se extrae.
+    if (actor?.rol === "superadmin") {
+      // eslint-disable-next-line global-require
+      const reglasIA = require("./requerimientoReglaIAService");
+      const copia = await reglasIA.copiaCamposAdicionales(existente);
+      if (copia) cambios.camposAdicionales = copia;
+    }
+
     const final = {...existente, ...cambios};
     const activosActuales =
         await perfilRequerimientoRepository.getActivosByRequerimiento(id);

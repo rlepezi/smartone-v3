@@ -256,3 +256,74 @@ describe("camposEfectivos", () => {
             .toEqual(["titulo"]);
       });
 });
+
+describe("E4: campos adicionales y Documento legible", () => {
+  const PLANTILLA = {secciones: [{clave: "personal", tipo: "entidades",
+    entidad: "persona", documentos: [{clave: "ci", nombre: "Cédula",
+      tipoDocumentalCodigo: "CEDULA_CL", requerimientoId: "r1"}]}]};
+  const REGLA_LEGIBLE = {id: "g-leg", nombre: "Documento legible",
+    version: 1, tipo: "deterministica", verificacion: "documento_legible",
+    parametros: {}, entidades: ["persona"], estado: "activa"};
+
+  beforeEach(() => {
+    req = {...req, tipoDocumentalId: null};
+    plantillaEstructuraRepository.getActiva.mockResolvedValue(PLANTILLA);
+    requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([]);
+    reglaIARepository.getByIds.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    plantillaEstructuraRepository.getActiva.mockResolvedValue(null);
+  });
+
+  it("sin campos propios hereda los del tipo de la plantilla; al guardar " +
+      "un cambio se copian al requerimiento sin cambiar lo que lee la IA",
+  async () => {
+    const antes = await servicio.obtener("r1", ACTOR);
+    expect(antes.camposAdicionales).toMatchObject({propios: false,
+      tipoNombre: "Cédula"});
+    expect(antes.camposAdicionales.campos.map((c) => c.clave))
+        .toEqual(["rut", "fechaVencimiento"]);
+    const r = await servicio.asignarModelo("r1", "modelo-demo", ACTOR);
+    expect(req.camposAdicionales).toEqual(CEDULA.campos);
+    expect(r.camposAdicionales.propios).toBe(true);
+    expect(r.camposIA.map((c) => c.clave)).toEqual(
+        antes.camposIA.map((c) => c.clave));
+    expect(bitacoraLogger.registrarEvento).toHaveBeenCalledWith(
+        expect.objectContaining({accion: "modelo_ia",
+          detalle: expect.objectContaining({
+            camposAdicionalesCopiados: ["rut", "fechaVencimiento"]})}));
+  });
+
+  it("los campos propios reemplazan a los del tipo (lista vacía: solo los " +
+      "de las reglas) y el cambio queda en la Bitácora", async () => {
+    const r = await servicio.asignarCamposAdicionales("r1", [], ACTOR);
+    expect(req.camposAdicionales).toEqual([]);
+    expect(r.camposIA.map((c) => c.clave)).toEqual(["titulo"]);
+    expect(bitacoraLogger.registrarEvento).toHaveBeenCalledWith(
+        expect.objectContaining({accion: "campos_adicionales_ia",
+          detalle: expect.objectContaining({
+            anteriores: ["rut", "fechaVencimiento"], nuevos: []})}));
+    const otro = await servicio.asignarCamposAdicionales("r1",
+        [{clave: "cargo", etiqueta: "Cargo", tipo: "texto"}], ACTOR);
+    expect(otro.camposIA.map((c) => c.clave)).toEqual(["cargo", "titulo"]);
+    await expect(servicio.asignarCamposAdicionales("r1",
+        [{clave: "", etiqueta: "x", tipo: "texto"}], ACTOR))
+        .rejects.toMatchObject({status: 400});
+    await expect(servicio.asignarCamposAdicionales("r1", "rut", ACTOR))
+        .rejects.toMatchObject({status: 400});
+  });
+
+  it("Documento legible parte del umbral del tipo (0,65 → 65%)", async () => {
+    tipoDocumentalRepository.list.mockResolvedValue([
+      {...CEDULA, umbralLegibilidad: 0.65}]);
+    const vinculo = {id: "v5", requerimientoId: "r1", reglaId: "g-leg",
+      orden: 1, severidad: "bloqueante", parametros: {umbral: 65},
+      activa: true};
+    reglaIARepository.getById.mockResolvedValue(REGLA_LEGIBLE);
+    requerimientoReglaRepository.create.mockResolvedValue(vinculo);
+    await servicio.agregarRegla("r1", {reglaId: "g-leg"}, ACTOR);
+    expect(requerimientoReglaRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({parametros: {umbral: 65}}));
+    tipoDocumentalRepository.list.mockResolvedValue([CEDULA]);
+  });
+});

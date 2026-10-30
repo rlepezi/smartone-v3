@@ -37,32 +37,14 @@ beforeEach(() => {
 });
 
 describe("crear", () => {
-  it("crea en piloto, activo, soloReglas y registra en la bitácora",
+  it("ya no crea tipos (en desuso): rechaza sin escribir ni registrar",
       async () => {
-        const t = await servicio.crear(PAYLOAD, ACTOR);
-        expect(repo.create).toHaveBeenCalledWith("CERT_DEMO",
-            expect.objectContaining({codigo: "CERT_DEMO", estado: "activo",
-              estadoIA: "piloto", soloReglas: true, reglas: []}));
-        expect(t).toMatchObject({entidades: ["empresa"],
-          campos: [{clave: "certificado"}]});
-        expect(bitacoraLogger.registrarEvento).toHaveBeenCalledWith(
-            expect.objectContaining({accion: "creado",
-              entidadId: "CERT_DEMO"}));
-      });
-
-  it("rechaza código repetido, código inválido y datos incompletos",
-      async () => {
-        repo.getByCodigo.mockResolvedValue({id: "x"});
         await expect(servicio.crear(PAYLOAD, ACTOR))
-            .rejects.toThrow(/Ya existe/);
-        repo.getByCodigo.mockResolvedValue(null);
-        await expect(servicio.crear({...PAYLOAD, codigo: "1 mal"}, ACTOR))
-            .rejects.toThrow(/Código no válido/);
-        await expect(servicio.crear({...PAYLOAD, entidades: undefined},
-            ACTOR)).rejects.toThrow(/entidades y los campos/);
-        await expect(servicio.crear({...PAYLOAD, entidades: ["otra"]},
-            ACTOR)).rejects.toThrow(/Entidad no válida/);
+            .rejects.toMatchObject({status: 409});
+        await expect(servicio.crear(PAYLOAD, ACTOR))
+            .rejects.toThrow(/en desuso/);
         expect(repo.create).not.toHaveBeenCalled();
+        expect(bitacoraLogger.registrarEvento).not.toHaveBeenCalled();
       });
 });
 

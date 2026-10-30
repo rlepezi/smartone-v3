@@ -102,6 +102,8 @@ const REGLAS_SUGERIDAS = [
   { verificacion: "coincide_patente", etiqueta: "Patente coincide", nombre: "Patente coincide", entidades: ["recurso"] },
   { verificacion: "coincide_empresa", etiqueta: "Empleador coincide con la empresa", nombre: "Empleador coincide con la empresa",
     entidades: ["persona", "recurso"] },
+  { verificacion: "documento_legible", etiqueta: "Documento legible", nombre: "Documento legible",
+    entidades: ["persona", "empresa", "recurso"] },
   { verificacion: "vigente_a_fecha", etiqueta: "Vigente a la fecha", nombre: "Vigente a la fecha", entidades: ["persona", "empresa", "recurso"] },
   { verificacion: "vigente_hasta_fin_proyecto", etiqueta: "Vigente hasta el fin del proyecto", nombre: "Vigente hasta el fin del proyecto",
     entidades: ["persona", "empresa", "recurso"] },

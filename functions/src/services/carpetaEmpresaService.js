@@ -30,7 +30,7 @@ const {
 const {validarRutaRelativa} = require("../utils/repositorioDocumental");
 const {fuenteActiva, aPublica} = require("../utils/fuentesDocumentales");
 const {
-  calcularEstadoMapeo, avanceMapeo, entradasMapeo,
+  calcularEstadoMapeo, avanceMapeo, entradasMapeo, coberturaMapeo,
 } = require("../utils/carpetaExpediente");
 const {aFecha} = require("../utils/vencimientos");
 
@@ -603,6 +603,37 @@ class CarpetaEmpresaService {
     this._mandante(actor, carpeta.mandanteId);
     const r = await this._asignables(carpeta, tipoEntidad);
     return {...r, total: r.requerimientos.length};
+  }
+
+  /**
+   * Cobertura del mapeo por requerimiento en las Carpetas de empresa activas
+   * del Mandante: "ubicado en X de Y carpetas mapeadas", con la carpeta y la
+   * ruta de cada ubicación (para Reglas de revisión).
+   * @param {{mandanteId: ?string}} filtros Filtros.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<{carpetasMapeadas: number, porRequerimiento: Object}>}
+   *     Cobertura.
+   */
+  async cobertura({mandanteId}, actor) {
+    // Lectura de su Mandante también para mandante_admin (formulario del
+    // requerimiento).
+    this._exigirRol(actor, ROLES_LISTAN, "ver la cobertura del mapeo");
+    const id = this._mandante(actor, mandanteId);
+    const carpetas = (await carpetaEmpresaRepository.list({mandanteId: id}))
+        .filter((c) => c.estado === "activa");
+    const conMapeo = carpetas.filter((c) => Object.values(c.mapeo || {})
+        .some((v) => entradasMapeo(v).length));
+    const [empresas, proyectos] = await Promise.all([
+      empresaRepository.getByIds([...new Set(conMapeo.map((c) =>
+        c.empresaId).filter(Boolean))]),
+      proyectoRepository.getByIds([...new Set(conMapeo.map((c) =>
+        c.proyectoId).filter(Boolean))]),
+    ]);
+    const e = new Map((empresas || []).map((x) => [x.id, x]));
+    const p = new Map((proyectos || []).map((x) => [x.id, x]));
+    return coberturaMapeo(conMapeo.map((c) => ({...c,
+      empresaNombre: e.get(c.empresaId)?.razonSocial || null,
+      proyectoNombre: p.get(c.proyectoId)?.nombre || null})));
   }
 
   /**

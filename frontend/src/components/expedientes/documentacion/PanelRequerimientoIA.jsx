@@ -44,8 +44,9 @@ const Instruccion = ({ texto }) => {
 //  - archivoAbierto: { file, rutaRelativa } del visor, o null.
 //  - documento: { opciones: [{ ruta, nombre, candidato }], actual, onElegir, noEncontrado } | null.
 //  - carpeta: dónde está el documento (controles de carpeta del panel), entre el encabezado y las reglas.
-//  - carpetaExpediente: carpeta asignada al requerimiento en este expediente (para Reglas IA).
-export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto, documento, puedeDefinirReglas, onCerrar, carpeta = null, carpetaExpediente = null }) => {
+//  - mapeoExpediente: mapeo de la carpeta de este expediente (Empresa), para mostrar en Reglas IA
+//    dónde está ubicado el requerimiento en ella.
+export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto, documento, puedeDefinirReglas, onCerrar, carpeta = null, mapeoExpediente = null }) => {
   const { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones } = datos;
   const reglas = pauta?.reglas || [];
   const estadoIA = pauta?.estadoIA || "sin_reglas";
@@ -257,7 +258,7 @@ export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto,
         {error && <p className="text-[11px] text-red-600">{error}</p>}
       </div>
       {editandoReglas && (
-        <ReglasIAModal requerimientoId={instancia.requerimientoId} nombre={instancia.nombre} onCerrar={cerrarReglas} carpetaExpediente={carpetaExpediente} />
+        <ReglasIAModal requerimientoId={instancia.requerimientoId} nombre={instancia.nombre} onCerrar={cerrarReglas} mapeoExpediente={mapeoExpediente} />
       )}
     </div>
   );

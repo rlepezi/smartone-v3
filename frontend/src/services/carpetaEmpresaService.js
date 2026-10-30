@@ -44,6 +44,12 @@ export const carpetaEmpresaService = {
 
   // Requerimientos asignables de una carpeta (entidad "empresa" | "persona" | "recurso"):
   // { conExpediente, requerimientos: [{ id, nombre, nombreCorto }], total }.
+  // Cobertura del mapeo por requerimiento: { carpetasMapeadas, porRequerimiento: { reqId: [{
+  // carpetaEmpresaId, ruta, empresaNombre, proyectoNombre, estadoMapeo, ubicaciones }] } }.
+  async cobertura(mandanteId) {
+    return (await apiClient(`/carpetas-empresa/cobertura?mandanteId=${encodeURIComponent(mandanteId)}`)).data;
+  },
+
   async requerimientos(id, entidad = "empresa") {
     return (await apiClient(`/carpetas-empresa/${id}/requerimientos?entidad=${entidad}`)).data;
   },

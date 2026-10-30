@@ -161,7 +161,41 @@ function calcularEstadoMapeo(mapeo, requerimientoIds) {
   return ubicados === total ? "completo" : "parcial";
 }
 
+/**
+ * Cobertura del mapeo por requerimiento en las Carpetas de empresa de un
+ * Mandante: en cuántas de las carpetas mapeadas (con al menos una ubicación)
+ * está ubicado cada requerimiento, y en qué ruta de cada una.
+ * @param {Array<Object>} carpetas Carpetas ({id, ruta, mapeo, empresaNombre,
+ *     proyectoNombre, estadoMapeo}).
+ * @return {{carpetasMapeadas: number, porRequerimiento: Object<string,
+ *     Array<Object>>}} porRequerimiento: reqId → [{carpetaEmpresaId, ruta,
+ *     empresaNombre, proyectoNombre, estadoMapeo, ubicaciones: [{ruta,
+ *     tipo}]}], ordenadas por ruta.
+ */
+function coberturaMapeo(carpetas) {
+  const porRequerimiento = {};
+  let carpetasMapeadas = 0;
+  (carpetas || []).forEach((c) => {
+    const pares = Object.entries(c.mapeo || {})
+        .map(([id, v]) => [id, entradasMapeo(v)]).filter(([, e]) => e.length);
+    if (!pares.length) return;
+    carpetasMapeadas++;
+    pares.forEach(([id, entradas]) => {
+      (porRequerimiento[id] = porRequerimiento[id] || []).push({
+        carpetaEmpresaId: c.id, ruta: c.ruta,
+        empresaNombre: c.empresaNombre || null,
+        proyectoNombre: c.proyectoNombre || null,
+        estadoMapeo: c.estadoMapeo || "sin_mapear",
+        ubicaciones: entradas.map((e) => ({ruta: e.ruta, tipo: e.tipo})),
+      });
+    });
+  });
+  Object.values(porRequerimiento).forEach((l) => l.sort((a, b) =>
+    a.ruta.localeCompare(b.ruta, "es", {numeric: true})));
+  return {carpetasMapeadas, porRequerimiento};
+}
+
 module.exports = {
   resolverCarpetaExpediente, rutasDeRequerimiento, calcularEstadoMapeo,
-  avanceMapeo, normalizarMapeo, entradasMapeo,
+  avanceMapeo, normalizarMapeo, entradasMapeo, coberturaMapeo,
 };
