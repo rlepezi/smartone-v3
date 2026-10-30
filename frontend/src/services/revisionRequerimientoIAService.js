@@ -22,9 +22,22 @@ export const revisionRequerimientoIAService = {
     return (await apiClient(`${BASE}/expedientes/${expedienteId}${q ? `?${q}` : ""}`)).data;
   },
 
-  // datos: { expedienteRequerimientoId, origen, archivos: [{ nombre, rutaRelativa, mime, contenidoBase64, parte, ultimaModificacion }] }.
+  // datos: { expedienteRequerimientoId, origen, archivos: [{ nombre, rutaRelativa, mime, contenidoBase64, parte, ultimaModificacion }],
+  // lote?: true, loteId? } (en lote, el consumo queda como "revision_lote").
   async revisar(expedienteId, datos) {
     return (await apiClient(`${BASE}/expedientes/${expedienteId}/revisar`, { method: "POST", body: datos })).data;
+  },
+
+  // Antes de un lote: items [{ expedienteRequerimientoId, archivos: [{ mime, paginas? }] }] →
+  // { documentos, archivos, porEntidad, costoEstimadoUsd, modelos, faltanPrecios, limiteMensualUsd,
+  //   gastoMesUsd, disponibleUsd, alcanza }.
+  async estimarLote(expedienteId, items) {
+    return (await apiClient(`${BASE}/expedientes/${expedienteId}/lote/estimar`, { method: "POST", body: { items } })).data;
+  },
+
+  // Confirmación en bloque → { aplicadas, omitidas: [{ revisionId, motivo }], errores }.
+  async confirmarLote(expedienteId, revisionIds) {
+    return (await apiClient(`${BASE}/expedientes/${expedienteId}/lote/confirmar`, { method: "POST", body: { revisionIds } })).data;
   },
 
   async descartar(revisionId) {

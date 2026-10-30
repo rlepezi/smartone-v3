@@ -79,15 +79,16 @@ describe("Empresa", () => {
     expect(claves(u)).toEqual(["contrato"]);
   });
 
-  test("el tipo del documento vinculado rige su elegibilidad", () => {
-    const tiposPorCodigo = new Map([["CONTRATO",
-      tipo("CONTRATO", {estado: "inactivo"})]]);
-    expect(ubicar("reqA", "ANEXO", "empresa", {tiposPorCodigo}))
-        .toMatchObject({elegible: false, motivo: "tipo_inactivo"});
-  });
+  test("el tipo del documento vinculado ya no decide la elegibilidad (E5)",
+      () => {
+        const tiposPorCodigo = new Map([["CONTRATO",
+          tipo("CONTRATO", {estado: "inactivo"})]]);
+        expect(ubicar("reqA", "ANEXO", "empresa", {tiposPorCodigo}))
+            .toMatchObject({elegible: true, motivo: null});
+      });
 
-  test("sin tipo en el vínculo: el guardado es respaldo; sin ninguno, " +
-      "sin_tipo (no es error)", () => {
+  test("sin tipo en el vínculo: el guardado es respaldo; sin ninguno ni " +
+      "ubicación, no_en_plantilla", () => {
     const respaldo = ubicacionRequerimiento({requerimiento: {id: "reqA"},
       tipo: tipo("CONTRATO"), tipoEntidad: "empresa",
       plantilla: plantilla(), tiposPorCodigo: new Map()});
@@ -95,8 +96,8 @@ describe("Empresa", () => {
     const ninguno = ubicacionRequerimiento({requerimiento: {id: "reqZ"},
       tipo: null, tipoEntidad: "empresa", plantilla: plantilla(),
       tiposPorCodigo: new Map()});
-    expect(ninguno).toMatchObject({elegible: false, motivo: "sin_tipo",
-      tipo: null, origenTipo: null});
+    expect(ninguno).toMatchObject({elegible: false,
+      motivo: "no_en_plantilla", tipo: null, origenTipo: null});
   });
 
   test("sección vinculada sin documentos: ubicación sin IA", () => {
@@ -112,6 +113,14 @@ describe("Empresa", () => {
     expect(u.nivel).toBe("tipo");
     expect(claves(u)).toEqual(["listado"]);
     expect(u.elegible).toBe(true);
+  });
+
+  test("ubicado en el mapeo y sin tipo documental: elegible (E5)", () => {
+    const u = ubicacionRequerimiento({requerimiento: {id: "reqM"},
+      tipo: null, tipoEntidad: "empresa", plantilla: null,
+      mapeo: {requerimientos: {reqM: "05. ODI"}}});
+    expect(u).toMatchObject({nivel: "mapeo", ruta: "05. ODI",
+      elegible: true, motivo: null, tipo: null});
   });
 
   test("sin ubicación", () => {
@@ -155,8 +164,8 @@ describe("Persona", () => {
   test("sin tipo documental: la ubicación se informa igual", () => {
     const u = ubicacionRequerimiento({requerimiento: {id: "reqLic"},
       tipo: null, tipoEntidad: "persona", plantilla: plantilla()});
-    expect(u).toMatchObject({nivel: "plantilla", elegible: false,
-      motivo: "sin_tipo"});
+    expect(u).toMatchObject({nivel: "plantilla", elegible: true,
+      motivo: null, tipo: null});
   });
 });
 
@@ -173,13 +182,13 @@ describe("Recurso", () => {
 });
 
 describe("tipo inactivo, solo reglas y carpeta libre", () => {
-  test("el tipo rige en todos los niveles", () => {
+  test("el tipo ya no excluye en ningún nivel (E5)", () => {
     const base = {requerimiento: req("reqLic", "LICENCIA_CL"),
       tipoEntidad: "persona", plantilla: plantilla()};
     expect(ubicacionRequerimiento({...base, tipo: tipo("LICENCIA_CL",
-        {estado: "inactivo"})}).motivo).toBe("tipo_inactivo");
+        {estado: "inactivo"})})).toMatchObject({elegible: true, motivo: null});
     expect(ubicacionRequerimiento({...base, tipo: tipo("LICENCIA_CL",
-        {soloReglas: true})}).motivo).toBe("solo_reglas");
+        {soloReglas: true})})).toMatchObject({elegible: true, motivo: null});
     expect(ubicacionRequerimiento({...base, tipo: tipo("LICENCIA_CL"),
       libre: true})).toMatchObject({elegible: true, documentos: []});
   });

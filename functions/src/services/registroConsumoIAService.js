@@ -6,6 +6,9 @@ const ORIGENES = {
   REVISION_CARPETA: "revision_carpeta",
   PRUEBA_REGLAS: "prueba_reglas",
   REVISION_REQUERIMIENTO: "revision_requerimiento",
+  // Revisión en lote de un expediente (mismo motor de reglas, varios
+  // requisitos en una pasada).
+  REVISION_LOTE: "revision_lote",
   PROBAR_CONEXION: "probar_conexion",
 };
 

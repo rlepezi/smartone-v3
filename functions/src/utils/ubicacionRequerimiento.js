@@ -1,5 +1,5 @@
 const {
-  ESTADOS_IA_ELEGIBLES, seccionHabilitada, documentoHabilitado,
+  seccionHabilitada, documentoHabilitado,
 } = require("./alcanceValidacion");
 
 // Ubicación de los documentos de un requerimiento dentro de la carpeta del
@@ -148,24 +148,6 @@ function tipoDeRequerimiento({requerimiento, plantilla, tipoEntidad,
 }
 
 /**
- * Motivo por el que un tipo documental no sirve para la revisión por
- * carpetas, o null.
- * @param {?Object} tipo Tipo documental.
- * @return {?string} Motivo.
- */
-function motivoTipo(tipo) {
-  if (!tipo) return "sin_tipo";
-  if (tipo.estado !== "activo" ||
-      !ESTADOS_IA_ELEGIBLES.includes(tipo.estadoIA)) {
-    return "tipo_inactivo";
-  }
-  // Tipo creado para las reglas por requerimiento: sin extracción por
-  // carpeta.
-  if (tipo.soloReglas) return "solo_reglas";
-  return null;
-}
-
-/**
  * Elemento de ubicación (sección y documento) para la respuesta.
  * @param {Object} seccion Sección.
  * @param {?Object} documento Documento.
@@ -238,22 +220,17 @@ function ubicacionRequerimiento({requerimiento, tipo, tipoEntidad,
       origenTipo: efectivo.origen});
   if (nivel === "plantilla") {
     // Sin caída: cualquier vínculo inválido deja el requerimiento NO
-    // elegible (es un error de configuración de la plantilla). El tipo de
-    // cada documento es el suyo (el vínculo define el tipo): ya no se
-    // compara con un tipo del requerimiento; sin tipo, el guardado.
+    // elegible (es un error de configuración de la plantilla).
     for (const d of documentos) {
       if (!d.habilitado) return resultado(false, "documento_deshabilitado");
       if (d.sensible) return resultado(false, "dato_sensible");
       if (!d.documentoClave) return resultado(false, "seccion_sin_documentos");
-      const motivo = motivoTipo(
-          tiposPorCodigo?.get(d.tipoDocumentalCodigo) || tipo || null);
-      if (motivo) return resultado(false, motivo);
     }
     return resultado(true, null);
   }
-  // Mapeo, carpeta libre y calce por tipo: rige el tipo efectivo.
-  const motivo = motivoTipo(efectivo.tipo);
-  if (motivo) return resultado(false, motivo);
+  // La elegibilidad depende de la ubicación, no del tipo documental (E5):
+  // el tipo efectivo se informa, pero un requerimiento sin tipo (o con uno
+  // inactivo) ubicado en el mapeo sigue siendo elegible.
   if (libre || nivel === "mapeo") return resultado(true, null);
   if (nivel === "tipo") {
     const habilitados = documentos.filter((d) => d.habilitado);

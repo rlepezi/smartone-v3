@@ -34,7 +34,6 @@ import { EstadoExpedienteStepper } from "../../components/shared/EstadoExpedient
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { mandanteService } from "../../services/mandanteService";
-import { revisionExpedienteService } from "../../services/revisionExpedienteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import {
   porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio, textoPorcentaje, nivelAcreditacion,
@@ -290,21 +289,6 @@ export const ExpedienteDetailPage = () => {
     return () => { vigente = false; };
   }, [id, repositorioDocIntento]);
 
-  // Ubicación de los documentos de cada requerimiento (precedencia: carpeta asignada en el
-  // expediente, vínculo de la plantilla, tipo documental), para el panel de documentos. Si no se
-  // puede leer, el panel sigue funcionando como antes (carpeta asignada o raíz).
-  const [ubicacionesIA, setUbicacionesIA] = useState(null);
-  useEffect(() => {
-    let vigente = true;
-    revisionExpedienteService.obtenerConfig(id)
-      .then((d) => {
-        if (!vigente) return;
-        setUbicacionesIA(Object.fromEntries((d?.requerimientos || []).map((r) => [r.requerimientoId,
-          { ...(r.ubicacion || {}), tipoEntidad: r.tipoEntidad, nombre: r.nombre }])));
-      })
-      .catch(() => { if (vigente) setUbicacionesIA(null); });
-    return () => { vigente = false; };
-  }, [id, repositorioDocIntento]);
 
   // `silencioso`: al guardar una evaluación o adjuntar evidencia (onGuardado de la Planilla) hay
   // que refrescar evaluaciones/expediente, pero SIN tapar toda la pantalla con el loader de carga
@@ -557,6 +541,17 @@ export const ExpedienteDetailPage = () => {
   const puedeConfigurarDocumentos = Boolean(repositorioDoc?.puedeEditar);
   const carpetaDeSujeto = (tipo, sujetoId) => sujetosParticipacion
     .find((a) => (tipo === "persona" ? a.personaId : a.recursoId) === sujetoId && a.carpetaRelativa)?.carpetaRelativa || null;
+  // Personas y maquinarias para la revisión en lote: nombre (o patente) y carpeta asignada.
+  const sujetosLote = [
+    ...personasAsignadas.map((a) => {
+      const p = personasOptions.find((x) => x.id === a.personaId);
+      return { tipo: "persona", id: a.personaId, nombre: p?.nombre || "", apellido: p?.apellido || "", carpeta: carpetaDeSujeto("persona", a.personaId) };
+    }),
+    ...recursosAsignados.map((a) => {
+      const r = recursosOptions.find((x) => x.id === a.recursoId);
+      return { tipo: "recurso", id: a.recursoId, nombre: r?.nombre || "", patente: r?.patente || "", carpeta: carpetaDeSujeto("recurso", a.recursoId) };
+    }),
+  ];
   const panelDocumentos = (tipo, sujeto) => (
     <PanelDocumentos
       key={`${tipo}|${sujeto?.id || ""}`}
@@ -571,8 +566,6 @@ export const ExpedienteDetailPage = () => {
       onRepositorio={setRepositorioDoc}
       empresa={empresa}
       mandanteId={expediente?.mandanteId}
-      ubicaciones={ubicacionesIA}
-      puedeReanalizar={["superadmin", "evaluador", "mandante_admin"].includes(profile?.rol)}
       proyecto={proyecto}
       puedeDefinirReglas={profile?.rol === "superadmin"}
       onIrADocumentacion={() => { setRequisitosAbiertos(false); cambiarNivel("documentacion"); }}
@@ -609,16 +602,6 @@ export const ExpedienteDetailPage = () => {
     setRecursoSeleccionadoId(null);
     setDetalleCerrado(false);
     setRequisitosAbiertos(false);
-  };
-
-  // "Evaluar manualmente" desde la matriz de Revisiones IA: abre la pestaña del sujeto y, en
-  // Personas/Recursos, sus requisitos.
-  const evaluarManualDesdeRevision = (fila) => {
-    cambiarNivel(fila.tipoEntidad);
-    if (fila.tipoEntidad !== "empresa") {
-      setRecursoSeleccionadoId(fila.sujetoId);
-      setRequisitosAbiertos(true);
-    }
   };
 
   // Tras Guardar Evaluación en el nivel Persona/Maquinaria: si el sujeto que se acaba de evaluar
@@ -994,7 +977,9 @@ export const ExpedienteDetailPage = () => {
                 expediente={expediente}
                 usuarioId={profile?.uid}
                 rol={profile?.rol}
-                onEvaluarManual={evaluarManualDesdeRevision}
+                sujetos={sujetosLote}
+                onIrADocumentacion={() => cambiarNivel("documentacion")}
+                onEvaluado={() => { cargarDatos(true); setRecargarPlanillaSenal((n) => n + 1); }}
               />
             )}
 
