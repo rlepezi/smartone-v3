@@ -8,8 +8,8 @@ import react from '@vitejs/plugin-react'
 //   qa         → smartone-v3-qa (npm run dev y deploy:qa)
 //   emuladores → emuladores locales con el proyecto smartone-v3-qa
 const AMBIENTES = {
-  production: { proyecto: 'smartone-v3', emuladores: 'false', api: 'https://smartone-v3.web.app' },
-  qa: { proyecto: 'smartone-v3-qa', emuladores: 'false', api: 'https://smartone-v3-qa.web.app' },
+  production: { proyecto: 'smartone-v3', emuladores: 'false', api: 'https://smartone-v3.web.app/api' },
+  qa: { proyecto: 'smartone-v3-qa', emuladores: 'false', api: 'https://smartone-v3-qa.web.app/api' },
   emuladores: { proyecto: 'smartone-v3-qa', emuladores: 'true', api: '' },
 }
 const PRODUCCION = AMBIENTES.production
