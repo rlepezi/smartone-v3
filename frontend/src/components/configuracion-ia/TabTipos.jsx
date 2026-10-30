@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, FileQuestion, IdCard, Pencil, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, FileQuestion, IdCard, Pencil } from "lucide-react";
 import { ESTADOS_IA_TIPO, estadoIAReq, etiquetaEntidad } from "../../utils/reglasIA";
 import { EditarTipoModal } from "./EditarTipoModal";
 import { tipoDocumentalService } from "../../services/tipoDocumentalService";
@@ -9,7 +9,7 @@ import { ErrorBanner } from "../shared/ErrorBanner";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { formatFecha } from "../../utils/fechas";
 import { Tarjeta } from "./Tarjeta";
-import { CLASE_PRIMARIO, formatUsd } from "./estilos";
+import { formatUsd } from "./estilos";
 
 const ESTADO_IA = ESTADOS_IA_TIPO;
 const CLASE_BADGE = "inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
@@ -63,13 +63,20 @@ export const TabTipos = () => {
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
-      <Tarjeta titulo="Tipos documentales" Icono={IdCard} acciones={tipos && (
-        <button type="button" onClick={() => setEditando("nuevo")} className={CLASE_PRIMARIO}><Plus className="w-3.5 h-3.5" /> Nuevo tipo documental</button>
-      )}>
+      {/* En desuso: no se crean tipos nuevos; los existentes siguen funcionando (el motor de
+          Revisiones IA por carpetas aún los usa) y se pueden editar. */}
+      <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+        <p>
+          <b>En desuso:</b> será reemplazada por el mapeo documental y las reglas de revisión. Ya no se crean tipos nuevos; los
+          existentes siguen funcionando (la revisión IA por carpetas aún los usa) y se pueden editar.
+        </p>
+      </div>
+      <Tarjeta titulo="Tipos documentales" Icono={IdCard}>
         {!tipos ? (
           <div className="h-32 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
         ) : tipos.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-400">Aún no hay tipos documentales. Cree uno con "Nuevo tipo documental".</p>
+          <p className="py-8 text-center text-xs text-slate-400">No hay tipos documentales.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[60rem] text-left text-xs">

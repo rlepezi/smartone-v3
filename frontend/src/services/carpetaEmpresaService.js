@@ -25,7 +25,8 @@ export const carpetaEmpresaService = {
     return (await apiClient("/carpetas-empresa/vincular", { method: "POST", body: datos })).data;
   },
 
-  // cambios: { carpetaPersonas?, carpetaRecursos?, mapeo?: { requerimientoId: [{ ruta, tipo }] | null } }.
+  // cambios: { carpetaPersonas?, carpetaRecursos?, mapeo?: { requerimientoId: [{ ruta, tipo, origen? }] | null },
+  //   soloAgregar? } (soloAgregar: copia de mapeo, nunca sobrescribe; origen "sugerencia" si se aceptó una).
   async actualizar(id, cambios) {
     return (await apiClient(`/carpetas-empresa/${id}`, { method: "PATCH", body: cambios })).data;
   },
@@ -41,9 +42,9 @@ export const carpetaEmpresaService = {
     return (await apiClient("/carpetas-empresa/registrar", { method: "POST", body: datos })).data;
   },
 
-  // Requerimientos asignables de una carpeta: { conExpediente, requerimientos: [{ id, nombre,
-  // nombreCorto }], total }.
-  async requerimientos(id) {
-    return (await apiClient(`/carpetas-empresa/${id}/requerimientos`)).data;
+  // Requerimientos asignables de una carpeta (entidad "empresa" | "persona" | "recurso"):
+  // { conExpediente, requerimientos: [{ id, nombre, nombreCorto }], total }.
+  async requerimientos(id, entidad = "empresa") {
+    return (await apiClient(`/carpetas-empresa/${id}/requerimientos?entidad=${entidad}`)).data;
   },
 };

@@ -52,7 +52,7 @@ const Campo = ({ id, etiqueta, error, ayuda, children }) => (
 // navegación de carpetas llegan con esa conexión. Una sola fuente activa por Mandante: con una
 // carpeta local activa, el backend rechaza crear o reactivar SharePoint. `onCambio`: tras guardar o
 // cambiar el estado (para recargar la fuente activa y las Carpetas de empresa).
-export const SharePointCard = ({ mandanteId, onCambio }) => {
+export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) => {
   const [fuente, setFuente] = useState(null);
   const [cargado, setCargado] = useState(false);
   const [datos, setDatos] = useState(VACIO);
@@ -146,6 +146,7 @@ export const SharePointCard = ({ mandanteId, onCambio }) => {
     <Tarjeta
       titulo="SharePoint"
       Icono={Cloud}
+      subtitulo={mandanteNombre ? `Mandante: ${mandanteNombre}` : null}
       acciones={<span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${badge.clase}`}>{badge.label}</span>}
     >
       <p className="text-[11px] text-slate-500">

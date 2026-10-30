@@ -108,6 +108,99 @@ function similitudTokens(a, b) {
   return (2 * comunes) / (ta.length + tb.size);
 }
 
+const NIVELES = ["baja", "media", "alta"];
+
+/**
+ * Coeficiente de Dice sobre coincidencias EXACTAS de dos conjuntos de
+ * nombres normalizados (similitud entre carpetas por su primer nivel).
+ * @param {string[]} a Nombres normalizados.
+ * @param {string[]} b Nombres normalizados.
+ * @return {number} Entre 0 y 1.
+ */
+function similitudConjuntos(a, b) {
+  const sa = new Set((a || []).filter(Boolean));
+  const sb = new Set((b || []).filter(Boolean));
+  if (!sa.size || !sb.size) return 0;
+  const comunes = [...sa].filter((x) => sb.has(x)).length;
+  return (2 * comunes) / (sa.size + sb.size);
+}
+
+/**
+ * Sugerencia de requerimiento para un nodo:
+ *  - alta: coincide exacto con un patrón activo (gana el de más
+ *    confirmaciones; empate = ambiguo, con candidatos);
+ *  - media: parecido ≥ 0,8 a un patrón activo, o el nodo contiene todos los
+ *    tokens significativos del nombre corto del requerimiento;
+ *  - baja: comparte un token significativo de 4 o más letras con el nombre
+ *    corto o el nombre.
+ * Solo cuentan los requerimientos asignables. Si el requerimiento ya está
+ * ubicado en la carpeta, la sugerencia baja un nivel.
+ * @param {string} nodo Nombre normalizado del nodo.
+ * @param {Object} contexto {patrones: [{patron, requerimientoId,
+ *     vecesConfirmado}] activos del ámbito y objetivo, requerimientos: [{id,
+ *     nombreCorto, nombre}], ubicados: string[] (ids ya ubicados)}.
+ * @return {{nivel: ?string, requerimientoId: ?string, candidatos: string[],
+ *     ambiguo: boolean}} Sugerencia.
+ */
+function sugerirRequerimiento(nodo, {patrones = [], requerimientos = [],
+  ubicados = []} = {}) {
+  const ninguna = {nivel: null, requerimientoId: null, candidatos: [],
+    ambiguo: false};
+  const tokensNodo = tokensSignificativos(nodo);
+  if (!tokensNodo.length) return ninguna;
+  const asignables = new Set(requerimientos.map((r) => r.id));
+  const ubicado = new Set(ubicados);
+  const bajar = (nivel, id) => (ubicado.has(id) ?
+    NIVELES[NIVELES.indexOf(nivel) - 1] || null : nivel);
+  const resultado = (nivel, id, extra = {}) => {
+    const final = bajar(nivel, id);
+    return final ? {nivel: final, requerimientoId: id, candidatos: [id],
+      ambiguo: false, ...extra} : ninguna;
+  };
+  const activos = patrones.filter((p) => asignables.has(p.requerimientoId));
+  // Alta: patrón exacto.
+  const exactos = activos.filter((p) => p.patron === nodo);
+  if (exactos.length) {
+    const max = Math.max(...exactos.map((p) => p.vecesConfirmado || 0));
+    const mejores = [...new Set(exactos.filter((p) =>
+      (p.vecesConfirmado || 0) === max).map((p) => p.requerimientoId))];
+    if (mejores.length > 1) {
+      return {nivel: "alta", requerimientoId: null, candidatos: mejores,
+        ambiguo: true};
+    }
+    return resultado("alta", mejores[0]);
+  }
+  // Media: patrón parecido o todos los tokens del nombre corto.
+  const parecidos = activos
+      .map((p) => ({p, s: similitudTokens(nodo, p.patron)}))
+      .filter((x) => x.s >= 0.8)
+      .sort((a, b) => b.s - a.s || (b.p.vecesConfirmado || 0) -
+        (a.p.vecesConfirmado || 0));
+  if (parecidos.length) {
+    return resultado("media", parecidos[0].p.requerimientoId);
+  }
+  const porNombre = requerimientos.map((r) => {
+    const corto = tokensSignificativos(normalizarNombreMapeo(
+        r.nombreCorto || r.nombre, {archivo: false}));
+    const largo = normalizarNombreMapeo(r.nombre || r.nombreCorto,
+        {archivo: false});
+    const s = Math.max(similitudTokens(nodo, corto.join(" ")),
+        similitudTokens(nodo, largo));
+    return {r, corto, s, largo: tokensSignificativos(largo)};
+  });
+  const completos = porNombre.filter((x) => x.corto.length &&
+    x.corto.every((t) => tokensNodo.includes(t))).sort((a, b) => b.s - a.s);
+  if (completos.length) return resultado("media", completos[0].r.id);
+  // Baja: un token significativo largo en común.
+  const comunes = porNombre.map((x) => ({...x, n: [...new Set([...x.corto,
+    ...x.largo])].filter((t) => t.length >= 4 && tokensNodo.includes(t))
+      .length})).filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n || b.s - a.s);
+  if (comunes.length) return resultado("baja", comunes[0].r.id);
+  return ninguna;
+}
+
 export {
   normalizarNombreMapeo, similitudTokens, tokensSignificativos, STOPWORDS,
+  similitudConjuntos, sugerirRequerimiento,
 };

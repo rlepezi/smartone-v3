@@ -23,6 +23,9 @@ function resultadosFrontend() {
       normalizar: casos.normalizar.map((c) =>
         m.normalizarNombreMapeo(c.entrada, c.opciones)),
       similitud: casos.similitud.map((c) => m.similitudTokens(c.a, c.b)),
+      sugerir: casos.sugerir.map((c) =>
+        m.sugerirRequerimiento(c.nodo, c.contexto)),
+      conjuntos: casos.conjuntos.map((c) => m.similitudConjuntos(c.a, c.b)),
     }));`;
   return JSON.parse(execFileSync(process.execPath,
       ["--input-type=module", "-e", script, JSON.stringify(casos)],
@@ -46,6 +49,25 @@ describe("similitudTokens (Dice sin stopwords)", () => {
     test(`«${c.a}» vs «${c.b}»`, () => {
       expect(backend.similitudTokens(c.a, c.b)).toBeCloseTo(c.esperado, 5);
       expect(frontend.similitud[i]).toBeCloseTo(c.esperado, 5);
+    });
+  });
+});
+
+describe("sugerirRequerimiento (niveles de confianza)", () => {
+  casos.sugerir.forEach((c, i) => {
+    test(c.caso, () => {
+      expect(backend.sugerirRequerimiento(c.nodo, c.contexto))
+          .toEqual(c.esperado);
+      expect(frontend.sugerir[i]).toEqual(c.esperado);
+    });
+  });
+});
+
+describe("similitudConjuntos (Dice exacto entre carpetas)", () => {
+  casos.conjuntos.forEach((c, i) => {
+    test(`caso ${i + 1}`, () => {
+      expect(backend.similitudConjuntos(c.a, c.b)).toBeCloseTo(c.esperado, 5);
+      expect(frontend.conjuntos[i]).toBeCloseTo(c.esperado, 5);
     });
   });
 });

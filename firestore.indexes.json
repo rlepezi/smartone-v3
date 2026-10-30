@@ -922,6 +922,24 @@
         {"fieldPath": "fuenteId", "order": "ASCENDING"},
         {"fieldPath": "estado", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "patronesRequerimiento",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "ambito", "order": "ASCENDING"},
+        {"fieldPath": "objetivo", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "patronesRequerimiento",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "requerimientoId", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

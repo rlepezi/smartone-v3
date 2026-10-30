@@ -90,6 +90,8 @@ const revisionIARoutes = require("./src/routes/revisionIARoutes");
 const fuenteDocumentalRoutes =
     require("./src/routes/fuenteDocumentalRoutes");
 const carpetaEmpresaRoutes = require("./src/routes/carpetaEmpresaRoutes");
+const patronRequerimientoRoutes =
+    require("./src/routes/patronRequerimientoRoutes");
 const tipoDocumentalRoutes = require("./src/routes/tipoDocumentalRoutes");
 const plantillaEstructuraRoutes =
     require("./src/routes/plantillaEstructuraRoutes");
@@ -144,6 +146,7 @@ app.use("/configuracion-ia", configuracionIARoutes);
 app.use("/revisiones-ia", revisionIARoutes);
 app.use("/fuentes-documentales", fuenteDocumentalRoutes);
 app.use("/carpetas-empresa", carpetaEmpresaRoutes);
+app.use("/patrones-requerimiento", patronRequerimientoRoutes);
 app.use("/tipos-documentales", tipoDocumentalRoutes);
 app.use("/plantillas-estructura", plantillaEstructuraRoutes);
 app.use("/revisiones-requerimiento-ia", revisionRequerimientoIARoutes);

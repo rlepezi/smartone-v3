@@ -75,9 +75,10 @@ function validarUrlCarpeta(url, siteUrl) {
 }
 
 /**
- * Cambios al mapeo de una carpeta: {requerimientoId: [{ruta, tipo}] | null}
- * (null o [] lo quita). Las entradas quedan con origen "manual" y quien las
- * confirma; las rutas que ya estaban conservan su confirmación.
+ * Cambios al mapeo de una carpeta: {requerimientoId: [{ruta, tipo, origen}]
+ * | null} (null o [] lo quita). Las entradas nuevas quedan con su origen
+ * ("sugerencia" o "manual") y quien las confirma; las rutas que ya estaban
+ * conservan su confirmación.
  * @param {*} cambios Cambios recibidos.
  * @param {Object} actual Mapeo actual.
  * @param {{uid: string, ahora: *}} sello Quién y cuándo.
@@ -112,8 +113,11 @@ function aplicarCambiosMapeo(cambios, actual, {uid, ahora}) {
       }
       if (lista.some((x) => x.ruta === r.valor)) continue;
       const previa = previas.get(r.valor);
+      // Origen "sugerencia" si se confirmó una sugerencia (o una copia de
+      // mapeo); si no, "manual".
       lista.push(previa && previa.tipo === tipo ? previa : {ruta: r.valor,
-        tipo, origen: "manual", confirmadoPor: uid, confirmadoAt: ahora});
+        tipo, origen: e?.origen === "sugerencia" ? "sugerencia" : "manual",
+        confirmadoPor: uid, confirmadoAt: ahora});
     }
     salida[id] = lista;
   }

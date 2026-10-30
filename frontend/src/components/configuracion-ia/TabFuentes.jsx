@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 import { fuenteDocumentalService } from "../../services/fuenteDocumentalService";
 import { CampoMandante } from "../shared/CampoMandante";
+import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { CarpetaLocalCard } from "./CarpetaLocalCard";
 import { SharePointCard } from "./SharePointCard";
 import { CarpetasEmpresaLista } from "./CarpetasEmpresaLista";
@@ -15,7 +16,8 @@ import { CarpetasEmpresaLista } from "./CarpetasEmpresaLista";
 export const TabFuentes = () => {
   const { profile } = useAuth();
   const contexto = useMandanteContexto();
-  const { mandanteId, modo } = contexto;
+  const { mandanteId, modo, mandante } = contexto;
+  const mandanteNombre = getMandanteDisplayName(mandante) || mandante?.id || null;
   const esSuperadmin = profile?.rol === "superadmin";
   const [carga, setCarga] = useState({ mandanteId: null, fuentes: null, error: null });
   const [version, setVersion] = useState(0);
@@ -35,12 +37,12 @@ export const TabFuentes = () => {
 
   return (
     <div className="space-y-6">
-      {modo === "seleccionable" && (
-        <div className="max-w-sm">
+      {/* A qué Mandante corresponden las fuentes: tarjeta con su nombre (uno solo) o selector. */}
+      {modo && (
+        <div className="max-w-md">
           <CampoMandante contexto={contexto} conFoco={false} />
         </div>
       )}
-      {modo === "ninguno" && <CampoMandante contexto={contexto} />}
       {!mandanteId ? (
         modo === "seleccionable" && <p className="py-8 text-center text-xs text-slate-400">Seleccione un Mandante para ver sus fuentes documentales.</p>
       ) : !fuentes ? (
@@ -49,13 +51,13 @@ export const TabFuentes = () => {
         <>
           {carga.error && <p role="alert" className="text-xs text-red-600">{carga.error}</p>}
           <p className="text-xs text-slate-500">
-            Fuente activa: {activa
+            {mandanteNombre && <>Mandante <b className="text-carbon-dark">{mandanteNombre}</b> · </>}Fuente activa: {activa
               ? <b className="text-carbon-dark">{activa.tipo === "local" ? `Carpeta local «${activa.etiqueta}»` : `SharePoint «${activa.etiqueta}»`}</b>
               : <b className="text-amber-700">ninguna</b>}. Solo puede haber una por Mandante.
           </p>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-            <CarpetaLocalCard key={`carpeta-${mandanteId}`} usuarioId={profile?.uid} mandanteId={mandanteId} fuentes={fuentes} esSuperadmin={esSuperadmin} onCambio={recargar} />
-            <SharePointCard key={`${mandanteId}-${version}`} mandanteId={mandanteId} onCambio={recargar} />
+            <CarpetaLocalCard key={`carpeta-${mandanteId}`} usuarioId={profile?.uid} mandanteId={mandanteId} mandanteNombre={mandanteNombre} fuentes={fuentes} esSuperadmin={esSuperadmin} onCambio={recargar} />
+            <SharePointCard key={`${mandanteId}-${version}`} mandanteId={mandanteId} mandanteNombre={mandanteNombre} onCambio={recargar} />
           </div>
           <CarpetasEmpresaLista mandanteId={mandanteId} fuenteId={activa?.id || null} version={version} />
         </>

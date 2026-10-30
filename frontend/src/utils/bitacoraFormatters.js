@@ -100,6 +100,14 @@ export const describirEvento = (registro) => {
     }
   }
 
+  if (entidad === "patronesRequerimiento") {
+    const n = (detalle?.patrones || []).length;
+    const sujetos = detalle?.ambito === "recurso" ? "maquinarias" : "personas";
+    if (accion === "confirmado") return `Mapeo por patrón confirmado (archivos de ${sujetos}): ${n} ${n === 1 ? "patrón" : "patrones"}`;
+    if (accion === "quitado") return `Mapeo por patrón quitado (archivos de ${sujetos})`;
+    if (accion === "transicion_estado") return detalle?.estadoNuevo === "activo" ? "Patrón de mapeo activado" : "Patrón de mapeo desactivado";
+  }
+
   if (entidad === "fuentesDocumentales") {
     if (accion === "creado") return `Fuente documental creada: «${detalle?.nombre || ""}»`;
     if (accion === "actualizado") return "Fuente documental actualizada";

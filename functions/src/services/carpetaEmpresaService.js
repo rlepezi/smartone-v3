@@ -12,6 +12,11 @@ const requerimientoRepository =
     require("../repositories/requerimientoRepository");
 const empresaMandanteRepository =
     require("../repositories/empresaMandanteRepository");
+const patronRequerimientoRepository =
+    require("../repositories/patronRequerimientoRepository");
+const {
+  deltasMapeo, deltasEspeciales, agruparDeltas,
+} = require("../utils/patronesMapeo");
 const expedienteService = require("./expedienteService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
@@ -134,40 +139,64 @@ class CarpetaEmpresaService {
   }
 
   /**
-   * IDs de los requerimientos de nivel Empresa del expediente (sus
-   * instancias activas: los que le aplican).
+   * IDs de los requerimientos de una entidad (por defecto, Empresa) del
+   * expediente (sus instancias activas: los que le aplican).
    * @param {string} expedienteId Expediente.
+   * @param {string} [tipoEntidad] "empresa" | "persona" | "recurso".
    * @return {Promise<string[]>} IDs.
    */
-  async _idsEmpresaDeExpediente(expedienteId) {
+  async _idsEmpresaDeExpediente(expedienteId, tipoEntidad = "empresa") {
     const instancias = await expedienteRequerimientoRepository
         .listByExpediente(expedienteId, "activo");
-    return [...new Set(instancias.filter((i) => i.tipoEntidad === "empresa")
+    return [...new Set(instancias.filter((i) => i.tipoEntidad === tipoEntidad)
         .map((i) => i.requerimientoId))];
   }
 
   /**
    * Requerimientos que el mapeo de la carpeta puede (y debe) cubrir: con
    * expediente, los de nivel Empresa que le aplican; sin expediente, todos
-   * los activos de entidad Empresa del Mandante. Y = su total.
+   * los activos de esa entidad del Mandante. Y = su total. Por defecto,
+   * Empresa (mapeo del árbol); Persona y Recurso, para los archivos de
+   * personas y maquinarias (mapeo por patrón).
    * @param {Object} carpeta Carpeta de empresa.
+   * @param {string} [tipoEntidad] "empresa" | "persona" | "recurso".
    * @return {Promise<{conExpediente: boolean, requerimientos: Object[]}>}
-   *     Lista ordenada [{id, nombre, nombreCorto, orden}].
+   *     Lista en el orden del expediente [{id, nombre, nombreCorto, numero}].
    */
-  async _asignables(carpeta) {
-    const reqs = carpeta.expedienteId ?
-      await requerimientoRepository.getByIds(
-          await this._idsEmpresaDeExpediente(carpeta.expedienteId)) :
-      await requerimientoRepository.list({mandanteId: carpeta.mandanteId,
-        estado: "activo", tipoEntidad: "empresa"});
+  async _asignables(carpeta, tipoEntidad = "empresa") {
+    const porNombre = (a, b) => (a.nombreCorto || a.nombre || "")
+        .localeCompare(b.nombreCorto || b.nombre || "", "es");
+    let lista;
+    if (carpeta.expedienteId) {
+      // Mismo orden que el expediente (expedienteRequerimientoService
+      // .ordenar): orden de configuración de la instancia y luego nombre.
+      const instancias = (await expedienteRequerimientoRepository
+          .listByExpediente(carpeta.expedienteId, "activo"))
+          .filter((i) => i.tipoEntidad === tipoEntidad);
+      const ordenDe = new Map();
+      instancias.forEach((i) => {
+        const o = typeof i.orden === "number" ? i.orden : Infinity;
+        if (!ordenDe.has(i.requerimientoId) ||
+            o < ordenDe.get(i.requerimientoId).o) {
+          ordenDe.set(i.requerimientoId, {o, nombre: i.nombre || ""});
+        }
+      });
+      const reqs = await requerimientoRepository.getByIds([...ordenDe.keys()]);
+      lista = (reqs || []).filter((r) => r.tipoEntidad === tipoEntidad)
+          .sort((a, b) => ordenDe.get(a.id).o - ordenDe.get(b.id).o ||
+            ordenDe.get(a.id).nombre.localeCompare(ordenDe.get(b.id).nombre));
+    } else {
+      lista = ((await requerimientoRepository.list({
+        mandanteId: carpeta.mandanteId, estado: "activo", tipoEntidad})) || [])
+          .filter((r) => r.tipoEntidad === tipoEntidad)
+          .sort((a, b) => (a.orden ?? Infinity) - (b.orden ?? Infinity) ||
+            porNombre(a, b));
+    }
     return {
       conExpediente: Boolean(carpeta.expedienteId),
-      requerimientos: (reqs || []).filter((r) => r.tipoEntidad === "empresa")
-          .map((r) => ({id: r.id, nombre: r.nombre,
-            nombreCorto: r.nombreCorto || null, orden: r.orden ?? null}))
-          .sort((a, b) => (a.orden ?? 9999) - (b.orden ?? 9999) ||
-            (a.nombreCorto || a.nombre).localeCompare(
-                b.nombreCorto || b.nombre, "es")),
+      // numero: su posición (como se numeran en el expediente).
+      requerimientos: lista.map((r, i) => ({id: r.id, nombre: r.nombre,
+        nombreCorto: r.nombreCorto || null, numero: i + 1})),
     };
   }
 
@@ -409,6 +438,20 @@ class CarpetaEmpresaService {
       if (!r.ok) throw new AppError(400, r.error);
       if (r.valor !== (carpeta[campo] || null)) cambios[campo] = r.valor;
     }
+    // "Solo agregar" (copia de mapeo): nunca sobrescribe lo que ya hay.
+    if (p.soloAgregar) {
+      const pisa = ["carpetaPersonas", "carpetaRecursos"].find((c) =>
+        c in cambios && carpeta[c]);
+      const quita = Object.entries(p.mapeo || {}).find(([rid, v]) => {
+        const nuevas = new Set((Array.isArray(v) ? v : []).map((e) => e?.ruta));
+        return entradasMapeo((carpeta.mapeo || {})[rid])
+            .some((e) => !nuevas.has(e.ruta));
+      });
+      if (pisa || quita) {
+        throw new AppError(409, "La copia de mapeo no sobrescribe " +
+            "asignaciones existentes: recargue la propuesta.");
+      }
+    }
     const {requerimientos} = await this._asignables(carpeta);
     const nombres = new Map(requerimientos.map((r) =>
       [r.id, r.nombreCorto || r.nombre]));
@@ -454,8 +497,16 @@ class CarpetaEmpresaService {
           JSON.stringify(c.nuevo)) : null;
     const anteriores = {carpetaPersonas: carpeta.carpetaPersonas || null,
       carpetaRecursos: carpeta.carpetaRecursos || null};
-    const actualizada = await carpetaEmpresaRepository.update(carpeta.id,
-        {...cambios, updatedBy: await this._autor(actor)});
+    // Aprendizaje: cada asignación nueva suma 1 a su patrón y cada una
+    // quitada resta 1 (en cero queda inactivo), en la MISMA transacción.
+    const deltas = agruparDeltas(carpeta.mandanteId, [
+      ...(cambios.mapeo ? deltasMapeo(carpeta.mapeo, cambios.mapeo) : []),
+      ...deltasEspeciales(anteriores, cambios),
+    ]);
+    const patrones = await patronRequerimientoRepository.aplicar({deltas,
+      autor: await this._autor(actor), carpetaEmpresaId: carpeta.id,
+      cambiosCarpeta: {...cambios, updatedBy: await this._autor(actor)}});
+    const actualizada = await carpetaEmpresaRepository.getById(carpeta.id);
     await bitacoraLogger.registrarEvento({
       mandanteId: carpeta.mandanteId, entidad: "carpetasEmpresa",
       entidadId: carpeta.id, accion: "actualizado", actor,
@@ -466,6 +517,10 @@ class CarpetaEmpresaService {
             .map((c) => [c, {anterior: anteriores[c], nuevo: cambios[c]}])),
         ...(requerimientosCambiados ?
           {requerimientos: requerimientosCambiados} : {}),
+        ...(patrones.length ? {patrones: patrones.map((x) => ({
+          patron: x.patron, requerimientoId: x.requerimientoId,
+          delta: x.delta, vecesConfirmado: x.vecesConfirmado,
+          estado: x.estado}))} : {}),
       },
     });
     return this.publica(actualizada);
@@ -530,18 +585,23 @@ class CarpetaEmpresaService {
 
   /**
    * Requerimientos asignables de una carpeta (Mapeo documental) y su total
-   * (Y del avance "X de Y").
+   * (Y del avance "X de Y"); con `tipoEntidad` persona o recurso, los de los
+   * archivos de personas o maquinarias.
    * @param {string} id Carpeta.
    * @param {Object} actor Usuario autenticado.
+   * @param {string} [tipoEntidad] "empresa" | "persona" | "recurso".
    * @return {Promise<{conExpediente: boolean, requerimientos: Object[],
    *     total: number}>} Lista.
    */
-  async requerimientosAsignables(id, actor) {
+  async requerimientosAsignables(id, actor, tipoEntidad = "empresa") {
     this._exigirRol(actor, ROLES_MAPEO, "ver el mapeo documental");
+    if (!["empresa", "persona", "recurso"].includes(tipoEntidad)) {
+      throw new AppError(400, "Entidad no válida.");
+    }
     const carpeta = await carpetaEmpresaRepository.getById(String(id || ""));
     if (!carpeta) throw new AppError(404, "Carpeta de empresa no encontrada.");
     this._mandante(actor, carpeta.mandanteId);
-    const r = await this._asignables(carpeta);
+    const r = await this._asignables(carpeta, tipoEntidad);
     return {...r, total: r.requerimientos.length};
   }
 

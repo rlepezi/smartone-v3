@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertTriangle, ChevronDown, ChevronRight, Eye, File, FileImage, FileSpreadsheet, FileText, Folder, Loader2,
-  MousePointerClick, Plus, Search, X,
+  AlertTriangle, Truck, Users, ChevronDown, ChevronRight, Eye, File, FileImage, FileSpreadsheet, FileText, Folder, Loader2,
+  Copy, MousePointerClick, Plus, Search, Sparkles, X,
 } from "lucide-react";
 import { listarDirectorio, obtenerArchivo } from "../../../services/fuentes/carpetaLocal";
 import { carpetaEmpresaService } from "../../../services/carpetaEmpresaService";
 import { avanceMapeo } from "../../../utils/carpetaExpediente";
 import { ancestros, cambiosAsignacion, cambiosQuitar, entradasPlanas, estadoNodo } from "../../../utils/mapeoArbol";
-import { sugerenciasPorRequerimiento } from "../../../utils/sugerenciasMapeo";
+import { mejorPorRequerimiento, sugerenciasDelArbol, sugerirEspecial } from "../../../utils/sugerenciasMapeo";
+import { nombresNivel1, similitudCarpetas, UMBRAL_OFRECER } from "../../../utils/copiaMapeo";
+import { patronService } from "../../../services/patronService";
+import { CopiarMapeoModal } from "./CopiarMapeoModal";
 import { extensionDe, formatTamano } from "../../../utils/repositorioDocumental";
 import { formatFecha } from "../../../utils/fechas";
 import { VisorArchivo } from "../../expedientes/documentacion/VisorArchivo";
@@ -25,8 +28,10 @@ const CONFIANZA = {
 
 // Carpetas especiales (paso 1): nombre de la carpeta que suele contenerlas, para sugerirla.
 const ESPECIALES = [
-  { campo: "carpetaPersonas", titulo: "Carpeta del personal", ayuda: "La que tiene una subcarpeta por trabajador.", patron: /trabajador|personal|persona/i },
-  { campo: "carpetaRecursos", titulo: "Carpeta de maquinarias", ayuda: "La que tiene una subcarpeta por vehículo o equipo.", patron: /veh[ií]cul|maquinari|equipo/i },
+  { campo: "carpetaPersonas", titulo: "Carpeta del personal", ayuda: "La que tiene una subcarpeta por trabajador.", patron: /trabajador|personal|persona/i,
+    Icono: Users, colorIcono: "bg-sky-50 text-sky-700 border-sky-200" },
+  { campo: "carpetaRecursos", titulo: "Carpeta de maquinarias", ayuda: "La que tiene una subcarpeta por vehículo o equipo.", patron: /veh[ií]cul|maquinari|equipo/i,
+    Icono: Truck, colorIcono: "bg-amber-50 text-amber-700 border-amber-200" },
 ];
 
 const IconoArchivo = ({ nombre }) => {
@@ -56,21 +61,10 @@ const existeRuta = async (raiz, ruta, tipo) => {
 const nombreReq = (r) => r?.nombreCorto || r?.nombre || "Requerimiento";
 const ultimo = (ruta) => String(ruta || "").split("/").pop();
 
-const Paso = ({ numero, titulo, children, extra = null }) => (
-  <section className="rounded-2xl border border-slate-100 p-3 space-y-2.5">
-    <div className="flex items-center gap-2">
-      <span className="w-5 h-5 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center shrink-0">{numero}</span>
-      <h4 className="text-xs font-bold text-carbon-dark mr-auto">{titulo}</h4>
-      {extra}
-    </div>
-    {children}
-  </section>
-);
-
 // Mapeo de una Carpeta de empresa registrada, guiado por requerimiento:
-//  1. Carpetas especiales: la del personal y la de maquinarias (con sugerencia por nombre).
-//  2. Requerimientos: cada uno con su ubicación; "Elegir en el árbol" deja el árbol en modo selección
-//     y el siguiente clic en una carpeta o archivo lo asigna.
+//  - Encabezado: avance y la carpeta del personal y de maquinarias (con sugerencia).
+//  - Requerimientos: cada uno con su ubicación; "Elegir en el árbol" deja el árbol en modo selección
+//    y el siguiente clic en una carpeta o archivo lo asigna.
 // El árbol (a la derecha) se lee un nivel a la vez y no tiene controles: muestra etiquetas de lo
 // asignado, de lo incluido en una carpeta asignada y de las personas o maquinarias. Fuera del modo
 // selección, un clic en un archivo lo previsualiza. Cada cambio se guarda en el backend, que valida
@@ -78,7 +72,7 @@ const Paso = ({ numero, titulo, children, extra = null }) => (
 // "No encontrada" (Cambiar / Quitar): nunca se borran solas.
 //  - carpeta: Carpeta de empresa (pública, con avance). base: useCarpetaBase (raíz autorizada).
 //  - onActualizada(carpeta): tras cada guardado (con el avance recalculado).
-export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
+export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) => {
   const [raiz, setRaiz] = useState({ handle: null, error: null, listo: false });
   const [niveles, setNiveles] = useState(() => new Map()); // ruta → { estado, carpetas, archivos }
   const [abiertas, setAbiertas] = useState(() => new Set());
@@ -93,6 +87,12 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
   const [visor, setVisor] = useState(null); // File
+  const [patrones, setPatrones] = useState([]); // aprendidos del Mandante (activos)
+  const [versionPatrones, setVersionPatrones] = useState(0);
+  const [conSugerencia, setConSugerencia] = useState(false);
+  const [similares, setSimilares] = useState(null); // [{ carpeta, similitud }] (top 5)
+  const [copiar, setCopiar] = useState(null); // { inicial } | null
+  const [bannerCerrado, setBannerCerrado] = useState(false);
   const { subcarpeta } = base;
 
   const estadoMapeo = { mapeo: carpeta.mapeo || {}, carpetaPersonas: carpeta.carpetaPersonas, carpetaRecursos: carpeta.carpetaRecursos };
@@ -103,11 +103,13 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
     ...(n.carpetas || []).map((c) => ({ ...c, tipo: "carpeta" })),
     ...(n.archivos || []).map((a) => ({ ...a, tipo: "archivo" })),
   ]);
-  const sugerencias = sugerenciasPorRequerimiento({ requerimientos, nodos: nodosCargados, estado: estadoMapeo });
-  const sugeridaEn = new Map([...sugerencias].map(([id, sg]) => [sg.nodo.ruta, { requerimientoId: id, nivel: sg.nivel }]));
+  // Por nodo (motor compartido: patrones aprendidos y nombres) y la mejor por requerimiento.
+  const sugerenciasArbol = sugerenciasDelArbol({ nodos: nodosCargados, estado: estadoMapeo, patrones, requerimientos });
+  const sugerencias = mejorPorRequerimiento(sugerenciasArbol);
   const conteo = { alta: 0, media: 0, baja: 0 };
-  sugerencias.forEach((sg) => { conteo[sg.nivel]++; });
-  const altas = [...sugerencias].filter(([, sg]) => sg.nivel === "alta").map(([id]) => id);
+  sugerenciasArbol.forEach((sg) => { conteo[sg.nivel]++; });
+  const altas = [...sugerenciasArbol.values()].filter((sg) => sg.nivel === "alta" && !sg.ambiguo);
+  const conSugerenciaDentro = (ruta) => [...sugerenciasArbol.keys()].some((r) => r.startsWith(`${ruta}/`));
 
   // Raíz de la carpeta, su primer nivel y la lista de requerimientos asignables.
   useEffect(() => {
@@ -126,6 +128,36 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
     });
     return () => { vigente = false; };
   }, [carpeta.id, carpeta.ruta, subcarpeta]);
+
+  // Patrones aprendidos del Mandante (se recargan tras cada guardado: el backend aprende).
+  useEffect(() => {
+    let vigente = true;
+    patronService.listar({ mandanteId: carpeta.mandanteId, estado: "activo" })
+      .then((l) => { if (vigente) setPatrones(l || []); })
+      .catch(() => { if (vigente) setPatrones([]); });
+    return () => { vigente = false; };
+  }, [carpeta.mandanteId, versionPatrones]);
+
+  // Carpetas parecidas ya mapeadas (parcial o completo), por su primer nivel: solo se lee el primer
+  // nivel de cada candidata.
+  const primero = niveles.get("");
+  const listoPrimero = primero?.estado === "ok";
+  useEffect(() => {
+    if (!listoPrimero) return undefined;
+    let vigente = true;
+    const propio = nombresNivel1(primero);
+    const candidatas = carpetas.filter((c) => c.id !== carpeta.id && ["parcial", "completo"].includes(c.estadoMapeo));
+    Promise.all(candidatas.map(async (c) => {
+      const h = await subcarpeta(c.ruta).catch(() => null);
+      const l = h ? await listarDirectorio(h, "").catch(() => null) : null;
+      return { carpeta: c, similitud: l ? similitudCarpetas(propio, nombresNivel1(l)) : 0 };
+    })).then((lista) => {
+      if (vigente) setSimilares(lista.filter((x) => x.similitud > 0).sort((a, b) => b.similitud - a.similitud).slice(0, 5));
+    });
+    return () => { vigente = false; };
+    // Al abrir la carpeta (o cambiar la lista de carpetas).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listoPrimero, carpeta.id, carpetas.length]);
 
   // Rutas guardadas que ya no existen (solo esas rutas; no se lee el árbol completo).
   const firmaRutas = JSON.stringify([entradasPlanas(carpeta.mapeo), carpeta.carpetaPersonas, carpeta.carpetaRecursos]);
@@ -173,6 +205,7 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
     try {
       const actualizada = await carpetaEmpresaService.actualizar(carpeta.id, cambios);
       onActualizada({ ...actualizada, avance: avanceMapeo(actualizada.mapeo, requerimientos.map((r) => r.id)) });
+      setVersionPatrones((v) => v + 1);
       return true;
     } catch (err) {
       setError(err.message || "No se pudo guardar.");
@@ -182,19 +215,19 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
     }
   };
 
-  // Usa las sugerencias de esos requerimientos en UNA sola llamada (el backend valida las reglas).
-  const usarSugerencias = async (ids) => {
+  // Acepta sugerencias [{ nodo, requerimientoId }] en UNA sola llamada, con origen "sugerencia" (el
+  // backend valida las reglas y aprende los patrones).
+  const aceptar = async (lista) => {
     let mapeo = carpeta.mapeo || {};
     let cambios = {};
-    ids.forEach((id) => {
-      const sg = sugerencias.get(id);
-      if (!sg) return;
-      const c = cambiosAsignacion(mapeo, sg.nodo, id);
+    lista.forEach(({ nodo, requerimientoId }) => {
+      if (!requerimientoId) return;
+      const c = cambiosAsignacion(mapeo, nodo, requerimientoId, "sugerencia");
       cambios = { ...cambios, ...c };
       mapeo = { ...mapeo, ...c };
     });
     if (Object.keys(cambios).length && await guardar({ mapeo: cambios })) {
-      setResaltadas(new Set(ids.map((id) => sugerencias.get(id)?.nodo.ruta).filter(Boolean)));
+      setResaltadas(new Set(lista.map((x) => x.nodo.ruta)));
     }
   };
 
@@ -232,6 +265,7 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
   const renderNodo = (nodo, nivel) => {
     const estado = estadoNodo(nodo, estadoMapeo);
     if (soloSinAsignar && ["asignado", "incluido"].includes(estado.clase)) return null;
+    if (conSugerencia && !sugerenciasArbol.has(nodo.ruta) && !(nodo.tipo === "carpeta" && conSugerenciaDentro(nodo.ruta))) return null;
     if (!coincide(nodo.ruta, nodo.nombre, nodo.tipo)) return null;
     const abierta = abiertas.has(nodo.ruta);
     const contenido = niveles.get(nodo.ruta);
@@ -266,11 +300,28 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
             {estado.clase === "sujeto" && <span className={`${ETIQUETA} bg-slate-100 text-slate-600 border-slate-200`}>{estado.etiqueta}</span>}
             {estado.clase === "asignado" && <span className={`${ETIQUETA} bg-sage-lighter text-sage-darker border-sage-light`}>{nombreReq(porId.get(estado.requerimientoId))}</span>}
             {estado.clase === "incluido" && <span className="text-[10px] text-slate-400">Incluido en {nombreReq(porId.get(estado.requerimientoId))}</span>}
-            {estado.clase === "libre" && sugeridaEn.has(nodo.ruta) && (
-              <span className={`${ETIQUETA} border-dashed ${CONFIANZA[sugeridaEn.get(nodo.ruta).nivel].clase}`}>
-                Sugerida: {nombreReq(porId.get(sugeridaEn.get(nodo.ruta).requerimientoId))}
-              </span>
-            )}
+            {estado.clase === "libre" && sugerenciasArbol.has(nodo.ruta) && !modo && (() => {
+              const sg = sugerenciasArbol.get(nodo.ruta);
+              return (
+                <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  {sg.ambiguo ? (
+                    <select value="" disabled={guardando} aria-label={`Requerimiento sugerido para ${nodo.nombre}`}
+                      onChange={(e) => aceptar([{ nodo, requerimientoId: e.target.value }])}
+                      className={`${ETIQUETA} border-dashed ${CONFIANZA[sg.nivel].clase} cursor-pointer`}>
+                      <option value="">Ambigua: elija…</option>
+                      {sg.candidatos.map((id) => <option key={id} value={id}>{nombreReq(porId.get(id))}</option>)}
+                    </select>
+                  ) : (
+                    <>
+                      <span className={`${ETIQUETA} border-dashed ${CONFIANZA[sg.nivel].clase}`} title={`Confianza ${CONFIANZA[sg.nivel].label.toLowerCase()}`}>
+                        <Sparkles className="w-2.5 h-2.5 mr-0.5" /> {nombreReq(porId.get(sg.requerimientoId))}
+                      </span>
+                      <button type="button" disabled={guardando} onClick={() => aceptar([sg])} className="text-[10px] font-bold text-primary hover:underline">Aceptar</button>
+                    </>
+                  )}
+                </span>
+              );
+            })()}
           </span>
         </div>
         {nodo.tipo === "carpeta" && abierta && (
@@ -307,9 +358,9 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
   const ubicadas = (id) => carpeta.mapeo?.[id] || [];
   const avance = carpeta.avance || avanceMapeo(carpeta.mapeo, requerimientos.map((r) => r.id));
   const pct = avance.total ? Math.round((avance.ubicados / avance.total) * 100) : 0;
-  const visiblesReq = requerimientos.filter((r) => !soloSinUbicar || !ubicadas(r.id).length)
-    // Sin ubicar primero: es lo que falta hacer.
-    .sort((a, b) => Number(Boolean(ubicadas(a.id).length)) - Number(Boolean(ubicadas(b.id).length)));
+  // En el orden (y con el número) del expediente.
+  const visiblesReq = requerimientos.filter((r) => !soloSinUbicar || !ubicadas(r.id).length);
+  const ubicadosReq = requerimientos.filter((r) => ubicadas(r.id).length).length;
   const activoEn = (id) => modo?.tipo === "requerimiento" && modo.requerimientoId === id;
 
   return (
@@ -327,20 +378,19 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
           <b className="text-carbon-dark">{avance.ubicados} de {avance.total}</b> requerimientos ubicados.
           {asignables && !asignables.conExpediente && " Sin expediente: se muestran todos los requerimientos de Empresa del Mandante."}
         </p>
-      </div>
-      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] gap-3 items-start">
-        <div className="space-y-3">
-          <Paso numero={1} titulo="Carpetas del personal y de maquinarias">
-            {ESPECIALES.map(({ campo, titulo, ayuda, patron }) => {
+        {/* Carpeta del personal y de maquinarias: datos de la carpeta (no un paso aparte). */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+            {ESPECIALES.map(({ campo, titulo, ayuda, Icono, colorIcono }) => {
               const valor = carpeta[campo] || null;
-              const sugerida = !valor ? primerNivel.find((c) => patron.test(c.nombre) &&
-                estadoNodo({ ruta: c.ruta, tipo: "carpeta" }, estadoMapeo).clase === "libre") : null;
+              const especial = !valor ? sugerirEspecial({ campo, carpetas: primerNivel, estado: estadoMapeo, patrones }) : null;
+              const sugerida = especial?.nodo || null;
               const eligiendo = modo?.tipo === "especial" && modo.campo === campo;
               return (
                 <div key={campo} className={`p-2 rounded-xl border text-xs space-y-1 ${eligiendo ? "border-primary bg-primary-lighter/40" : "border-slate-100"}`}>
-                  <p className="font-bold text-carbon-dark">{titulo}</p>
+                  <p className="flex items-center gap-2 font-bold text-carbon-dark">
+                    <span className={`w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 ${colorIcono}`}><Icono className="w-3.5 h-3.5" /></span>
+                    {titulo}
+                  </p>
                   {valor ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => mostrar([valor])} className="min-w-0 text-left text-slate-700 hover:text-primary hover:underline break-all">{valor}</button>
@@ -356,7 +406,7 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
                       <div className="flex flex-wrap items-center gap-2">
                         {sugerida && (
                           <button type="button" disabled={guardando} onClick={() => guardar({ [campo]: sugerida.ruta })} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
-                            Usar «{sugerida.nombre}»
+                            Usar «{sugerida.nombre}»{especial.porPatron ? " (aprendida)" : ""}
                           </button>
                         )}
                         <button type="button" onClick={() => setModo({ tipo: "especial", campo })} className={ENLACE}>Elegir en el árbol</button>
@@ -367,71 +417,86 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
                 </div>
               );
             })}
-          </Paso>
+        </div>
+      </div>
+      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+      {!bannerCerrado && similares?.[0] && similares[0].similitud >= UMBRAL_OFRECER &&
+        (carpeta.estadoMapeo === "sin_mapear" || (avance.total && avance.ubicados / avance.total < 0.2)) && (
+        <div className="flex flex-wrap items-center gap-2 p-3 rounded-2xl bg-primary-lighter/60 border border-primary/20 text-xs text-primary-dark">
+          <Copy className="w-4 h-4" />
+          <span className="mr-auto">
+            Se parece en un {Math.round(similares[0].similitud * 100)}% a «{similares[0].carpeta.ruta}» (mapeo {similares[0].carpeta.estadoMapeo}).
+          </span>
+          <button type="button" onClick={() => setCopiar({ inicial: similares[0].carpeta.id })} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>Ver propuesta</button>
+          <button type="button" onClick={() => setBannerCerrado(true)} aria-label="Cerrar aviso" className="p-1 rounded-lg hover:bg-white/50"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
 
-          <Paso numero={2} titulo="Ubicación de cada requerimiento"
-            extra={(
-              <label className="flex items-center gap-1 text-[10px] text-slate-600">
-                <input type="checkbox" checked={soloSinUbicar} onChange={(e) => setSoloSinUbicar(e.target.checked)} className="rounded text-primary" /> Solo sin ubicar
-              </label>
-            )}>
-            <p className="text-[11px] text-slate-500">Para cada requerimiento, use la sugerencia o pulse «Elegir en el árbol» y haga clic en la carpeta o el archivo que lo cumple.</p>
-            {sugerencias.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 text-[11px]">
-                <span className="text-slate-600 mr-auto">
-                  Sugerencias por nombre: {conteo.alta} {conteo.alta === 1 ? "alta" : "altas"} · {conteo.media} {conteo.media === 1 ? "media" : "medias"} · {conteo.baja} {conteo.baja === 1 ? "baja" : "bajas"}
-                </span>
-                {altas.length > 0 && (
-                  <button type="button" disabled={guardando} onClick={() => usarSugerencias(altas)} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
-                    Usar todas las altas ({altas.length})
-                  </button>
-                )}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] gap-3 items-start">
+        <div className="space-y-3">
+
+          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-carbon-dark">Requerimientos</h4>
+                {asignables && <span className="px-2 py-px rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-600 tabular-nums">{ubicadosReq} / {requerimientos.length} ubicados</span>}
+                <label className="ml-auto flex items-center gap-1 text-[10px] text-slate-600">
+                  <input type="checkbox" checked={soloSinUbicar} onChange={(e) => setSoloSinUbicar(e.target.checked)} className="rounded text-primary" /> Solo sin ubicar
+                </label>
               </div>
-            )}
-            {!asignables ? <p className="text-[11px] text-slate-400">Cargando requerimientos...</p> : visiblesReq.length === 0 ? (
-              <p className="text-[11px] text-slate-400">{requerimientos.length ? "Todos los requerimientos están ubicados." : "No hay requerimientos de Empresa."}</p>
+              <p className="text-[11px] text-slate-500">Use la sugerencia o «Elegir en el árbol» y haga clic en la carpeta o el archivo que lo cumple.</p>
+            </div>
+            {!asignables ? <p className="p-3 text-[11px] text-slate-400">Cargando requerimientos...</p> : visiblesReq.length === 0 ? (
+              <p className="p-3 text-[11px] text-slate-400">{requerimientos.length ? "Todos los requerimientos están ubicados." : "No hay requerimientos de Empresa."}</p>
             ) : (
-              <ul className="space-y-1.5 max-h-[34rem] overflow-y-auto pr-1">
+              <ul className="divide-y divide-slate-100 max-h-[36rem] overflow-y-auto">
                 {visiblesReq.map((r) => {
                   const lista = ubicadas(r.id);
+                  const sg = !lista.length ? sugerencias.get(r.id) : null;
+                  const activo = activoEn(r.id);
                   return (
-                    <li key={r.id} className={`p-2 rounded-xl border text-xs space-y-1 ${activoEn(r.id) ? "border-primary bg-primary-lighter/40" : lista.length ? "border-sage-light/60" : "border-slate-100"}`}>
-                      <p className="font-semibold text-carbon-dark">{nombreReq(r)}</p>
-                      {lista.map((e) => (
-                        <div key={e.ruta} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-                          {e.tipo === "archivo" ? <FileText className="w-3 h-3 text-slate-400" /> : <Folder className="w-3 h-3 text-primary" />}
-                          <button type="button" onClick={() => mostrar([e.ruta])} title={e.ruta} className="min-w-0 max-w-full truncate text-left text-slate-700 hover:text-primary hover:underline">{ultimo(e.ruta)}</button>
-                          {faltantes.has(e.ruta) && <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-700"><AlertTriangle className="w-3 h-3" /> No encontrada</span>}
-                          <span className="ml-auto flex gap-2">
-                            <button type="button" onClick={() => setModo({ tipo: "requerimiento", requerimientoId: r.id, reemplazar: e.ruta })} className={ENLACE}>Cambiar</button>
-                            <button type="button" disabled={guardando} onClick={() => guardar({ mapeo: cambiosQuitar(carpeta.mapeo, r.id, e.ruta) })} className={`${ENLACE} text-slate-500`}>Quitar</button>
-                          </span>
-                        </div>
-                      ))}
-                      {!lista.length && sugerencias.get(r.id) && (
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                          <span className={`${ETIQUETA} ${CONFIANZA[sugerencias.get(r.id).nivel].clase}`}>Sugerida · {CONFIANZA[sugerencias.get(r.id).nivel].label}</span>
-                          <button type="button" onClick={() => mostrar([sugerencias.get(r.id).nodo.ruta])} title={sugerencias.get(r.id).nodo.ruta} className="min-w-0 max-w-full truncate text-left text-slate-700 hover:text-primary hover:underline">
-                            {sugerencias.get(r.id).nodo.nombre}
+                    <li key={r.id} className={`px-3 py-2 text-xs transition-colors ${activo ? "bg-primary-lighter/60" : "hover:bg-slate-50"}`}>
+                      <div className="flex items-start gap-2">
+                        <span className={`mt-px w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-[10px] font-bold tabular-nums ${lista.length ? "bg-sage-lighter text-sage-darker" : "bg-slate-100 text-slate-500"}`}>
+                          {r.numero}
+                        </span>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-start gap-2">
+                            <p className="min-w-0 flex-1 font-semibold text-carbon-dark leading-snug">{nombreReq(r)}</p>
+                            {lista.length
+                              ? <span className={`${ETIQUETA} bg-sage-lighter text-sage-darker border-sage-light`}>Ubicado</span>
+                              : <span className={`${ETIQUETA} bg-white text-slate-500 border-slate-200`}>Sin ubicar</span>}
+                          </div>
+                          {lista.map((e) => (
+                            <div key={e.ruta} className="flex items-center gap-1.5 text-[11px]">
+                              {e.tipo === "archivo" ? <FileText className="w-3 h-3 shrink-0 text-slate-400" /> : <Folder className="w-3 h-3 shrink-0 text-primary" />}
+                              <button type="button" onClick={() => mostrar([e.ruta])} title={e.ruta} className="min-w-0 truncate text-left text-slate-700 hover:text-primary hover:underline">{ultimo(e.ruta)}</button>
+                              {faltantes.has(e.ruta) && <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-700"><AlertTriangle className="w-3 h-3" /> No encontrada</span>}
+                              <span className="ml-auto shrink-0 flex gap-2">
+                                <button type="button" onClick={() => setModo({ tipo: "requerimiento", requerimientoId: r.id, reemplazar: e.ruta })} className={ENLACE}>Cambiar</button>
+                                <button type="button" disabled={guardando} onClick={() => guardar({ mapeo: cambiosQuitar(carpeta.mapeo, r.id, e.ruta) })} className={`${ENLACE} text-slate-500`}>Quitar</button>
+                              </span>
+                            </div>
+                          ))}
+                          {sg && (
+                            <div className="flex items-center gap-1.5 text-[11px]">
+                              <span className={`${ETIQUETA} ${CONFIANZA[sg.nivel].clase}`}>Sugerida · {CONFIANZA[sg.nivel].label}</span>
+                              <button type="button" onClick={() => mostrar([sg.nodo.ruta])} title={sg.nodo.ruta} className="min-w-0 truncate text-left text-slate-700 hover:text-primary hover:underline">{sg.nodo.nombre}</button>
+                              <button type="button" disabled={guardando} onClick={() => aceptar([sg])} className={`${CLASE_PRIMARIO} ml-auto shrink-0 px-2.5 py-0.5 text-[11px]`}>Usar</button>
+                            </div>
+                          )}
+                          <button type="button" onClick={() => setModo(activo ? null : { tipo: "requerimiento", requerimientoId: r.id, reemplazar: null })}
+                            className={`${ENLACE} inline-flex items-center gap-1`}>
+                            {activo ? "Cancelar" : lista.length ? <><Plus className="w-3 h-3" /> Agregar otra ubicación</> : <><MousePointerClick className="w-3 h-3" /> Elegir en el árbol</>}
                           </button>
-                          <button type="button" disabled={guardando} onClick={() => usarSugerencias([r.id])} className={`${CLASE_PRIMARIO} ml-auto px-2.5 py-0.5 text-[11px]`}>Usar</button>
                         </div>
-                      )}
-                      {lista.length ? (
-                        <button type="button" onClick={() => setModo({ tipo: "requerimiento", requerimientoId: r.id, reemplazar: null })} className={`${ENLACE} inline-flex items-center gap-1`}>
-                          <Plus className="w-3 h-3" /> Agregar otra ubicación
-                        </button>
-                      ) : (
-                        <button type="button" onClick={() => setModo({ tipo: "requerimiento", requerimientoId: r.id, reemplazar: null })} className={`${CLASE_SECUNDARIO} px-2.5 py-1 text-[11px]`}>
-                          <MousePointerClick className="w-3 h-3" /> Elegir en el árbol
-                        </button>
-                      )}
+                      </div>
                     </li>
                   );
                 })}
               </ul>
             )}
-          </Paso>
+          </section>
         </div>
 
         <section className="rounded-2xl border border-slate-100 p-3 space-y-2 min-w-0 xl:sticky xl:top-4">
@@ -456,12 +521,36 @@ export const MapeoCarpeta = ({ carpeta, base, onActualizada }) => {
             <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
               <input type="checkbox" checked={soloSinAsignar} onChange={(e) => setSoloSinAsignar(e.target.checked)} className="rounded text-primary" /> Solo sin asignar
             </label>
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+              <input type="checkbox" checked={conSugerencia} onChange={(e) => setConSugerencia(e.target.checked)} className="rounded text-primary" /> Con sugerencia
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-500 mr-auto">
+              Sugerencias: <b className="text-sage-darker">{conteo.alta} altas</b> · <b className="text-amber-700">{conteo.media} medias</b> · <b className="text-slate-600">{conteo.baja} bajas</b>
+            </span>
+            {altas.length > 0 && (
+              <button type="button" disabled={guardando || Boolean(modo)} onClick={() => aceptar(altas)} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
+                Confirmar todas las altas ({altas.length})
+              </button>
+            )}
+            {similares?.length > 0 && (
+              <button type="button" disabled={Boolean(modo)} onClick={() => setCopiar({ inicial: similares[0].carpeta.id })} className={`${CLASE_SECUNDARIO} px-2.5 py-1 text-[11px]`}>
+                <Copy className="w-3 h-3" /> Copiar mapeo de…
+              </button>
+            )}
           </div>
           <div className="max-h-[38rem] overflow-y-auto">
             {renderHijos("", 0)}
           </div>
         </section>
       </div>
+
+      {copiar && similares?.length > 0 && (
+        <CopiarMapeoModal similares={similares} inicial={copiar.inicial} destino={carpeta} raiz={raiz.handle}
+          asignables={requerimientos.map((r) => r.id)} nombreDe={(id) => nombreReq(porId.get(id))}
+          onConfirmar={(cambios) => guardar(cambios)} onCerrar={() => setCopiar(null)} />
+      )}
 
       {visor && (
         <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white shadow-dropdown border-l border-slate-200 flex flex-col">

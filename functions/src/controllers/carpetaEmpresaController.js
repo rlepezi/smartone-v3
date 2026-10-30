@@ -117,7 +117,7 @@ class CarpetaEmpresaController {
   async requerimientos(req, res, next) {
     try {
       const data = await carpetaEmpresaService.requerimientosAsignables(
-          req.params.id, req.user);
+          req.params.id, req.user, req.query.entidad || "empresa");
       res.status(200).json({data});
     } catch (error) {
       next(error);

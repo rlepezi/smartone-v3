@@ -4,7 +4,7 @@
 // llama a `validar` antes de escribir).
 
 const mockDb = {fuentes: [], carpetas: new Map(), expedientes: new Map(),
-  config: new Map()};
+  config: new Map(), patrones: new Map()};
 let mockSeq = 0;
 
 jest.mock("../src/repositories/fuenteDocumentalRepository", () => ({
@@ -71,13 +71,48 @@ jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
     return id;
   }),
 }));
+// Patrones (Entrega 3): la transacción aplica los deltas con la lógica real
+// (aplicarDelta) y escribe la carpeta, todo junto.
+jest.mock("../src/repositories/patronRequerimientoRepository", () => ({
+  aplicar: jest.fn(async ({deltas, autor, carpetaEmpresaId,
+    cambiosCarpeta}) => {
+    const {aplicarDelta} = jest.requireActual("../src/utils/patronesMapeo");
+    const aplicados = [];
+    deltas.forEach((d) => {
+      const actual = mockDb.patrones.get(d.id) || null;
+      const valor = aplicarDelta(actual, d.delta);
+      if (!valor) return;
+      mockDb.patrones.set(d.id, {...(actual || {mandanteId: d.mandanteId,
+        ambito: d.ambito, objetivo: d.objetivo, patron: d.patron,
+        requerimientoId: d.requerimientoId || null,
+        carpetaEmpresaIdOrigen: carpetaEmpresaId, createdBy: autor}),
+      ...valor});
+      aplicados.push({id: d.id, patron: d.patron,
+        requerimientoId: d.requerimientoId || null, delta: d.delta, ...valor});
+    });
+    if (cambiosCarpeta && carpetaEmpresaId) {
+      Object.assign(mockDb.carpetas.get(carpetaEmpresaId), cambiosCarpeta);
+    }
+    return aplicados;
+  }),
+  getById: jest.fn(async (id) => (mockDb.patrones.has(id) ?
+    {id, ...mockDb.patrones.get(id)} : null)),
+  list: jest.fn(async ({mandanteId, ambito}) => [...mockDb.patrones]
+      .filter(([, p]) => p.mandanteId === mandanteId &&
+        (!ambito || p.ambito === ambito)).map(([id, p]) => ({id, ...p}))),
+  cambiarEstado: jest.fn(async (id, estado) => {
+    mockDb.patrones.get(id).estado = estado;
+    return {id, ...mockDb.patrones.get(id)};
+  }),
+}));
 jest.mock("../src/repositories/requerimientoRepository", () => {
   const req = (id) => ({id, nombre: `Requerimiento ${id}`,
     tipoEntidad: id === "rp" ? "persona" : "empresa"});
   return {
     getByIds: jest.fn(async (ids) => ids.map(req)),
-    // Requerimientos de Empresa activos del Mandante (sin expediente).
-    list: jest.fn(async () => ["r1", "r2", "r3"].map(req)),
+    // Requerimientos activos del Mandante por entidad (sin expediente).
+    list: jest.fn(async ({tipoEntidad}) => (tipoEntidad === "persona" ?
+      ["rp"] : ["r1", "r2", "r3"]).map(req)),
   };
 });
 jest.mock("../src/repositories/empresaMandanteRepository", () => ({
@@ -163,6 +198,7 @@ beforeEach(() => {
   mockDb.carpetas = new Map();
   mockDb.expedientes = new Map();
   mockDb.config = new Map();
+  mockDb.patrones = new Map();
   jest.clearAllMocks();
   expediente("e1");
   expediente("e2");
@@ -475,6 +511,21 @@ describe("Entrega 2: mapeo documental", () => {
     expect(r.requerimientos.map((x) => x.id)).toEqual(["r1", "r2"]);
   });
 
+  test("asignables numerados en el orden del expediente", async () => {
+    const c = await registrar();
+    await carpetas.vincular({expedienteId: "e1", ruta: "1. TECNORED"}, SUPER);
+    const repo =
+        require("../src/repositories/expedienteRequerimientoRepository");
+    repo.listByExpediente.mockResolvedValueOnce([
+      {requerimientoId: "r2", tipoEntidad: "empresa", orden: 1},
+      {requerimientoId: "r1", tipoEntidad: "empresa", orden: 2},
+      {requerimientoId: "rp", tipoEntidad: "persona", orden: 0},
+    ]);
+    const r = await carpetas.requerimientosAsignables(c.id, SUPER);
+    expect(r.requerimientos.map((x) => [x.numero, x.id]))
+        .toEqual([[1, "r2"], [2, "r1"]]);
+  });
+
   test("permisos: registrar y asignables solo superadmin y evaluador; " +
       "aislamiento por Mandante", async () => {
     const c = await registrar();
@@ -562,5 +613,146 @@ describe("Entrega 2: mapeo documental", () => {
     // "X2" no es descendiente de "X" (prefijo de ruta, no de texto).
     expect(validarAsignaciones({mapeo: {a: [{ruta: "X"}], b: [{ruta: "X2"}]}}))
         .toBeNull();
+  });
+});
+
+describe("Entrega 3: patrones aprendidos", () => {
+  const patronesSrv = require("../src/services/patronRequerimientoService");
+  const patronRepo =
+      require("../src/repositories/patronRequerimientoRepository");
+  const {
+    idPatron, deltasMapeo, deltasEspeciales, agruparDeltas, aplicarDelta,
+  } = require("../src/utils/patronesMapeo");
+
+  beforeEach(async () => {
+    await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
+        SUPER);
+  });
+  const registrar = () => carpetas.registrar({mandanteId: "m1",
+    ruta: "1. TECNORED", empresaId: "emp1"}, SUPER);
+  const patron = (p, rid, ambito = "empresa", objetivo = "carpeta") =>
+    mockDb.patrones.get(idPatron({mandanteId: "m1", ambito, objetivo,
+      patron: p, requerimientoId: rid}));
+
+  test("deltas puros: nuevas +1, quitadas −1, estructura y agrupación",
+      () => {
+        const d = deltasMapeo({r1: [{ruta: "A/09. MIPER", tipo: "carpeta"}]},
+            {r2: [{ruta: "05. O.D.I Especifica", tipo: "carpeta"}]});
+        expect(d).toEqual([
+          {ambito: "empresa", objetivo: "carpeta", patron: "odi especifica",
+            requerimientoId: "r2", delta: 1},
+          {ambito: "empresa", objetivo: "carpeta", patron: "miper",
+            requerimientoId: "r1", delta: -1}]);
+        expect(deltasEspeciales({carpetaPersonas: "02. Trabajadores"},
+            {carpetaPersonas: "03. Carpeta Personales"})).toEqual([
+          {ambito: "estructura", objetivo: "carpetaPersonas",
+            patron: "trabajadores", requerimientoId: null, delta: -1},
+          {ambito: "estructura", objetivo: "carpetaPersonas",
+            patron: "carpeta personales", requerimientoId: null, delta: 1}]);
+        expect(agruparDeltas("m1", [...d, {...d[0], delta: -1}]))
+            .toHaveLength(1);
+        expect(aplicarDelta(null, -1)).toBeNull();
+        expect(aplicarDelta({vecesConfirmado: 1}, -1))
+            .toEqual({vecesConfirmado: 0, estado: "inactivo"});
+      });
+
+  test("aprender al asignar y deshacer al quitar (en 0, inactivo), en una " +
+      "sola transacción con la carpeta", async () => {
+    const c = await registrar();
+    await carpetas.actualizar(c.id, {carpetaPersonas: "03. Carpeta Personales",
+      mapeo: {r1: [{ruta: "09. MIPER", origen: "sugerencia"}],
+        r2: [{ruta: "Listado Trabajadores.docx", tipo: "archivo"}]}},
+    EVALUADOR);
+    // Una sola llamada: asignaciones y patrones juntos.
+    expect(patronRepo.aplicar).toHaveBeenCalledTimes(1);
+    expect(patronRepo.aplicar.mock.calls[0][0].cambiosCarpeta.mapeo.r1[0])
+        .toMatchObject({ruta: "09. MIPER", origen: "sugerencia"});
+    expect(patron("miper", "r1")).toMatchObject({vecesConfirmado: 1,
+      estado: "activo", carpetaEmpresaIdOrigen: c.id});
+    expect(patron("listado trabajadores", "r2", "empresa", "archivo"))
+        .toMatchObject({vecesConfirmado: 1});
+    expect(patron("carpeta personales", null, "estructura",
+        "carpetaPersonas")).toMatchObject({vecesConfirmado: 1});
+    // Otra carpeta confirma el mismo patrón: 2.
+    mockDb.carpetas.get(c.id).mapeo = {};
+    await carpetas.actualizar(c.id, {mapeo: {r1: [{ruta: "09. MIPER"}]}},
+        SUPER);
+    expect(patron("miper", "r1").vecesConfirmado).toBe(2);
+    // Quitar resta 1; en 0 queda inactivo (no se borra).
+    await carpetas.actualizar(c.id, {mapeo: {r1: null}}, SUPER);
+    expect(patron("miper", "r1")).toMatchObject({vecesConfirmado: 1,
+      estado: "activo"});
+    mockDb.carpetas.get(c.id).mapeo = {r1: [{ruta: "09. MIPER",
+      tipo: "carpeta"}]};
+    await carpetas.actualizar(c.id, {mapeo: {r1: []}}, SUPER);
+    expect(patron("miper", "r1")).toMatchObject({vecesConfirmado: 0,
+      estado: "inactivo"});
+    expect(bitacoraLogger.registrarEvento).toHaveBeenLastCalledWith(
+        expect.objectContaining({detalle: expect.objectContaining({
+          patrones: [expect.objectContaining({patron: "miper", delta: -1,
+            estado: "inactivo"})]})}));
+  });
+
+  test("copia (soloAgregar): nunca sobrescribe lo existente", async () => {
+    const c = await registrar();
+    await carpetas.actualizar(c.id, {carpetaPersonas: "02. Trabajadores",
+      mapeo: {r1: [{ruta: "A"}]}}, SUPER);
+    await expect(carpetas.actualizar(c.id, {soloAgregar: true,
+      mapeo: {r1: [{ruta: "B"}]}}, SUPER)).rejects.toMatchObject({
+      status: 409});
+    await expect(carpetas.actualizar(c.id, {soloAgregar: true,
+      carpetaPersonas: "03. Otra"}, SUPER)).rejects.toMatchObject({
+      status: 409});
+    const ok = await carpetas.actualizar(c.id, {soloAgregar: true,
+      mapeo: {r1: [{ruta: "A"}, {ruta: "B", origen: "sugerencia"}],
+        r2: [{ruta: "C", origen: "sugerencia"}]}}, SUPER);
+    expect(ok.mapeo.r1.map((e) => e.ruta)).toEqual(["A", "B"]);
+    expect(ok.mapeo.r2[0].origen).toBe("sugerencia");
+  });
+
+  test("archivos de personas: el patrón lo calcula el backend; nada por " +
+      "persona", async () => {
+    const c = await registrar();
+    await patronesSrv.confirmarArchivos({carpetaEmpresaId: c.id,
+      ambito: "persona", items: [{requerimientoId: "rp",
+        nombreArchivo: "2.- C.I. Diego Garrido Muñoz 31-12-2031.pdf",
+        nombreSujeto: "Diego Garrido Muñoz"}]}, EVALUADOR);
+    expect(patron("ci", "rp", "persona", "archivo"))
+        .toMatchObject({vecesConfirmado: 1, estado: "activo"});
+    expect(mockDb.carpetas.get(c.id).mapeo).toEqual({});
+    // Solo requerimientos de Persona de la carpeta.
+    await expect(patronesSrv.confirmarArchivos({carpetaEmpresaId: c.id,
+      ambito: "persona", items: [{requerimientoId: "r1", nombreArchivo:
+        "x.pdf", nombreSujeto: "Ana"}]}, SUPER)).rejects.toMatchObject({
+      status: 400});
+    // Un nombre que solo trae la persona y la fecha no deja patrón.
+    await expect(patronesSrv.confirmarArchivos({carpetaEmpresaId: c.id,
+      ambito: "persona", items: [{requerimientoId: "rp", nombreArchivo:
+        "Diego Garrido Muñoz 2024.pdf", nombreSujeto: "Diego Garrido Muñoz"}]},
+    SUPER)).rejects.toMatchObject({status: 400});
+    await patronesSrv.quitarArchivos({carpetaEmpresaId: c.id,
+      ambito: "persona", items: [{requerimientoId: "rp", nombreArchivo:
+        "C.I. Diego Garrido Muñoz.pdf", nombreSujeto: "Diego Garrido Muñoz"}]},
+    SUPER);
+    expect(patron("ci", "rp", "persona", "archivo"))
+        .toMatchObject({vecesConfirmado: 0, estado: "inactivo"});
+  });
+
+  test("listar y desactivar (E4); aislamiento y permisos", async () => {
+    const c = await registrar();
+    await carpetas.actualizar(c.id, {mapeo: {r1: [{ruta: "09. MIPER"}]}},
+        SUPER);
+    const lista = await patronesSrv.listar({mandanteId: "m1",
+      ambito: "empresa"}, EVALUADOR);
+    expect(lista).toHaveLength(1);
+    const p = await patronesSrv.cambiarEstado(lista[0].id, "inactivo", SUPER);
+    expect(p.estado).toBe("inactivo");
+    await expect(patronesSrv.listar({mandanteId: "m1"}, ADMIN_M1))
+        .rejects.toMatchObject({status: 403});
+    await expect(patronesSrv.confirmarArchivos({carpetaEmpresaId: c.id,
+      ambito: "persona", items: [{requerimientoId: "rp", nombreArchivo:
+        "ci.pdf", nombreSujeto: "Ana"}]}, ADMIN_M2))
+        .rejects.toMatchObject({status: 403});
+    expect(await patronesSrv.listar({mandanteId: "m2"}, SUPER)).toEqual([]);
   });
 });

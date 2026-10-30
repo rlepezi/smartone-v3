@@ -47,14 +47,18 @@ export const estadoNodo = (nodo, { mapeo, carpetaPersonas = null, carpetaRecurso
 
 // Cambios (PATCH mapeo) para dejar `nodo` asignado a `nuevoId` (o sin asignar con null): lo quita
 // del requerimiento que lo tenía y lo agrega al nuevo. Devuelve { requerimientoId: [{ ruta, tipo }] }
-// solo con los requerimientos que cambian (lista vacía = quitar todo).
-export const cambiosAsignacion = (mapeo, nodo, nuevoId) => {
+// solo con los requerimientos que cambian (lista vacía = quitar todo). `origen`: "sugerencia" si se
+// aceptó una sugerencia (o una copia de mapeo); si no, el backend la deja "manual".
+export const cambiosAsignacion = (mapeo, nodo, nuevoId, origen = null) => {
   const listaDe = (id) => (mapeo?.[id] || []).map((e) => ({ ruta: e.ruta, tipo: e.tipo === "archivo" ? "archivo" : "carpeta" }));
   const anterior = entradasPlanas(mapeo).find((e) => e.ruta === nodo.ruta)?.requerimientoId || null;
   if (anterior === nuevoId) return {};
   const cambios = {};
   if (anterior) cambios[anterior] = listaDe(anterior).filter((e) => e.ruta !== nodo.ruta);
-  if (nuevoId) cambios[nuevoId] = [...listaDe(nuevoId).filter((e) => e.ruta !== nodo.ruta), { ruta: nodo.ruta, tipo: nodo.tipo }];
+  if (nuevoId) {
+    cambios[nuevoId] = [...listaDe(nuevoId).filter((e) => e.ruta !== nodo.ruta),
+      { ruta: nodo.ruta, tipo: nodo.tipo, ...(origen ? { origen } : {}) }];
+  }
   return cambios;
 };
 

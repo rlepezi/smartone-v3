@@ -214,6 +214,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Patrones aprendidos del mapeo documental: solo por la API (superadmin
+    // y evaluador).
+    match /patronesRequerimiento/{docId} {
+      allow read, write: if false;
+    }
+
     // Configuración de IA (API key cifrada): nunca desde el cliente.
     match /configuracionIA/{docId} {
       allow read, write: if false;

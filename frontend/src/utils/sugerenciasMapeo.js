@@ -1,55 +1,56 @@
-import { normalizarNombreMapeo, similitudTokens, tokensSignificativos } from "./normalizacionMapeo.js";
+import { normalizarNombreMapeo, sugerirRequerimiento } from "./normalizacionMapeo.js";
 import { estadoNodo } from "./mapeoArbol.js";
 
-// Sugerencias del mapeo documental por NOMBRE del requerimiento (sin patrones aprendidos todavía):
-// cada requerimiento sin ubicar se compara con las carpetas y archivos libres ya cargados del árbol.
-// Nunca se guarda solo: la pantalla ofrece "Usar" y el backend valida las reglas.
-//  - alta: mismo nombre normalizado, o los mismos tokens significativos (nombre corto o nombre).
-//  - media: el nodo contiene todos los tokens significativos del nombre corto, o Dice ≥ 0,8.
-//  - baja: comparte un token significativo de 4 o más letras.
+// Sugerencias del mapeo documental sobre lo ya cargado del árbol, con el motor compartido
+// (sugerirRequerimiento: patrones aprendidos del Mandante y nombres de los requerimientos). Nunca se
+// guardan solas: la pantalla ofrece "Aceptar" / "Usar" y el backend valida las reglas.
 export const NIVELES = { alta: 3, media: 2, baja: 1 };
 
-// Nivel y puntaje de un nodo (nombre ya normalizado) para un requerimiento.
-export const confianzaPorNombre = (nodoNormalizado, requerimiento) => {
-  const nombres = [requerimiento.nombreCorto, requerimiento.nombre].filter(Boolean)
-    .map((n) => normalizarNombreMapeo(n, { archivo: false }));
-  const tokensNodo = tokensSignificativos(nodoNormalizado);
-  if (!tokensNodo.length || !nombres.length) return { nivel: null, puntaje: 0 };
-  const puntaje = Math.max(...nombres.map((n) => similitudTokens(nodoNormalizado, n)));
-  const mismos = (n) => {
-    const t = tokensSignificativos(n);
-    return t.length > 0 && t.length === tokensNodo.length && t.every((x) => tokensNodo.includes(x));
-  };
-  if (nombres.some((n) => n === nodoNormalizado || mismos(n))) return { nivel: "alta", puntaje };
-  const corto = tokensSignificativos(nombres[0]);
-  if ((corto.length && corto.every((t) => tokensNodo.includes(t))) || puntaje >= 0.8) return { nivel: "media", puntaje };
-  const largos = new Set(nombres.flatMap(tokensSignificativos).filter((t) => t.length >= 4));
-  if (tokensNodo.some((t) => largos.has(t))) return { nivel: "baja", puntaje };
-  return { nivel: null, puntaje: 0 };
-};
+// Patrones activos de Empresa para un tipo de nodo ("carpeta" | "archivo").
+const patronesPara = (patrones, tipo) => (patrones || [])
+  .filter((p) => p.estado === "activo" && p.ambito === "empresa" && p.objetivo === tipo);
 
-// Mejor nodo para cada requerimiento sin ubicar: Map requerimientoId → { nodo, nivel, puntaje }.
-// Cada nodo se sugiere a lo más a un requerimiento (gana el de mayor nivel y puntaje), para que
-// "Usar todas" no choque con la regla "un nodo, un requerimiento".
-//  - nodos: [{ ruta, nombre, tipo }] cargados. estado: { mapeo, carpetaPersonas, carpetaRecursos }.
-export const sugerenciasPorRequerimiento = ({ requerimientos, nodos, estado }) => {
-  const libres = nodos.filter((n) => estadoNodo(n, estado).clase === "libre")
-    .map((n) => ({ ...n, normalizado: normalizarNombreMapeo(n.nombre, { archivo: n.tipo === "archivo" }) }));
-  const pares = [];
-  requerimientos.filter((r) => !(estado.mapeo?.[r.id] || []).length).forEach((r) => {
-    libres.forEach((n) => {
-      const c = confianzaPorNombre(n.normalizado, r);
-      if (c.nivel) pares.push({ requerimientoId: r.id, nodo: n, ...c });
-    });
-  });
-  pares.sort((a, b) => NIVELES[b.nivel] - NIVELES[a.nivel] || b.puntaje - a.puntaje ||
-    a.nodo.ruta.localeCompare(b.nodo.ruta, "es", { numeric: true }));
+// Sugerencia de cada nodo LIBRE cargado: Map ruta → { nodo, nivel, requerimientoId, candidatos,
+// ambiguo }. Los ya asignados, los incluidos en una carpeta asignada y las personas o maquinarias no
+// reciben sugerencia. Un requerimiento ya ubicado en la carpeta baja un nivel.
+//  - nodos: [{ ruta, nombre, tipo }]. estado: { mapeo, carpetaPersonas, carpetaRecursos }.
+//  - patrones: los del Mandante (se usan los activos de Empresa). requerimientos: asignables.
+export const sugerenciasDelArbol = ({ nodos, estado, patrones = [], requerimientos }) => {
+  const ubicados = Object.entries(estado.mapeo || {}).filter(([, l]) => (l || []).length).map(([id]) => id);
   const salida = new Map();
-  const usados = new Set();
-  pares.forEach((p) => {
-    if (salida.has(p.requerimientoId) || usados.has(p.nodo.ruta)) return;
-    salida.set(p.requerimientoId, { nodo: { ruta: p.nodo.ruta, nombre: p.nodo.nombre, tipo: p.nodo.tipo }, nivel: p.nivel, puntaje: p.puntaje });
-    usados.add(p.nodo.ruta);
+  nodos.filter((n) => estadoNodo(n, estado).clase === "libre").forEach((n) => {
+    const s = sugerirRequerimiento(normalizarNombreMapeo(n.nombre, { archivo: n.tipo === "archivo" }), {
+      patrones: patronesPara(patrones, n.tipo), requerimientos, ubicados,
+    });
+    if (s.nivel) salida.set(n.ruta, { nodo: { ruta: n.ruta, nombre: n.nombre, tipo: n.tipo }, ...s });
   });
   return salida;
+};
+
+// Mejor nodo sugerido para cada requerimiento (no ambiguo): Map requerimientoId → sugerencia.
+export const mejorPorRequerimiento = (sugerencias) => {
+  const salida = new Map();
+  [...sugerencias.values()].filter((s) => !s.ambiguo).sort((a, b) => NIVELES[b.nivel] - NIVELES[a.nivel] ||
+    a.nodo.ruta.localeCompare(b.nodo.ruta, "es", { numeric: true }))
+    .forEach((s) => { if (!salida.has(s.requerimientoId)) salida.set(s.requerimientoId, s); });
+  return salida;
+};
+
+// Palabras clave de las carpetas especiales (sin patrones aprendidos).
+const CLAVES = {
+  carpetaPersonas: /trabajador|personal|persona/i,
+  carpetaRecursos: /veh[ií]cul|maquinari|equipo/i,
+};
+
+// Carpeta sugerida como carpeta del personal / de maquinarias entre las de primer nivel libres:
+// primero por patrones estructurales (exactos, la de más confirmaciones), si no por palabras clave.
+// Devuelve { nodo, porPatron } o null.
+export const sugerirEspecial = ({ campo, carpetas, estado, patrones = [] }) => {
+  const libres = carpetas.filter((c) => estadoNodo({ ruta: c.ruta, tipo: "carpeta" }, estado).clase === "libre");
+  const estructurales = patrones.filter((p) => p.estado === "activo" && p.ambito === "estructura" && p.objetivo === campo);
+  const porPatron = libres.map((c) => ({ c, p: estructurales.find((p) => p.patron === normalizarNombreMapeo(c.nombre, { archivo: false })) }))
+    .filter((x) => x.p).sort((a, b) => (b.p.vecesConfirmado || 0) - (a.p.vecesConfirmado || 0))[0];
+  if (porPatron) return { nodo: porPatron.c, porPatron: true };
+  const porClave = libres.find((c) => CLAVES[campo].test(c.nombre));
+  return porClave ? { nodo: porClave, porPatron: false } : null;
 };
