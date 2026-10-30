@@ -1,0 +1,14 @@
+{
+  "name": "smartone-v3",
+  "private": true,
+  "description": "Scripts de ambiente y despliegue (frontend y functions tienen su propio package.json).",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:emuladores": "npm --prefix frontend run dev:emuladores",
+    "emuladores": "npx firebase emulators:start --project qa",
+    "build:qa": "npm --prefix frontend run build:qa",
+    "build:prod": "npm --prefix frontend run build",
+    "deploy:qa": "node scripts/deploy.mjs qa",
+    "deploy:prod": "node scripts/deploy.mjs prod"
+  }
+}

@@ -1,31 +1,15 @@
 /**
  * Uso (mismo patrón que seedDatosPrueba.js):
- *   USE_EMULATOR=true node src/scripts/seedSuperAdmin.js   (emulador local)
- *   node src/scripts/seedSuperAdmin.js                     (proyecto real,
- *       requiere functions/serviceAccountKey.json)
+ *   USE_EMULATOR=true node src/scripts/seedSuperAdmin.js   (emuladores)
+ *   SMARTONE_ENV=qa node src/scripts/seedSuperAdmin.js     (proyecto QA)
+ *   SMARTONE_ENV=prod node src/scripts/seedSuperAdmin.js --confirmar-prod
+ *       (producción)
  */
 
-const path = require("path");
-
-if (process.env.USE_EMULATOR === "true") {
-  process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
-}
-
-const admin = require("firebase-admin");
-
-if (!admin.apps.length) {
-  if (process.env.USE_EMULATOR === "true") {
-    admin.initializeApp({projectId: "smartone-v3"});
-  } else {
-    const serviceAccount = require(
-        path.join(__dirname, "../../serviceAccountKey.json"),
-    );
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-  }
-}
+// Ambiente: SMARTONE_ENV=qa | prod (prod exige --confirmar-prod) o
+// USE_EMULATOR=true. Ver ./ambiente.js.
+const {iniciarAmbiente} = require("./ambiente");
+const {admin} = iniciarAmbiente({escribe: true});
 
 const db = admin.firestore();
 const {FieldValue} = require("firebase-admin/firestore");

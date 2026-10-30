@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "smartone-v3"
+    "default": "smartone-v3-qa",
+    "qa": "smartone-v3-qa",
+    "prod": "smartone-v3"
   }
 }

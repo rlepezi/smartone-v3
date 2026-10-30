@@ -5,34 +5,18 @@
  * derivaciones y lógica especial ya construida.
  *
  * Uso:
- *   USE_EMULATOR=true node src/scripts/seedDatosPrueba.js   (emulador local)
- *   node src/scripts/seedDatosPrueba.js                     (proyecto real,
- *       requiere functions/serviceAccountKey.json)
+ *   USE_EMULATOR=true node src/scripts/seedDatosPrueba.js   (emuladores)
+ *   SMARTONE_ENV=qa node src/scripts/seedDatosPrueba.js     (proyecto QA)
+ *   SMARTONE_ENV=prod node src/scripts/seedDatosPrueba.js --confirmar-prod
+ *       (producción)
  *
  * Idempotente: puede correrse varias veces sin duplicar datos.
  */
 
-const path = require("path");
-
-if (process.env.USE_EMULATOR === "true") {
-  process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
-}
-
-const admin = require("firebase-admin");
-
-if (!admin.apps.length) {
-  if (process.env.USE_EMULATOR === "true") {
-    admin.initializeApp({projectId: "smartone-v3"});
-  } else {
-    const serviceAccount = require(
-        path.join(__dirname, "../../serviceAccountKey.json"),
-    );
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-  }
-}
+// Ambiente: SMARTONE_ENV=qa | prod (prod exige --confirmar-prod) o
+// USE_EMULATOR=true. Ver ./ambiente.js.
+const {iniciarAmbiente} = require("./ambiente");
+const {admin, ambiente, projectId} = iniciarAmbiente({escribe: true});
 
 const {cleanRut} = require("../utils/rutValidator");
 const {normalizarNombre} = require("../utils/nombreRequerimiento");
@@ -1364,9 +1348,7 @@ function imprimirResumen(usuarios) {
  */
 async function main() {
   log("=== SmartOne v3 — Seed de datos de prueba ===");
-  const modo = process.env.USE_EMULATOR === "true" ?
-      "EMULADOR" :
-      "PROYECTO REAL (smartone-v3)";
+  const modo = `${ambiente.toUpperCase()} (${projectId})`;
   log(`Modo: ${modo}`);
 
   const mandantes = await seedMandantes();
