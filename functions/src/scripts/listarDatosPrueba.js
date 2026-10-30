@@ -79,14 +79,24 @@ async function main() {
   const hasta = arg("hasta") ? fechaDMA(arg("hasta"), true) : new Date();
   console.log(`Período: ${formato(desde)} → ${formato(hasta)}\n`);
 
-  const [usuarios, empresas, requerimientos, mandantes] = await Promise.all([
-    mapa("usuarios"), mapa("empresas"), mapa("requerimientos"),
-    mapa("mandantes")]);
-  const autor = (uid) => {
+  const [usuarios, empresas, requerimientos, mandantes, creaciones] =
+      await Promise.all([mapa("usuarios"), mapa("empresas"),
+        mapa("requerimientos"), mapa("mandantes"),
+        db.collection("bitacora").where("accion", "==", "creado").get()]);
+  // Quién creó cada registro según la Bitácora (las colecciones sin autor
+  // en el documento: personas, maquinarias, empresas, evidencias).
+  const creadoPor = new Map(creaciones.docs.map((d) => d.data())
+      .map((b) => [b.entidadId, b.actorNombre || b.actorUid]));
+  const usuario = (uid) => {
     const u = usuarios.get(uid);
     return u ? (u.email || `${u.nombre || ""} ${u.apellido || ""}`.trim()) :
-      (uid || "—");
+      uid;
   };
+  // Autor: el del documento (createdBy texto u objeto, creadoPorNombre,
+  // evaluadorNombre) o el de la Bitácora.
+  const autorDe = (id, d) => (typeof d.createdBy === "string" ?
+    usuario(d.createdBy) : d.createdBy?.nombre || d.creadoPorNombre ||
+      d.evaluadorNombre || creadoPor.get(id) || "—");
   const empresa = (id) => empresas.get(id)?.razonSocial || id || "";
   const req = (id) => {
     const r = requerimientos.get(id);
@@ -144,7 +154,7 @@ async function main() {
       const senal = RE_PRUEBA.test(descripcion) ||
         RE_RUT_EJEMPLO.test(String(d.rut || "")) ? "posible prueba" : "";
       const fila = {coleccion, id: doc.id, creado: formato(aFecha(d.createdAt)),
-        modificado: formato(aFecha(d.updatedAt)), autor: autor(d.createdBy),
+        modificado: formato(aFecha(d.updatedAt)), autor: autorDe(doc.id, d),
         mandante: mandante(d.mandanteId), estado: d.estado || "",
         descripcion, senal};
       filas.push(fila);
