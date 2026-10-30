@@ -3,7 +3,7 @@ import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronRight, Calendar, ListChecks, Pencil, Power, Copy, History,
-  FolderKanban, Link2, ClipboardList, FileCheck2, Users, Eye,
+  Users, Eye,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
@@ -15,7 +15,7 @@ import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { bitacoraService } from "../../services/bitacoraService";
 import { TIPOS_ENTIDAD } from "../../services/requerimientoService";
-import { formatFecha, formatTiempoRelativo } from "../../utils/fechaFormatters";
+import { formatFecha, formatTiempoRelativo } from "../../utils/fechas";
 import { createdAtMillis } from "../../utils/deltaCalculos";
 import { describirEvento } from "../../utils/bitacoraFormatters";
 import { duplicarPerfilParticipacion } from "../../utils/duplicarPerfilParticipacion";
@@ -142,15 +142,6 @@ export const PerfilParticipacionDetailPage = () => {
   const [duplicando, setDuplicando] = useState(false);
   const [toggleandoEstado, setToggleandoEstado] = useState(false);
 
-  // "Resumen del Perfil" (backend, obtenerResumen) — números reales del
-  // perfil ACTUAL: requerimientosVinculados/participacionesActivas/
-  // expedientesGenerados. Distinto del bloque "Requerimientos totales /
-  // Participaciones / Expedientes" del sidebar (arriba), que cuenta TODAS
-  // las participaciones (no solo activas) porque ese dato alimenta
-  // "Usado en" (Proyectos distintos) más abajo.
-  const [resumenPerfil, setResumenPerfil] = useState(null);
-  const [cargandoResumenPerfil, setCargandoResumenPerfil] = useState(true);
-
   // "Otros Perfiles del Mandante"
   const [otrosPerfiles, setOtrosPerfiles] = useState([]);
   const [cargandoOtros, setCargandoOtros] = useState(true);
@@ -236,15 +227,6 @@ export const PerfilParticipacionDetailPage = () => {
       .catch((err) => console.error("Error al cargar evaluaciones:", err))
       .finally(() => setCargandoEvaluaciones(false));
   }, []);
-
-  useEffect(() => {
-    setCargandoResumenPerfil(true);
-    perfilParticipacionService
-      .obtenerResumen(id)
-      .then((data) => setResumenPerfil(data))
-      .catch((err) => console.error("Error al cargar el resumen del perfil:", err))
-      .finally(() => setCargandoResumenPerfil(false));
-  }, [id]);
 
   useEffect(() => {
     let cancelado = false;
@@ -477,15 +459,15 @@ export const PerfilParticipacionDetailPage = () => {
       </div>
 
       {activeTab === "resumen" && (
-        <>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          <div className="lg:col-span-2 min-w-0 space-y-6">
+        <div className="space-y-6">
+        <div className="space-y-6">
+          <div className="min-w-0 space-y-6">
             {/* Información General */}
             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
               <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider pb-3 border-b border-slate-100">
                 Información General
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-8 gap-y-5 text-xs">
                 <div>
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nombre del Perfil</p>
                   <p className="text-slate-700 font-medium">{perfil.nombre}</p>
@@ -493,12 +475,6 @@ export const PerfilParticipacionDetailPage = () => {
                 <div>
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mandante</p>
                   <p className="text-slate-700 font-medium">{mandanteNombre || perfil.mandanteId}</p>
-                </div>
-                <div className="md:col-span-2">
-                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Descripción</p>
-                  <p className="text-slate-700 font-medium">
-                    {perfil.descripcion || <span className="text-slate-400 italic">Sin descripción.</span>}
-                  </p>
                 </div>
                 <div>
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Creado el</p>
@@ -511,6 +487,12 @@ export const PerfilParticipacionDetailPage = () => {
                 <div>
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Estado</p>
                   <StatusBadge value={perfil.estado} map={MAPA_ACTIVO_INACTIVO} />
+                </div>
+                <div className="sm:col-span-2 xl:col-span-3">
+                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Descripción</p>
+                  <p className="text-slate-700 font-medium">
+                    {perfil.descripcion || <span className="text-slate-400 italic">Sin descripción.</span>}
+                  </p>
                 </div>
               </div>
             </div>
@@ -552,127 +534,9 @@ export const PerfilParticipacionDetailPage = () => {
               )}
             </div>
           </div>
-
-          <div className="space-y-6">
-            {/* Resumen del Perfil */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-              <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider pb-3 border-b border-slate-100">
-                Resumen del Perfil
-              </h3>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div>
-                  <p className="text-xl font-black text-carbon-dark">{vinculos.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Requerimientos totales</p>
-                </div>
-                <div>
-                  <p className="text-xl font-black text-carbon-dark">{cargandoUso ? "…" : participacionesDelPerfil.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Participaciones</p>
-                </div>
-                <div>
-                  <p className="text-xl font-black text-carbon-dark">{cargandoUso ? "…" : expedientesDelPerfil.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Expedientes</p>
-                </div>
-              </div>
-              {cargandoEvaluaciones || cargandoVinculos ? (
-                <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-              ) : vinculos.length === 0 ? (
-                <div className="py-4 text-center text-slate-400 text-xs">Sin Requerimientos vinculados todavía.</div>
-              ) : (
-                <EstadoCumplimientoPanel conteos={conteosRequerimientos} sinEvaluar={sinEvaluarCount} size={130} strokeWidth={14} />
-              )}
-              <ActionButton as={Link} to="/expedientes" icon={FileCheck2} className="w-full justify-center">
-                Ver Expedientes Asociados ({cargandoUso ? "…" : expedientesDelPerfil.length})
-              </ActionButton>
-            </div>
-
-            {/* Usado en */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-              <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider pb-3 border-b border-slate-100">
-                Usado en
-              </h3>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <FolderKanban className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-lg font-black text-carbon-dark">{cargandoUso ? "…" : proyectosDistintosDelPerfil.size}</p>
-                  <p className="text-[10px] font-semibold text-slate-400">Proyectos</p>
-                </div>
-                <div>
-                  <Link2 className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-lg font-black text-carbon-dark">{cargandoUso ? "…" : participacionesDelPerfil.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400">Participaciones</p>
-                </div>
-                <div>
-                  <ClipboardList className="w-4 h-4 text-primary mx-auto mb-1" />
-                  <p className="text-lg font-black text-carbon-dark">{cargandoUso ? "…" : sujetosDelPerfil.length}</p>
-                  <p className="text-[10px] font-semibold text-slate-400">Personas y Maquinarias</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Acciones rápidas */}
-            {puedeEscribir && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-3">
-                <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider pb-3 border-b border-slate-100">
-                  Acciones Rápidas
-                </h3>
-                <div className="flex flex-col gap-2">
-                  <ActionButton
-                    icon={Copy}
-                    busy={duplicando}
-                    busyLabel="Duplicando..."
-                    disabled={cargandoVinculos}
-                    onClick={handleDuplicar}
-                    className="w-full justify-start"
-                  >
-                    Duplicar perfil
-                  </ActionButton>
-                  <ActionButton
-                    icon={Power}
-                    busy={toggleandoEstado}
-                    busyLabel="Guardando..."
-                    onClick={handleToggleEstado}
-                    className="w-full justify-start"
-                  >
-                    {perfil.estado === "activo" ? "Desactivar perfil" : "Activar perfil"}
-                  </ActionButton>
-                  <ActionButton icon={History} onClick={() => handleTabClick("historial")} className="w-full justify-start">
-                    Ver historial de cambios
-                  </ActionButton>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Otros Perfiles del Mandante */}
-        <div className="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-6 items-start">
-          {/* Resumen del Perfil (backend) — números reales, no cliente */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-            <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider pb-3 border-b border-slate-100">
-              Resumen del Perfil
-            </h3>
-            <div className="space-y-3 text-center">
-              <div>
-                <p className="text-2xl font-black text-carbon-dark">
-                  {cargandoResumenPerfil ? "…" : resumenPerfil?.requerimientosVinculados ?? 0}
-                </p>
-                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Requerimientos vinculados</p>
-              </div>
-              <div>
-                <p className="text-2xl font-black text-carbon-dark">
-                  {cargandoResumenPerfil ? "…" : resumenPerfil?.participacionesActivas ?? 0}
-                </p>
-                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Participaciones activas</p>
-              </div>
-              <div>
-                <p className="text-2xl font-black text-carbon-dark">
-                  {cargandoResumenPerfil ? "…" : resumenPerfil?.expedientesGenerados ?? 0}
-                </p>
-                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Expedientes generados</p>
-              </div>
-            </div>
-          </div>
-
           <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4 min-w-0">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
               <Users className="w-4 h-4 text-slate-400" />
@@ -762,7 +626,6 @@ export const PerfilParticipacionDetailPage = () => {
             )}
           </div>
         </div>
-        </>
       )}
 
       {activeTab === "requerimientos" && (

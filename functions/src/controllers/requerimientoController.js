@@ -5,7 +5,7 @@ const requerimientoService = require("../services/requerimientoService");
  */
 class RequerimientoController {
   /**
-   * Obtiene un requerimiento por su ID.
+   * Obtiene un requerimiento por su ID, con su aplicabilidad.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -13,9 +13,8 @@ class RequerimientoController {
    */
   async getById(req, res, next) {
     try {
-      const {id} = req.params;
       const requerimiento = await requerimientoService.getRequerimientoById(
-          id,
+          req.params.id, req.user,
       );
       res.status(200).json({data: requerimiento});
     } catch (error) {
@@ -24,8 +23,8 @@ class RequerimientoController {
   }
 
   /**
-   * Lista requerimientos, opcionalmente filtrados por estado y/o tipo de
-   * entidad.
+   * Lista los requerimientos de un Mandante (`mandanteId` obligatorio
+   * para los roles transversales), con su aplicabilidad.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -33,9 +32,9 @@ class RequerimientoController {
    */
   async list(req, res, next) {
     try {
-      const {estado, tipoEntidad} = req.query;
+      const {mandanteId, estado, tipoEntidad} = req.query;
       const requerimientos = await requerimientoService.listarRequerimientos(
-          {estado, tipoEntidad},
+          {mandanteId, estado, tipoEntidad}, req.user,
       );
       res.status(200).json({data: requerimientos});
     } catch (error) {
@@ -44,15 +43,18 @@ class RequerimientoController {
   }
 
   /**
-   * Uso de los Requerimientos por Mandante (requerimientoId -> mandanteIds).
+   * Opciones de ubicación en la plantilla de estructura (selector del
+   * formulario de Requerimiento).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
    * @return {Promise<void>}
    */
-  async uso(req, res, next) {
+  async ubicacionesPlantilla(req, res, next) {
     try {
-      const data = await requerimientoService.obtenerUsoPorMandante(req.user);
+      const {mandanteId, tipoEntidad} = req.query;
+      const data = await requerimientoService.opcionesUbicacionPlantilla(
+          {mandanteId, tipoEntidad}, req.user);
       res.status(200).json({data});
     } catch (error) {
       next(error);
@@ -60,7 +62,7 @@ class RequerimientoController {
   }
 
   /**
-   * Crea un nuevo requerimiento.
+   * Crea un requerimiento junto con su aplicabilidad (una transacción).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -69,7 +71,7 @@ class RequerimientoController {
   async create(req, res, next) {
     try {
       const nuevoRequerimiento = await requerimientoService.crearRequerimiento(
-          req.body,
+          req.body, req.user,
       );
       res.status(201).json({
         message: "Requerimiento creado exitosamente.",
@@ -81,7 +83,7 @@ class RequerimientoController {
   }
 
   /**
-   * Actualiza un requerimiento existente.
+   * Edita un requerimiento y su aplicabilidad (una transacción).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
@@ -89,34 +91,13 @@ class RequerimientoController {
    */
   async update(req, res, next) {
     try {
-      const {id} = req.params;
       const requerimientoActualizado =
-          await requerimientoService.actualizarRequerimiento(id, req.body);
+          await requerimientoService.actualizarRequerimiento(
+              req.params.id, req.body, req.user,
+          );
       res.status(200).json({
         message: "Requerimiento actualizado exitosamente.",
         data: requerimientoActualizado,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Desactiva un requerimiento existente.
-   * @param {Object} req Petición Express.
-   * @param {Object} res Respuesta Express.
-   * @param {Function} next Siguiente middleware.
-   * @return {Promise<void>}
-   */
-  async deactivate(req, res, next) {
-    try {
-      const {id} = req.params;
-      const requerimiento = await requerimientoService.desactivarRequerimiento(
-          id,
-      );
-      res.status(200).json({
-        message: "Requerimiento desactivado exitosamente.",
-        data: requerimiento,
       });
     } catch (error) {
       next(error);

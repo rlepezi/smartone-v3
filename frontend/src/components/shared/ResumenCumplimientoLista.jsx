@@ -1,17 +1,12 @@
-import React from "react";
+// "Resumen" de cumplimiento en formato lista (sin donut): total de requisitos + un renglón por
+// resultado, desde los mismos contadores que `EstadoCumplimientoPanel` (`resumen` de las
+// instancias de Requerimiento) — así el donut y esta lista nunca muestran números distintos.
+// "Pendientes" incluye los requisitos aún sin evaluar.
+import { segmentosCumplimiento } from "../../utils/estadosCumplimiento";
 
-// "Resumen" de cumplimiento en formato lista (sin donut): Total de requisitos + un renglón por
-// resultado, con la misma fuente de datos que `EstadoCumplimientoPanel` (conteos/sinEvaluar) —
-// para que el donut y esta lista nunca puedan mostrar números distintos. Usado junto a
-// EstadoCumplimientoPanel cuando además del donut hace falta la versión "tarjeta de resumen"
-// (ej. "Resumen por Empresa" / "Resumen de {Persona}" en el Detalle de Expediente).
-export const ResumenCumplimientoLista = ({ conteos, sinEvaluar = 0 }) => {
-  const segmentos = [
-    { key: "cumple", label: "Cumplen", value: conteos.cumple, dot: "bg-sage-dark" },
-    { key: "pendiente", label: "Pendientes", value: conteos.pendiente, dot: "bg-amber-400" },
-    { key: "no_cumple", label: "No cumplen", value: conteos.no_cumple, dot: "bg-red-500" },
-    { key: "sin_evaluar", label: "Sin evaluar", value: sinEvaluar, dot: "bg-slate-300" },
-  ];
+export const ResumenCumplimientoLista = ({ resumen }) => {
+  const r = resumen || {};
+  const segmentos = segmentosCumplimiento(r).map((s) => ({ ...s, label: s.plural }));
   const total = segmentos.reduce((sum, s) => sum + s.value, 0);
 
   return (

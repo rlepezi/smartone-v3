@@ -9,8 +9,8 @@ import { SugerenciasChips } from "../shared/SugerenciasChips";
 import {
   SUGERENCIAS_TIPO_RELACION_PERSONA, SUGERENCIAS_TIPO_CONTRATO, SUGERENCIAS_JORNADA,
 } from "../../utils/sugerenciasRelacionLaboral";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 // Modal "Cambiar Empresa" — compartido entre PersonaDetailPage.jsx y
 // PersonaFormPage.jsx (modo edición), antes vivía embebido solo en el
@@ -19,7 +19,7 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 // ambas pantallas. Usa personaService.cambiarEmpresa (empresaPersonas, RN-063): si la relación
 // anterior tiene asignaciones activas en proyectos, el backend pide confirmación con la lista y
 // este modal la muestra (ConfirmacionModal) antes de reenviar con confirmado: true.
-export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado, onCerrar }) => {
+export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, empresaActualId = null, onCambiado, onCerrar }) => {
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
   const [formData, setFormData] = useState({
     empresaId: "", tipoRelacion: "", cargo: "", tipoContrato: "", jornada: "", fechaInicio: hoyISO(),
@@ -36,6 +36,12 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
       .catch((err) => console.error("Error al cargar empresas:", err));
   }, []);
 
+  // La Empresa actual se muestra bloqueada: cambiar de Empresa es pasar a OTRA (si no existe,
+  // primero hay que crearla en Empresas).
+  const esEmpresaActual = (e) => (empresaActualId ? e.id === empresaActualId
+    : Boolean(empresaActualNombre) && e.razonSocial === empresaActualNombre);
+  const hayOtraEmpresa = empresasOpciones.some((e) => !esEmpresaActual(e));
+
   const elegir = (name, value) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
@@ -51,7 +57,6 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
     const errs = {};
     if (!formData.empresaId) errs.empresaId = "Debe seleccionar una Empresa.";
     if (!formData.tipoRelacion.trim()) errs.tipoRelacion = "El tipo de relación es obligatorio.";
-    if (!formData.cargo.trim()) errs.cargo = "La función es obligatoria.";
     if (!formData.tipoContrato.trim()) errs.tipoContrato = "El tipo de contrato es obligatorio.";
     if (!formData.fechaInicio) errs.fechaInicio = "La fecha de inicio es obligatoria.";
     setErrors(errs);
@@ -64,7 +69,7 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
       const nuevaRelacion = await personaService.cambiarEmpresa(personaId, {
         empresaId: formData.empresaId,
         tipoRelacion: formData.tipoRelacion.trim(),
-        cargo: formData.cargo.trim(),
+        cargo: formData.cargo.trim() || null,
         tipoContrato: formData.tipoContrato.trim(),
         jornada: formData.jornada.trim() || null,
         fechaInicio: formData.fechaInicio,
@@ -126,10 +131,19 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
                 { value: "", label: "Seleccione una Empresa..." },
                 ...empresasOpciones.map((e) => ({
                   value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutDisplay(e.rut)}` : "",
+                  ...(esEmpresaActual(e) ? { deshabilitada: true, nota: "Empresa actual" } : {}),
                 })),
               ]}
             />
             {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+            <p className={`text-[11px] mt-1 ${hayOtraEmpresa ? "text-slate-400" : "font-semibold text-amber-700"}`}>
+              {hayOtraEmpresa
+                ? "La empresa actual no se puede elegir. Si la nueva empresa no está en la lista, primero créala."
+                : "No hay otra empresa disponible: debes crear una empresa nueva para poder cambiar de empresa."}{" "}
+              <a href="/empresas/nuevo" target="_blank" rel="noopener noreferrer" className="font-bold text-primary hover:underline">
+                Crear empresa
+              </a>
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -145,7 +159,7 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
               <SugerenciasChips opciones={SUGERENCIAS_TIPO_RELACION_PERSONA} valor={formData.tipoRelacion} onElegir={(v) => elegir("tipoRelacion", v)} />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Función *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Función (opcional)</label>
               <input
                 type="text" name="cargo" value={formData.cargo} onChange={handleChange}
                 placeholder="Ej: Operador de Camión"
@@ -178,8 +192,8 @@ export const CambiarEmpresaModal = ({ personaId, empresaActualNombre, onCambiado
             </div>
             <div className="col-span-2">
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-              <input
-                type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
+              <DateInput
+                name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
                 className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
                   errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
                 }`}

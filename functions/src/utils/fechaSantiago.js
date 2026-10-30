@@ -19,4 +19,17 @@ function fechaSantiago(fecha = new Date()) {
   return FORMATTER.format(fecha);
 }
 
-module.exports = {fechaSantiago};
+/**
+ * Instante en que empieza un día (00:00) en America/Santiago. Chile está en
+ * UTC-3 o UTC-4 según el horario: se prueba UTC-3 y, si ese instante todavía
+ * es el día anterior en Santiago, se usa UTC-4.
+ * @param {string} iso Fecha YYYY-MM-DD.
+ * @return {Date} Instante de inicio del día.
+ */
+function inicioDiaSantiago(iso) {
+  const conUtc3 = new Date(`${iso}T03:00:00.000Z`);
+  return fechaSantiago(conUtc3) === iso ?
+    conUtc3 : new Date(`${iso}T04:00:00.000Z`);
+}
+
+module.exports = {fechaSantiago, inicioDiaSantiago};

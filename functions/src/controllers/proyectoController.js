@@ -81,6 +81,42 @@ class ProyectoController {
   }
 
   /**
+   * Cantidad de Expedientes abiertos del proyecto.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async expedientesAbiertos(req, res, next) {
+    try {
+      const data = await proyectoService.contarExpedientesAbiertos(
+          req.params.id, req.user,
+      );
+      res.status(200).json({message: "Expedientes abiertos.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Reintenta el cierre de los Expedientes de un proyecto terminado.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async cerrarExpedientes(req, res, next) {
+    try {
+      const data = await proyectoService.cerrarExpedientes(
+          req.params.id, req.user,
+      );
+      res.status(200).json({message: "Cierre de Expedientes ejecutado.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Actualiza un proyecto existente.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.

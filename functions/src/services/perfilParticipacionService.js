@@ -294,14 +294,16 @@ class PerfilParticipacionService {
    */
   async obtenerResumen(id, actor) {
     // getPerfilById ya valida existencia y aplica el alcance del actor.
-    await this.getPerfilById(id, actor);
+    const perfil = await this.getPerfilById(id, actor);
 
     const [vinculos, participaciones, expedientes, catalogoActivo] =
         await Promise.all([
           perfilRequerimientoRepository.getActivosByPerfil(id),
           participacionRepository.listByPerfil(id),
           expedienteRepository.getByPerfil(id),
-          requerimientoRepository.list({estado: "activo"}),
+          requerimientoRepository.list({
+            mandanteId: perfil.mandanteId, estado: "activo",
+          }),
         ]);
 
     const requerimientosPorId = {};

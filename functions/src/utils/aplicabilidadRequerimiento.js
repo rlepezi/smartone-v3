@@ -1,8 +1,7 @@
-// Regla ÚNICA (backend) de "este Requerimiento aplica a este sujeto".
-// Espejo en frontend/src/utils/aplicabilidadRequerimiento.js y
-// mobile/src/utils/aplicabilidadRequerimiento.js. Es el único punto a
-// cambiar cuando la regla cambie (bloque 4): ningún otro módulo debe
-// repetir esta lógica.
+// Regla ÚNICA de "este Requerimiento aplica a este sujeto". Solo la usan la
+// generación y sincronización de instancias (expedienteRequerimientoService)
+// y las vistas previas, que aún no tienen instancias. El resto del sistema
+// (backend, frontend y mobile) lee las instancias ya materializadas.
 
 // Tipos de entidad a los que aplica un Requerimiento (requerimientos.
 // tipoEntidad y perfilRequerimientos.tipoEntidad). "recurso" = Maquinaria
@@ -10,9 +9,8 @@
 const TIPOS_ENTIDAD = ["empresa", "persona", "recurso"];
 
 /**
- * Indica si una entrada de Requerimiento (del snapshot
- * `requerimientosAplicables` de un Expediente, o del cálculo de
- * aplicables) aplica a un sujeto.
+ * Indica si una entrada de Requerimiento (del cálculo de aplicables de un
+ * Perfil de Participación) aplica a un sujeto.
  * - empresa: basta con que el tipo coincida.
  * - persona / recurso: el tipo coincide y `perfilRecursoIds` es null
  *   ("Todos") o comparte al menos un ID con los perfiles del sujeto.

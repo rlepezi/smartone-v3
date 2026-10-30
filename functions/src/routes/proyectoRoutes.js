@@ -31,6 +31,16 @@ router.get(
     requireRole(ROLES_LECTURA),
     proyectoController.eventosRecientes,
 );
+router.get(
+    "/:id/expedientes-abiertos",
+    requireRole(ROLES_LECTURA),
+    proyectoController.expedientesAbiertos,
+);
+router.post(
+    "/:id/cerrar-expedientes",
+    requireRole(ROLES_ESCRITURA),
+    proyectoController.cerrarExpedientes,
+);
 router.post("/", requireRole(ROLES_ESCRITURA), proyectoController.create);
 router.put("/:id", requireRole(ROLES_ESCRITURA), proyectoController.update);
 router.delete(

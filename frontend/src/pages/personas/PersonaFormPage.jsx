@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { PersonaEdicionForm } from "../../components/personas/PersonaEdicionForm";
 
@@ -9,6 +9,11 @@ import { PersonaEdicionForm } from "../../components/personas/PersonaEdicionForm
 export const PersonaFormPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
+  // Prellenado opcional (?rut=&nombre=&apellido=), p. ej. desde Revisiones IA.
+  const [params] = useSearchParams();
+  const valoresIniciales = {
+    rut: params.get("rut") || "", nombre: params.get("nombre") || "", apellido: params.get("apellido") || "",
+  };
 
   if (id) return <Navigate to={`/personas/${id}?editar=1`} replace />;
 
@@ -30,6 +35,7 @@ export const PersonaFormPage = () => {
 
       <PersonaEdicionForm
         formId="persona-form"
+        valoresIniciales={valoresIniciales}
         onGuardado={() => navigate("/personas")}
         onCancelar={() => navigate("/personas")}
       />

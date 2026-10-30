@@ -5,7 +5,7 @@ const empresaRecursoRepository =
     require("../repositories/empresaRecursoRepository");
 const empresaRecursoService = require("./empresaRecursoService");
 const {
-  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto,
+  empresaIdsVisibles, sujetoIdsVisibles, puedeVerSujeto, mandanteDeContexto,
 } = require("../utils/alcanceMandante");
 const perfilRecursoRepository =
     require("../repositories/perfilRecursoRepository");
@@ -14,6 +14,9 @@ const bitacoraService = require("./bitacoraService");
 const participacionRecursoRepository =
     require("../repositories/participacionRecursoRepository");
 const AppError = require("../utils/AppError");
+const {
+  TIPOS_IDENTIFICACION, normalizarPatente, esPatenteChilena,
+} = require("../utils/identificacionRecurso");
 
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
 const TIPO_MAX_LENGTH = 60;
@@ -163,17 +166,31 @@ class RecursoService {
    * actor ya la usa y el cliente no confirmó, responde 409
    * PATENTE_DUPLICADA con ese recurso (aviso, no bloqueo: reenviar con
    * `confirmarPatenteDuplicada: true` continúa).
+   * Con tipoIdentificacion "patente" se quitan espacios, puntos y guiones
+   * y se exige formato de placa chilena.
    * @param {*} patente Patente recibida.
-   * @param {Object} opciones excluirId, confirmado, actor.
+   * @param {Object} opciones excluirId, confirmado, actor,
+   *     tipoIdentificacion.
    * @return {Promise<string>} Patente normalizada.
    */
-  async _validarPatente(patente, {excluirId = null, confirmado, actor}) {
+  async _validarPatente(patente, {
+    excluirId = null, confirmado, actor, tipoIdentificacion = null,
+  }) {
     if (typeof patente !== "string" || !patente.trim()) {
       throw new AppError(
           400, "El campo 'patente' (identificación) es obligatorio.",
       );
     }
-    const normalizada = patente.trim().toUpperCase();
+    const normalizada = this._normalizarIdentificacion(
+        patente, tipoIdentificacion);
+    if (tipoIdentificacion === "patente" && !esPatenteChilena(normalizada)) {
+      throw new AppError(
+          400,
+          `La patente ${normalizada} no tiene formato chileno ` +
+          "(ej. BBCC12 o AB1234). Si no es una patente, elija " +
+          "\"N° de serie / código interno\".",
+      );
+    }
     if (confirmado === true) return normalizada;
     const [mismos, visibles] = await Promise.all([
       recursoRepository.listByPatente(normalizada),
@@ -194,6 +211,32 @@ class RecursoService {
       );
     }
     return normalizada;
+  }
+
+  /**
+   * @param {string} valor Identificación recibida.
+   * @param {?string} tipoIdentificacion "patente", "serie" o null.
+   * @return {string} En mayúsculas; una patente, además sin separadores.
+   */
+  _normalizarIdentificacion(valor, tipoIdentificacion) {
+    return tipoIdentificacion === "patente" ?
+      normalizarPatente(valor) : String(valor || "").trim().toUpperCase();
+  }
+
+  /**
+   * @param {*} tipo tipoIdentificacion recibido (undefined o null: sin tipo).
+   * @return {?string} El tipo validado, o null.
+   */
+  _validarTipoIdentificacion(tipo) {
+    if (tipo === undefined || tipo === null || tipo === "") return null;
+    if (!TIPOS_IDENTIFICACION.includes(tipo)) {
+      throw new AppError(
+          400,
+          `Tipo de identificación '${tipo}' no válido. ` +
+          `Valores permitidos: ${TIPOS_IDENTIFICACION.join(", ")}.`,
+      );
+    }
+    return tipo;
   }
 
   /**
@@ -248,6 +291,8 @@ class RecursoService {
       nombre, tipo, empresaId, estado, patente, marca, modelo, anio,
       fechaInicio,
     } = payload;
+    const tipoIdentificacion =
+        this._validarTipoIdentificacion(payload.tipoIdentificacion);
 
     if (!empresaId || !nombre || !tipo) {
       throw new AppError(
@@ -262,7 +307,7 @@ class RecursoService {
     this._validarTipo(tipo);
     await empresaRecursoService.validarEmpresa(empresaId, actor);
     const patenteFinal = await this._validarPatente(patente, {
-      confirmado: payload.confirmarPatenteDuplicada, actor,
+      confirmado: payload.confirmarPatenteDuplicada, actor, tipoIdentificacion,
     });
 
     const estadoFinal = estado || "activo";
@@ -279,6 +324,7 @@ class RecursoService {
       tipo: tipo.trim(),
       estado: estadoFinal,
       patente: patenteFinal,
+      tipoIdentificacion,
       marca: marca ? marca.trim() : null,
       modelo: modelo ? modelo.trim() : null,
       anio: anio ? Number(anio) : null,
@@ -301,12 +347,11 @@ class RecursoService {
     });
     const creado = {id: refRecurso.id, ...nuevoRecurso};
 
-    // Recurso es catálogo global (sin mandanteId) — mismo criterio que
-    // Persona/Requerimiento: el evento queda registrado igual, aunque los
-    // roles con alcance forzado por mandante no lo verán en su feed de
-    // bitácora filtrado por mandanteId.
+    // Recurso es catálogo global (sin mandanteId): el evento lleva el
+    // Mandante de contexto (el del actor o el único de su Empresa) — mismo
+    // criterio que Persona.
     await bitacoraLogger.registrarEvento({
-      mandanteId: null,
+      mandanteId: await mandanteDeContexto(actor, {empresaId}),
       entidad: "recurso",
       entidadId: creado.id,
       accion: "creado",
@@ -340,6 +385,7 @@ class RecursoService {
 
     const allowedFields = [
       "nombre", "tipo", "estado", "patente", "marca", "modelo", "anio",
+      "tipoIdentificacion",
     ];
     const updateData = {};
     for (const key of allowedFields) {
@@ -358,12 +404,28 @@ class RecursoService {
     }
 
     if (updateData.nombre) updateData.nombre = updateData.nombre.trim();
-    if (updateData.patente !== undefined) {
-      const cambia = (updateData.patente || "").trim().toUpperCase() !==
-          (existente.patente || "");
-      updateData.patente = cambia ?
-        await this._validarPatente(updateData.patente, {
+    // Tipo de identificación efectivo: el recibido o el que ya tenía.
+    if (updateData.tipoIdentificacion !== undefined) {
+      updateData.tipoIdentificacion =
+          this._validarTipoIdentificacion(updateData.tipoIdentificacion);
+    }
+    const tipoIdentificacion = updateData.tipoIdentificacion !== undefined ?
+      updateData.tipoIdentificacion : (existente.tipoIdentificacion || null);
+    const cambiaTipoId = updateData.tipoIdentificacion !== undefined &&
+        updateData.tipoIdentificacion !==
+          (existente.tipoIdentificacion || null);
+    if (updateData.patente !== undefined || cambiaTipoId) {
+      const recibida = updateData.patente !== undefined ?
+        updateData.patente : existente.patente;
+      const cambia = typeof recibida !== "string" ||
+          this._normalizarIdentificacion(recibida, tipoIdentificacion) !==
+            (existente.patente || "");
+      // Al pasar a "patente" se valida el formato aunque no cambie el valor.
+      updateData.patente = cambia || (cambiaTipoId &&
+          tipoIdentificacion === "patente") ?
+        await this._validarPatente(recibida, {
           excluirId: id, confirmado: payload.confirmarPatenteDuplicada, actor,
+          tipoIdentificacion,
         }) :
         existente.patente;
     }
@@ -379,6 +441,10 @@ class RecursoService {
     }
 
     const actualizado = await recursoRepository.update(id, updateData);
+    const relacionActiva = await empresaRecursoRepository.getActivaBySujeto(id);
+    const mandanteId = await mandanteDeContexto(actor, {
+      empresaId: relacionActiva?.empresaId,
+    });
 
     // La transición de estado se registra aparte (mismo criterio que
     // Perfil de Participación/Usuario): un cambio de estado es
@@ -387,7 +453,7 @@ class RecursoService {
         updateData.estado !== existente.estado;
     if (estadoCambio) {
       await bitacoraLogger.registrarEvento({
-        mandanteId: null,
+        mandanteId,
         entidad: "recurso",
         entidadId: id,
         accion: "transicion_estado",
@@ -406,7 +472,7 @@ class RecursoService {
         detalle[campo] = {anterior: existente[campo], nuevo: updateData[campo]};
       });
       await bitacoraLogger.registrarEvento({
-        mandanteId: null,
+        mandanteId,
         entidad: "recurso",
         entidadId: id,
         accion: "actualizado",

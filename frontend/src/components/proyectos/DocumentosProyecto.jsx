@@ -2,12 +2,13 @@ import React, { useEffect, useState } from "react";
 import { FileText, Upload } from "lucide-react";
 import { expedienteService } from "../../services/expedienteService";
 import { evidenciaService } from "../../services/evidenciaService";
-import { formatFecha } from "../../utils/fechaFormatters";
-import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
+import { formatFecha } from "../../utils/fechas";
 import { ActionButton } from "../shared/ActionButton";
 import { ErrorBanner } from "../shared/ErrorBanner";
+import { DateInput } from "../ui/DateInput";
 
-const FORM_VACIO = { expedienteId: "", sujeto: "empresa", requerimientoId: "", fechaVencimiento: "" };
+// `instanciaId`: la instancia de Requerimiento (expedienteRequerimientos) del sujeto elegido.
+const FORM_VACIO = { expedienteId: "", sujeto: "empresa", instanciaId: "", fechaVencimiento: "" };
 
 // Documentos (Evidencias) de los Expedientes de las Empresas del Proyecto —
 // datos reales, no hay un modelo de "documento de Proyecto" propio. `participantes`
@@ -27,6 +28,8 @@ export const DocumentosProyecto = ({
   const [archivo, setArchivo] = useState(null);
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState(null);
+  // Instancias activas del sujeto elegido (se piden al elegir Expediente y sujeto).
+  const [elegibles, setElegibles] = useState({ clave: null, instancias: [] });
 
   useEffect(() => {
     let activo = true;
@@ -61,18 +64,25 @@ export const DocumentosProyecto = ({
     ? sujetos.filter((a) => a.participacionId === expedienteElegido.participacionId) : [];
   const [tipoSujeto, idSujeto] = form.sujeto.split(":");
 
-  // Requerimientos a los que se puede adjuntar, según el sujeto elegido (misma
-  // regla de aplicabilidad que la planilla de evaluación).
-  const sujetoElegido = tipoSujeto === "persona" || tipoSujeto === "recurso"
-    ? sujetosEmpresa.find((a) => a[`${tipoSujeto}Id`] === idSujeto) : null;
-  const sujeto = sujetoElegido
-    || { tipoEntidad: tipoSujeto === "persona" || tipoSujeto === "recurso" ? tipoSujeto : "empresa", perfilRecursoIds: [] };
-  const requerimientosElegibles = (expedienteElegido?.requerimientosAplicables || [])
-    .filter((r) => aplicaRequerimientoASujeto(r, sujeto));
-  const requerimientoElegido = requerimientosElegibles.find((r) => r.requerimientoId === form.requerimientoId);
+  // Requerimientos a los que se puede adjuntar: las instancias activas del sujeto elegido en ese
+  // Expediente (las mismas filas de la planilla de evaluación).
+  const claveElegibles = form.expedienteId ? `${form.expedienteId}|${form.sujeto}` : null;
+  useEffect(() => {
+    if (!claveElegibles) return undefined;
+    let activo = true;
+    const filtro = tipoSujeto === "persona" ? { personaId: idSujeto }
+      : tipoSujeto === "recurso" ? { recursoId: idSujeto } : { empresa: true };
+    expedienteService.listarRequerimientos(form.expedienteId, filtro)
+      .then((instancias) => { if (activo) setElegibles({ clave: claveElegibles, instancias: instancias || [] }); })
+      .catch(() => { if (activo) setElegibles({ clave: claveElegibles, instancias: [] }); });
+    return () => { activo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveElegibles]);
+  const requerimientosElegibles = elegibles.clave === claveElegibles ? elegibles.instancias : [];
+  const requerimientoElegido = requerimientosElegibles.find((r) => r.id === form.instanciaId);
 
   const handleSubir = async () => {
-    if (!form.expedienteId || !form.requerimientoId || !archivo) {
+    if (!form.expedienteId || !form.instanciaId || !archivo) {
       setError("Elija la Empresa, el requerimiento y un archivo.");
       return;
     }
@@ -82,7 +92,7 @@ export const DocumentosProyecto = ({
       await evidenciaService.subirYVincular({
         expedienteId: form.expedienteId,
         archivo,
-        requerimientoId: form.requerimientoId,
+        expedienteRequerimientoId: form.instanciaId,
         personaId: tipoSujeto === "persona" ? idSujeto : null,
         recursoId: tipoSujeto === "recurso" ? idSujeto : null,
         fechaVencimiento: requerimientoElegido?.requiereVencimiento ? form.fechaVencimiento : null,
@@ -132,7 +142,7 @@ export const DocumentosProyecto = ({
               <label className="block text-[11px] font-semibold text-slate-500 mb-1">Corresponde a *</label>
               <select
                 value={form.sujeto}
-                onChange={(e) => setForm((p) => ({ ...p, sujeto: e.target.value, requerimientoId: "" }))}
+                onChange={(e) => setForm((p) => ({ ...p, sujeto: e.target.value, instanciaId: "" }))}
                 disabled={!form.expedienteId}
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white disabled:bg-slate-100"
               >
@@ -150,13 +160,13 @@ export const DocumentosProyecto = ({
             <div>
               <label className="block text-[11px] font-semibold text-slate-500 mb-1">Requerimiento *</label>
               <select
-                value={form.requerimientoId}
-                onChange={(e) => setForm((p) => ({ ...p, requerimientoId: e.target.value }))}
+                value={form.instanciaId}
+                onChange={(e) => setForm((p) => ({ ...p, instanciaId: e.target.value }))}
                 disabled={!form.expedienteId}
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white disabled:bg-slate-100"
               >
                 <option value="">Seleccione un requerimiento...</option>
-                {requerimientosElegibles.map((r) => <option key={r.requerimientoId} value={r.requerimientoId}>{r.nombre}</option>)}
+                {requerimientosElegibles.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
               </select>
             </div>
             <div className="md:col-span-2">
@@ -170,8 +180,7 @@ export const DocumentosProyecto = ({
             {requerimientoElegido?.requiereVencimiento && (
               <div>
                 <label className="block text-[11px] font-semibold text-slate-500 mb-1">Fecha de vencimiento</label>
-                <input
-                  type="date"
+                <DateInput
                   value={form.fechaVencimiento}
                   onChange={(e) => setForm((p) => ({ ...p, fechaVencimiento: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"

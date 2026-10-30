@@ -4,7 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { perfilRequerimientoService } from "../../services/perfilRequerimientoService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
-import { TIPOS_ENTIDAD } from "../../services/requerimientoService";
+import { requerimientoService, TIPOS_ENTIDAD } from "../../services/requerimientoService";
 import { AplicaAPills } from "../requerimientos/AplicaAPills";
 
 // Contenido de "Configurar Requerimientos" del Perfil de Participación, extraído de
@@ -12,10 +12,12 @@ import { AplicaAPills } from "../requerimientos/AplicaAPills";
 // abierto desde el detalle de Expediente) sin duplicar la lógica de carga/toggle/reorden. Solo el
 // contenido (pestañas + listas) — el encabezado de página/modal lo arma cada consumidor, por eso
 // avisa el nombre del Perfil ya cargado vía `onPerfilCargado` en vez de mostrarlo acá mismo.
-// Cada cambio usa perfilRequerimientoService.sincronizar: el backend lo refleja en todos los
-// Expedientes NO cerrados de ese Perfil, sin importar desde dónde se edite el catálogo.
-// Para Persona/Maquinaria, al vincular y en los ya vinculados se elige "Aplica a" (AplicaAPills,
-// el mismo componente del formulario de Requerimiento): "Todos" o Perfiles de Recurso del Mandante.
+// Solo muestra y vincula Requerimientos del Mandante del Perfil (así los entrega la matriz). Cada
+// cambio usa la edición atómica del Requerimiento (requerimientoService.actualizar con su
+// aplicabilidad): el backend ajusta los vínculos y lo refleja en los Expedientes NO cerrados.
+// La aplicabilidad es del Requerimiento: Perfiles de Participación × Perfiles de Recurso. Por eso
+// "Aplica a" (AplicaAPills, el mismo componente del modal de Requerimiento) vale para todos los
+// Perfiles de Participación del Requerimiento, y un Requerimiento no puede quedar sin ninguno.
 // `expedienteIdContexto`: si el modal se abrió desde el detalle de un Expediente puntual, ese
 // Expediente ya quedó actualizado por el backend igual que los demás — acá solo se usa para saber
 // que hay una pantalla de Expediente detrás que conviene refrescar (`onExpedienteActualizado`).
@@ -83,14 +85,24 @@ export const ConfigurarRequerimientosPanel = ({
   const guardar = async (requerimiento, activo, perfilRecursoIds = null) => {
     if (soloLectura) return;
     setError(null);
+    // Perfiles de Participación del Requerimiento, con o sin este Perfil.
+    const otros = (requerimiento.perfilParticipacionIds || []).filter((id) => id !== perfilParticipacionId);
+    if (!activo && otros.length === 0) {
+      setError(
+        `"${requerimiento.nombreCorto || requerimiento.nombre}" solo aplica a este Perfil y un requerimiento no puede quedar sin perfiles. ` +
+        "Si ya no se usa, desactívelo desde el catálogo de Requerimientos.",
+      );
+      return;
+    }
     setGuardandoId(requerimiento.id);
     try {
-      await perfilRequerimientoService.sincronizar([{
-        perfilParticipacionId,
-        requerimientoId: requerimiento.id,
-        activo,
-        perfilRecursoIds: activo ? perfilRecursoIds : null,
-      }]);
+      await requerimientoService.actualizar(requerimiento.id, {
+        aplicabilidad: {
+          perfilParticipacionIds: activo ? [...otros, perfilParticipacionId] : otros,
+          perfilRecursoIds: requerimiento.tipoEntidad === "empresa" ? null
+            : (activo ? perfilRecursoIds : requerimiento.perfilRecursoIds ?? null),
+        },
+      });
       await cargarMatriz();
       setEdicion(null);
       // El backend ya propagó este cambio a todos los Expedientes NO cerrados del Perfil,

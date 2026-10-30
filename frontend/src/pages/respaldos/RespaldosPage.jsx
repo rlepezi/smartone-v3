@@ -4,7 +4,7 @@ import {
   AlertTriangle, Play,
 } from "lucide-react";
 import { respaldoService } from "../../services/respaldoService";
-import { formatFechaHora } from "../../utils/fechaFormatters";
+import { formatFechaHora } from "../../utils/fechas";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";

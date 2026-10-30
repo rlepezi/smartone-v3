@@ -1,50 +1,55 @@
 const expedienteService = require("./expedienteService");
-const evaluacionService = require("./evaluacionService");
 const evidenciaService = require("./evidenciaService");
 const empresaRepository = require("../repositories/empresaRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
-const requerimientoRepository =
-    require("../repositories/requerimientoRepository");
 const participacionRepository =
     require("../repositories/participacionRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const evaluacionRepository = require("../repositories/evaluacionRepository");
+const expedienteRequerimientoRepository =
+    require("../repositories/expedienteRequerimientoRepository");
 const perfilParticipacionRepository =
     require("../repositories/perfilParticipacionRepository");
 const proyectoService = require("./proyectoService");
 const AppError = require("../utils/AppError");
-const {aplicaRequerimientoASujeto} =
-    require("../utils/aplicabilidadRequerimiento");
 const {
-  sujetosActivosDeParticipacion, sujetosActivosDeProyecto,
+  sujetosActivosDeProyecto, sujetosActivosDeParticipacion,
 } = require("../utils/sujetosParticipacion");
+const {
+  porcentajeCumplimiento, sumarResumenes, claveSujeto,
+} = require("../utils/cumplimiento");
 
-// Mapeo de estado de Expediente -> categoría del KPI de Empresas. Decisión
-// de diseño deliberada, no cambiar sin revisar el resto del reporte:
-//   - acreditadas: el Expediente ya alcanzó un estado operativo/aprobado.
-//   - enProceso: el Expediente sigue en preparación/revisión/corrección.
-//   - observadas: el Expediente tiene observaciones pendientes de corregir.
-// "rechazadas" NO existe: la máquina de estados de Expediente no tiene un
-// estado terminal de rechazo — brecha conocida y aceptada para este
-// reporte, no se simula acá.
-const MAPEO_ESTADO_KPI_EMPRESA = {
-  aprobado: "acreditadas",
-  en_ejecucion: "acreditadas",
-  cerrado: "acreditadas",
-  creado: "enProceso",
-  en_revision: "enProceso",
-  con_observaciones: "observadas",
+// Categoría del KPI de Empresas de un Expediente, según su estado (avance
+// de la evaluación) y su resultado:
+//   - enProceso: aún en evaluación (creado / en_ejecucion).
+//   - observadas: evaluado (completado, con o sin pendientes nuevos) con
+//     algún requisito "No cumple".
+//   - acreditadas: evaluado sin "No cumple", o cerrado.
+// "rechazadas" NO existe como estado: el resultado se ve en el % de
+// cumplimiento (Acreditada / Aceptable / Rechazada).
+const ESTADOS_EN_PROCESO = ["creado", "en_ejecucion"];
+const categoriaKpiEmpresa = (expediente) => {
+  if (expediente.estado === "cerrado") return "acreditadas";
+  if (ESTADOS_EN_PROCESO.includes(expediente.estado)) return "enProceso";
+  if (["completado", "completado_pendientes"].includes(expediente.estado)) {
+    return expediente.resumen?.noCumple ? "observadas" : "acreditadas";
+  }
+  return null;
 };
 
 const TIPOS_DETALLE_VALIDOS = [
   "vencidos", "por_vencer", "no_cumple", "pendientes",
 ];
 
+// Roles con alcance forzado a su Mandante.
+const ROLES_ALCANCE_FORZADO = ["mandante_admin", "mandante_lector"];
+
 /**
  * Reglas de negocio para el módulo Reportes: cálculo on-demand del reporte
- * de cumplimiento (Doc 3, secciones 15.11/15.17), sin colección propia —
- * se calcula en vivo sobre Expediente/Evaluación/Evidencia/Empresa/
- * Proyecto ya existentes. 100% de lectura.
+ * de cumplimiento (Doc 3, secciones 15.11/15.17), sin colección propia. Los
+ * conteos y el % salen de los contadores de cada Expediente (`resumen`,
+ * mantenidos junto con cada evaluación); los detalles y vencimientos, de
+ * las instancias de Requerimiento (expedienteRequerimientos). 100% lectura.
  */
 class ReporteService {
   /**
@@ -60,50 +65,29 @@ class ReporteService {
   }
 
   /**
-   * Calcula los conteos por resultado y el % de avance de un conjunto de
-   * Evaluaciones vigentes. avancePct = cumplidos / evaluables * 100,
-   * donde "evaluables" excluye "no_aplica" (Doc 3, sección 15.11).
-   * @param {Object[]} vigentes Evaluaciones vigentes a resumir.
-   * @param {{personaId: (string|undefined), recursoId: (string|undefined)}}
-   *     [filtro] Si se indica `personaId` o `recursoId`, solo se cuentan
-   *     las Evaluaciones de ese sujeto (mismo cálculo, acotado a una
-   *     Persona/Maquinaria individual).
+   * Conteos y % de cumplimiento de un conjunto de Expedientes, desde sus
+   * contadores: % = cumple / (activas − noAplica); las instancias activas
+   * sin evaluar cuentan como pendientes. null si no hay nada evaluable.
+   * @param {Object[]} expedientes Expedientes (con `resumen`).
    * @return {{cumple: number, noCumple: number, pendiente: number,
-   *     noAplica: number, avancePct: ?number}} El resumen calculado.
-   *     avancePct es null cuando no hay evaluables (nada que evaluar
-   *     todavía), nunca 0 por división por cero.
+   *     noAplica: number, activas: number, avancePct: ?number}} Resumen.
    */
-  _calcularAvanceRequerimientos(vigentes, {personaId, recursoId} = {}) {
-    const conteos = {cumple: 0, no_cumple: 0, pendiente: 0, no_aplica: 0};
-    vigentes.forEach((ev) => {
-      if (personaId && ev.personaId !== personaId) return;
-      if (recursoId && ev.recursoId !== recursoId) return;
-      if (conteos[ev.resultado] !== undefined) conteos[ev.resultado]++;
-    });
-
-    // evaluables === 0 no es "0% de cumplimiento" — es "nada que evaluar
-    // todavía" (sin Requerimientos aplicables, o ninguno evaluado aún).
-    // Se devuelve null, no 0, para que el frontend lo distinga de un
-    // incumplimiento real.
-    const evaluables = conteos.cumple + conteos.no_cumple + conteos.pendiente;
-    const avancePct = evaluables > 0 ?
-        Math.round((conteos.cumple / evaluables) * 100) : null;
-
+  _avance(expedientes) {
+    const total = sumarResumenes(expedientes.map((e) => e.resumen));
     return {
-      cumple: conteos.cumple,
-      noCumple: conteos.no_cumple,
-      pendiente: conteos.pendiente,
-      noAplica: conteos.no_aplica,
-      avancePct,
+      cumple: total.cumple,
+      noCumple: total.noCumple,
+      pendiente: total.pendiente,
+      noAplica: total.noAplica,
+      activas: total.activas,
+      avancePct: porcentajeCumplimiento(total),
     };
   }
 
   /**
-   * Agrupa un conjunto de Expedientes según MAPEO_ESTADO_KPI_EMPRESA.
+   * Agrupa un conjunto de Expedientes según categoriaKpiEmpresa.
    * `total` cuenta EXPEDIENTES (procesos de acreditación), no Empresas
-   * distintas: una Empresa con más de un Expediente en alcance (posible
-   * cuando no se filtra por Proyecto) cuenta una vez por cada uno. La
-   * vista deduplicada por Empresa vive en `porEmpresa`.
+   * distintas. La vista deduplicada por Empresa vive en `porEmpresa`.
    * @param {Object[]} expedientes Expedientes a categorizar.
    * @return {{total: number, acreditadas: number, enProceso: number,
    *     observadas: number}} El resumen calculado.
@@ -111,50 +95,59 @@ class ReporteService {
   _categorizarEmpresas(expedientes) {
     const conteo = {acreditadas: 0, enProceso: 0, observadas: 0};
     expedientes.forEach((e) => {
-      const categoria = MAPEO_ESTADO_KPI_EMPRESA[e.estado];
+      const categoria = categoriaKpiEmpresa(e);
       if (categoria) conteo[categoria]++;
     });
     return {total: expedientes.length, ...conteo};
   }
 
   /**
-   * Resuelve, respetando el alcance del actor, los tres conjuntos base
-   * sobre los que se calcula todo el reporte: Expedientes en alcance
-   * (opcionalmente acotados a un Proyecto), Evaluaciones vigentes de esos
-   * Expedientes, y Evidencias de esos Expedientes. Reusa
-   * expedienteService/evaluacionService/evidenciaService — nunca
-   * reimplementa la resolución de scope por Mandante.
-   * @param {Object} actor Usuario autenticado que ejecuta la acción.
-   * @param {?string} proyectoId ID de Proyecto para acotar, o null/
-   *     undefined para no acotar.
+   * Expedientes en alcance del actor (opcionalmente de un Proyecto).
+   * @param {Object} actor Usuario autenticado.
+   * @param {?string} proyectoId Proyecto para acotar.
    * @return {Promise<{expedientesEnAlcance: Object[],
-   *     expedienteIds: Set<string>, vigentesEnAlcance: Object[],
-   *     evidenciasEnAlcance: Object[]}>} Los conjuntos resueltos.
+   *     expedienteIds: Set<string>}>} Expedientes e IDs.
    */
   async _resolverAlcance(actor, proyectoId) {
-    const todosExpedientes = await expedienteService.listarExpedientes(
-        {}, actor,
-    );
+    const todos = await expedienteService.listarExpedientes({}, actor);
     const expedientesEnAlcance = proyectoId ?
-        todosExpedientes.filter((e) => e.proyectoId === proyectoId) :
-        todosExpedientes;
-    const expedienteIds = new Set(expedientesEnAlcance.map((e) => e.id));
-
-    const [todasVigentes, todasEvidencias] = await Promise.all([
-      evaluacionService.listarVigentes(actor),
-      evidenciaService.listarEvidencias({}, actor),
-    ]);
-
-    const vigentesEnAlcance = todasVigentes.filter(
-        (ev) => expedienteIds.has(ev.expedienteId),
-    );
-    const evidenciasEnAlcance = todasEvidencias.filter(
-        (ev) => expedienteIds.has(ev.expedienteId),
-    );
-
+        todos.filter((e) => e.proyectoId === proyectoId) : todos;
     return {
-      expedientesEnAlcance, expedienteIds, vigentesEnAlcance,
-      evidenciasEnAlcance,
+      expedientesEnAlcance,
+      expedienteIds: new Set(expedientesEnAlcance.map((e) => e.id)),
+    };
+  }
+
+  /**
+   * mandanteId con el que acotar consultas de instancias.
+   * @param {Object} actor Usuario autenticado.
+   * @return {(string|undefined)} Mandante o undefined (sin acotar).
+   */
+  _mandanteDe(actor) {
+    return ROLES_ALCANCE_FORZADO.includes(actor.rol) ?
+        actor.mandanteId : undefined;
+  }
+
+  /**
+   * Fuentes de vencimiento en alcance: Evidencias activas con fecha e
+   * instancias activas con fecha de vencimiento (copiada de su evaluación
+   * vigente).
+   * @param {Object} actor Usuario autenticado.
+   * @param {Set<string>} expedienteIds Expedientes en alcance.
+   * @return {Promise<{evidencias: Object[], instancias: Object[]}>} Ambas.
+   */
+  async _conVencimiento(actor, expedienteIds) {
+    const [evidencias, instancias] = await Promise.all([
+      evidenciaService.listarEvidencias({}, actor),
+      expedienteRequerimientoRepository.listConVencimiento(
+          {mandanteId: this._mandanteDe(actor)},
+      ),
+    ]);
+    return {
+      evidencias: evidencias.filter((ev) =>
+        expedienteIds.has(ev.expedienteId) && ev.estado === "activo" &&
+          ev.fechaVencimiento),
+      instancias: instancias.filter((i) => expedienteIds.has(i.expedienteId)),
     };
   }
 
@@ -186,6 +179,18 @@ class ReporteService {
   }
 
   /**
+   * Días que faltan hasta una fecha (negativo si ya pasó).
+   * @param {*} valor Fecha.
+   * @param {Date} hoy Hoy a las 00:00.
+   * @return {?number} Días o null.
+   */
+  _diasHasta(valor, hoy) {
+    const fecha = this._aFecha(valor);
+    if (!fecha) return null;
+    return Math.ceil((fecha - hoy) / (1000 * 60 * 60 * 24));
+  }
+
+  /**
    * Genera el reporte de cumplimiento completo, en vivo, para el alcance
    * del actor (opcionalmente acotado a un Proyecto).
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
@@ -195,43 +200,28 @@ class ReporteService {
    * @return {Promise<Object>} El reporte calculado.
    */
   async generarReporte(actor, {proyectoId, diasVencimiento = 30} = {}) {
-    const {
-      expedientesEnAlcance, vigentesEnAlcance, evidenciasEnAlcance,
-    } = await this._resolverAlcance(actor, proyectoId);
+    const {expedientesEnAlcance, expedienteIds} =
+        await this._resolverAlcance(actor, proyectoId);
 
     const empresasKpi = this._categorizarEmpresas(expedientesEnAlcance);
-    const requerimientos = this._calcularAvanceRequerimientos(
-        vigentesEnAlcance,
-    );
+    const requerimientos = this._avance(expedientesEnAlcance);
 
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
     const vencimientos = {vigente: 0, porVencer: 0, vencido: 0};
-    // Une ambas fuentes de vencimiento (Evidencia + Evaluación) sin
-    // deduplicar: son documentos distintos con semántica distinta (un
-    // archivo que expira vs. un Requerimiento a re-verificar), así que
-    // cada uno cuenta como un ítem independiente aunque coincida la
-    // fecha.
-    [
-      ...evidenciasEnAlcance.filter(
-          (ev) => ev.estado === "activo" && ev.fechaVencimiento,
-      ),
-      ...vigentesEnAlcance.filter((ev) => ev.fechaVencimiento),
-    ].forEach((ev) => {
-      const fecha = this._aFecha(ev.fechaVencimiento);
-      if (!fecha) return;
-      const dias = Math.ceil((fecha - hoy) / (1000 * 60 * 60 * 24));
-      if (dias < 0) {
-        vencimientos.vencido++;
-      } else if (dias <= diasVencimiento) {
-        vencimientos.porVencer++;
-      } else {
-        vencimientos.vigente++;
-      }
+    // Evidencia (un archivo que expira) e instancia (un Requerimiento a
+    // re-verificar) cuentan por separado aunque coincida la fecha.
+    const {evidencias, instancias} =
+        await this._conVencimiento(actor, expedienteIds);
+    [...evidencias, ...instancias].forEach((item) => {
+      const dias = this._diasHasta(item.fechaVencimiento, hoy);
+      if (dias === null) return;
+      if (dias < 0) vencimientos.vencido++;
+      else if (dias <= diasVencimiento) vencimientos.porVencer++;
+      else vencimientos.vigente++;
     });
 
-    // 6. Por Empresa (vista deduplicada — una fila por Empresa, a
-    // diferencia de `empresasKpi` que cuenta procesos/Expedientes).
+    // Por Empresa (vista deduplicada — una fila por Empresa).
     const empresaPorExpediente = await this._mapaEmpresaPorExpediente(
         expedientesEnAlcance,
     );
@@ -242,35 +232,25 @@ class ReporteService {
       const expedientesEmpresa = expedientesEnAlcance.filter(
           (e) => e.empresaId === empresaId,
       );
-      const idsEmpresa = new Set(expedientesEmpresa.map((e) => e.id));
-      const vigentesEmpresa = vigentesEnAlcance.filter(
-          (ev) => idsEmpresa.has(ev.expedienteId),
-      );
-      const {avancePct, cumple, noCumple, pendiente, noAplica} =
-          this._calcularAvanceRequerimientos(vigentesEmpresa);
-
-      // Si la Empresa tiene más de un Expediente en alcance (posible sin
-      // filtro de Proyecto), se muestra el estado del más reciente —
-      // expedientesEnAlcance ya viene ordenado por createdAt desc desde
-      // el repositorio.
+      const avance = this._avance(expedientesEmpresa);
+      // Con más de un Expediente (posible sin filtro de Proyecto) se
+      // muestra el estado del más reciente (vienen por createdAt desc).
       return {
         empresaId,
         empresaNombre: empresaPorExpediente[expedientesEmpresa[0].id]
             .empresaNombre,
-        avancePct,
-        // Cantidad de Requerimientos con Evaluación vigente registrada
-        // (cualquier resultado) — para mostrar "X evaluados" sin obligar
-        // al frontend a recalcularlo sobre la lista cruda.
-        evaluados: cumple + noCumple + pendiente + noAplica,
-        cumple,
-        noCumple,
-        pendiente,
-        noAplica,
+        avancePct: avance.avancePct,
+        // Instancias ya evaluadas (cumple / no cumple / no aplica).
+        evaluados: avance.cumple + avance.noCumple + avance.noAplica,
+        cumple: avance.cumple,
+        noCumple: avance.noCumple,
+        pendiente: avance.pendiente,
+        noAplica: avance.noAplica,
         expedienteEstado: expedientesEmpresa[0]?.estado || null,
       };
     });
 
-    // 7. Por Proyecto — solo si no se filtró un Proyecto específico.
+    // Por Proyecto — solo si no se filtró un Proyecto específico.
     let porProyecto = null;
     if (!proyectoId) {
       const proyectoIds = [
@@ -283,25 +263,17 @@ class ReporteService {
       proyectosDocs.forEach((p) => {
         if (p) proyectoMap[p.id] = p;
       });
-
       porProyecto = proyectoIds.map((pid) => {
         const expedientesProyecto = expedientesEnAlcance.filter(
             (e) => e.proyectoId === pid,
         );
-        const idsProyecto = new Set(expedientesProyecto.map((e) => e.id));
-        const vigentesProyecto = vigentesEnAlcance.filter(
-            (ev) => idsProyecto.has(ev.expedienteId),
-        );
         const proyecto = proyectoMap[pid];
-
         return {
           proyectoId: pid,
           proyectoNombre: proyecto ?
               `${proyecto.nombre} (${proyecto.codigo})` : pid,
           empresas: this._categorizarEmpresas(expedientesProyecto),
-          requerimientos: this._calcularAvanceRequerimientos(
-              vigentesProyecto,
-          ),
+          requerimientos: this._avance(expedientesProyecto),
         };
       });
     }
@@ -333,68 +305,41 @@ class ReporteService {
       );
     }
 
-    const {
-      expedientesEnAlcance, vigentesEnAlcance, evidenciasEnAlcance,
-    } = await this._resolverAlcance(actor, proyectoId);
+    const {expedientesEnAlcance, expedienteIds} =
+        await this._resolverAlcance(actor, proyectoId);
+    const empresaPorExpediente = await this._mapaEmpresaPorExpediente(
+        expedientesEnAlcance,
+    );
 
     if (tipo === "vencidos" || tipo === "por_vencer") {
-      const empresaPorExpediente = await this._mapaEmpresaPorExpediente(
-          expedientesEnAlcance,
-      );
-
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
-
-      // Requerimientos únicos entre las evaluaciones con vencimiento, para
-      // resolver su nombre y armar la etiqueta "Requerimiento: {nombre}"
-      // (reusa el mismo campo `archivoNombre` que Evidencia, para no
-      // tener que adaptar el modal de detalle en el frontend a una forma
-      // distinta según la fuente).
-      const evaluacionesConVencimiento = vigentesEnAlcance.filter(
-          (ev) => ev.fechaVencimiento,
-      );
-      const requerimientoIds = [
-        ...new Set(evaluacionesConVencimiento.map((ev) => ev.requerimientoId)),
-      ];
-      const requerimientosDocs = await Promise.all(
-          requerimientoIds.map((rid) => requerimientoRepository.getById(rid)),
-      );
-      const requerimientoMap = {};
-      requerimientosDocs.forEach((r) => {
-        if (r) requerimientoMap[r.id] = r;
-      });
-
-      const itemsUnificados = [
-        ...evidenciasEnAlcance
-            .filter((ev) => ev.estado === "activo" && ev.fechaVencimiento)
-            .map((ev) => ({
-              id: ev.id,
-              empresaNombre:
-                  empresaPorExpediente[ev.expedienteId]?.empresaNombre ||
-                  null,
-              archivoNombre: ev.archivoNombre,
-              archivoUrl: ev.archivoUrl,
-              fechaVencimiento: ev.fechaVencimiento,
-            })),
-        ...evaluacionesConVencimiento.map((ev) => ({
+      const {evidencias, instancias} =
+          await this._conVencimiento(actor, expedienteIds);
+      // Mismo campo `archivoNombre` para ambas fuentes ("Requerimiento:
+      // {nombre}" en las instancias), para no adaptar el modal de detalle.
+      const items = [
+        ...evidencias.map((ev) => ({
           id: ev.id,
           empresaNombre:
               empresaPorExpediente[ev.expedienteId]?.empresaNombre || null,
-          archivoNombre: `Requerimiento: ${
-            requerimientoMap[ev.requerimientoId]?.nombre || ev.requerimientoId
-          }`,
-          archivoUrl: null,
+          archivoNombre: ev.archivoNombre,
+          archivoUrl: ev.archivoUrl,
           fechaVencimiento: ev.fechaVencimiento,
         })),
+        ...instancias.map((i) => ({
+          id: i.id,
+          empresaNombre:
+              empresaPorExpediente[i.expedienteId]?.empresaNombre || null,
+          archivoNombre: `Requerimiento: ${i.nombre}`,
+          archivoUrl: null,
+          fechaVencimiento: i.fechaVencimiento,
+        })),
       ];
-
-      return itemsUnificados
-          .map((item) => {
-            const fecha = this._aFecha(item.fechaVencimiento);
-            const dias = fecha ?
-                Math.ceil((fecha - hoy) / (1000 * 60 * 60 * 24)) : null;
-            return {...item, diasRestantes: dias};
-          })
+      return items
+          .map((item) => ({
+            ...item, diasRestantes: this._diasHasta(item.fechaVencimiento, hoy),
+          }))
           .filter((item) => {
             if (item.diasRestantes === null) return false;
             return tipo === "vencidos" ?
@@ -404,70 +349,50 @@ class ReporteService {
           });
     }
 
-    // "no_cumple" / "pendientes": basados en Evaluación, que sí trae
-    // requerimientoId directo.
+    // "no_cumple" / "pendientes": instancias activas con ese resultado
+    // ("pendientes" incluye las aún sin evaluar).
     const resultadoBuscado = tipo === "no_cumple" ? "no_cumple" : "pendiente";
-    const filtradas = vigentesEnAlcance.filter(
-        (ev) => ev.resultado === resultadoBuscado,
-    );
-
+    const instancias = (await expedienteRequerimientoRepository.listByResultado(
+        {mandanteId: this._mandanteDe(actor), resultado: resultadoBuscado},
+    )).filter((i) => expedienteIds.has(i.expedienteId));
+    const evaluaciones = await Promise.all(instancias.map((i) =>
+      i.evaluacionVigenteId ?
+        evaluacionRepository.getById(i.evaluacionVigenteId) : null,
+    ));
     const expedientePorId = {};
     expedientesEnAlcance.forEach((exp) => {
       expedientePorId[exp.id] = exp;
     });
-    const empresaPorExpediente = await this._mapaEmpresaPorExpediente(
-        expedientesEnAlcance,
-    );
-
-    const requerimientoIds = [
-      ...new Set(filtradas.map((ev) => ev.requerimientoId)),
-    ];
-    const requerimientosDocs = await Promise.all(
-        requerimientoIds.map((id) => requerimientoRepository.getById(id)),
-    );
-    const requerimientoMap = {};
-    requerimientosDocs.forEach((r) => {
-      if (r) requerimientoMap[r.id] = r;
-    });
-
-    return filtradas.map((ev) => ({
-      id: ev.id,
+    return instancias.map((i, idx) => ({
+      id: i.id,
       empresaNombre:
-          empresaPorExpediente[ev.expedienteId]?.empresaNombre || null,
-      requerimientoNombre:
-          requerimientoMap[ev.requerimientoId]?.nombre || ev.requerimientoId,
-      resultado: ev.resultado,
-      observaciones: ev.observaciones || null,
-      expedienteId: ev.expedienteId,
-      proyectoId: expedientePorId[ev.expedienteId]?.proyectoId || null,
-      createdAt: ev.createdAt,
+          empresaPorExpediente[i.expedienteId]?.empresaNombre || null,
+      requerimientoNombre: i.nombre,
+      resultado: i.resultado,
+      observaciones: evaluaciones[idx]?.observaciones || null,
+      expedienteId: i.expedienteId,
+      proyectoId: expedientePorId[i.expedienteId]?.proyectoId || null,
+      createdAt: evaluaciones[idx]?.createdAt || i.createdAt,
     }));
   }
 
   /**
-   * Resuelve el Expediente de una Participación (si hubiera más de uno,
-   * prevalece el que sigue abierto) y sus Evaluaciones vigentes.
+   * Expediente de una Participación (si hay más de uno, prevalece el
+   * abierto).
    * @param {string} participacionId ID de la Participación.
-   * @return {Promise<{expediente: ?Object, vigentes: Object[]}>} Ambos.
+   * @return {Promise<?Object>} Expediente o null.
    */
-  async _expedienteYVigentes(participacionId) {
+  async _expedienteDe(participacionId) {
     const expedientes =
         await expedienteRepository.getByParticipacion(participacionId);
-    const expediente =
-        expedientes.find((e) => e.estado !== "cerrado") ||
+    return expedientes.find((e) => e.estado !== "cerrado") ||
         expedientes[0] || null;
-    const vigentes = expediente ?
-        (await evaluacionRepository.getByExpediente(expediente.id))
-            .filter((ev) => ev.estado === "vigente") :
-        [];
-    return {expediente, vigentes};
   }
 
   /**
    * Resume UNA Participación de una Empresa: cuántas Personas y
-   * Maquinarias tiene asignadas en ese Proyecto y su avance de
-   * Requerimientos (mismo cálculo que el resto del reporte, acotado al
-   * Expediente de esa Participación — nunca agregado entre Proyectos).
+   * Maquinarias tiene asignadas en ese Proyecto y su avance (contadores de
+   * su Expediente — nunca agregado entre Proyectos).
    * @param {Object} participacion Participación (id, proyectoId,
    *     empresaId).
    * @return {Promise<{personasCount: number, recursosCount: number,
@@ -475,21 +400,21 @@ class ReporteService {
    *     expedienteEstado: ?string}}>} El resumen.
    */
   async resumirParticipacion(participacion) {
-    const [{expediente, vigentes}, propias] = await Promise.all([
-      this._expedienteYVigentes(participacion.id),
+    const [expediente, propias] = await Promise.all([
+      this._expedienteDe(participacion.id),
       sujetosActivosDeParticipacion(participacion.id),
     ]);
     const distintos = (campo) =>
       new Set(propias.filter((a) => a[campo]).map((a) => a[campo])).size;
-    const {avancePct, cumple, noCumple, pendiente, noAplica} =
-        this._calcularAvanceRequerimientos(vigentes);
+    const avance = this._avance(expediente ? [expediente] : []);
 
     return {
       personasCount: distintos("personaId"),
       recursosCount: distintos("recursoId"),
       evaluacion: {
-        avancePct,
-        evaluados: cumple + noCumple + pendiente + noAplica,
+        avancePct: avance.avancePct,
+        evaluados: avance.cumple + avance.noCumple + avance.noAplica,
+        noCumple: avance.noCumple,
         expedienteEstado: expediente?.estado || null,
       },
     };
@@ -497,25 +422,17 @@ class ReporteService {
 
   /**
    * Cuenta, entre los sujetos activos de una Empresa en un Proyecto,
-   * cuántas Personas (o Maquinarias) están "acreditadas": todos sus
-   * Requerimientos propios aplicables (según aplicaRequerimientoASujeto,
-   * con el conjunto de sus Perfiles de Recurso) tienen Evaluación vigente en
-   * `cumple` o `no_aplica`. Un Requerimiento sin Evaluación cuenta como
-   * pendiente (mismo criterio que
-   * expedienteService._validarEvaluacionesCompletas). Sin Expediente no
-   * hay contra qué evaluar, así que nadie queda acreditado; con
-   * Expediente pero sin Requerimientos propios aplicables, el sujeto
-   * cuenta como acreditado (no tiene nada pendiente).
-   * @param {Object[]} sujetos Sujetos activos de la Empresa (ver
-   *     utils/sujetosParticipacion.js).
+   * cuántas Personas (o Maquinarias) están "acreditadas": todas sus
+   * instancias activas resueltas en cumple / no_aplica (contadores por
+   * sujeto del Expediente). Sin Expediente nadie queda acreditado; con
+   * Expediente pero sin instancias propias, el sujeto no tiene nada
+   * pendiente y cuenta como acreditado.
+   * @param {Object[]} sujetos Sujetos activos de la Empresa.
    * @param {string} campoId "personaId" o "recursoId".
    * @param {?Object} expediente Expediente de la Participación, o null.
-   * @param {Object[]} vigentes Evaluaciones vigentes de ese Expediente.
    * @return {{acreditadas: number, total: number}} El conteo.
    */
-  _contarAcreditados(sujetos, campoId, expediente, vigentes) {
-    const aplicables = expediente?.requerimientosAplicables || [];
-
+  _contarAcreditados(sujetos, campoId, expediente) {
     const vistos = new Set();
     let acreditadas = 0;
     sujetos.forEach((a) => {
@@ -523,25 +440,8 @@ class ReporteService {
       if (!sujetoId || vistos.has(sujetoId)) return;
       vistos.add(sujetoId);
       if (!expediente) return;
-
-      const propios = new Set(
-          aplicables
-              .filter((r) => aplicaRequerimientoASujeto(r, a))
-              .map((r) => r.requerimientoId),
-      );
-      const vigentesPropias = vigentes.filter(
-          (ev) => propios.has(ev.requerimientoId),
-      );
-      const avance = this._calcularAvanceRequerimientos(
-          vigentesPropias, {[campoId]: sujetoId},
-      );
-      const resueltas = avance.cumple + avance.noAplica;
-      if (
-        avance.noCumple === 0 && avance.pendiente === 0 &&
-        resueltas === propios.size
-      ) {
-        acreditadas++;
-      }
+      const r = expediente.resumenSujetos?.[claveSujeto(a)];
+      if (!r || (!r.noCumple && !r.pendiente)) acreditadas++;
     });
     return {acreditadas, total: vistos.size};
   }
@@ -565,31 +465,28 @@ class ReporteService {
     ]);
 
     const filas = await Promise.all(participaciones.map(async (p) => {
-      const [empresa, perfil, {expediente, vigentes}] = await Promise.all([
+      const [empresa, perfil, expediente] = await Promise.all([
         empresaRepository.getById(p.empresaId),
         p.perfilParticipacionId ?
             perfilParticipacionRepository.getById(p.perfilParticipacionId) :
             null,
-        this._expedienteYVigentes(p.id),
+        this._expedienteDe(p.id),
       ]);
-
       const sujetosEmpresa = sujetosProyecto.filter(
           (a) => a.participacionId === p.id,
       );
-
       return {
         empresaId: p.empresaId,
         empresaNombre: empresa?.razonSocial || p.empresaId,
         rut: empresa?.rut || null,
         empresaLogoUrl: empresa?.logoUrl || null,
         perfilParticipacion: perfil?.nombre || null,
-        cumplimientoPct:
-            this._calcularAvanceRequerimientos(vigentes).avancePct,
+        cumplimientoPct: porcentajeCumplimiento(expediente?.resumen),
         personas: this._contarAcreditados(
-            sujetosEmpresa, "personaId", expediente, vigentes,
+            sujetosEmpresa, "personaId", expediente,
         ),
         maquinarias: this._contarAcreditados(
-            sujetosEmpresa, "recursoId", expediente, vigentes,
+            sujetosEmpresa, "recursoId", expediente,
         ),
         estado: p.estado,
       };

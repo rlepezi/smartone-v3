@@ -21,16 +21,9 @@ export const personaService = {
     const expediente = await expedienteService.obtenerPorEmpresaYProyecto(
         mandanteId, empresaId, proyectoId,
     );
-    const evaluaciones = await evaluacionService.obtenerVigentesPorExpediente(
-        expediente?.id,
-    );
-    const propias = evaluacionService.filtrarPorPersona(evaluaciones, personaId);
     return {
       expediente,
-      filas: evaluacionService.combinarConRequerimientos(
-          expediente, propias,
-          { tipoEntidad: "persona", perfilRecursoIds: perfilRecursoIds || [] },
-      ),
+      filas: await evaluacionService.filasDeSujeto(expediente?.id, { personaId }),
     };
   },
 

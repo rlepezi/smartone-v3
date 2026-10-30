@@ -85,22 +85,149 @@ class ExpedienteController {
   }
 
   /**
-   * Transiciona el estado de un expediente existente.
+   * Registrar inicio en faena (marca, no cambia el estado).
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.
    * @return {Promise<void>}
    */
-  async transicionar(req, res, next) {
+  async iniciarEjecucion(req, res, next) {
     try {
-      const {id} = req.params;
-      const expediente = await expedienteService.transicionarEstado(
-          id, req.body, req.user,
+      const data = await expedienteService.iniciarEjecucion(
+          req.params.id, req.user,
       );
-      res.status(200).json({
-        message: "Expediente transicionado exitosamente.",
-        data: expediente,
-      });
+      res.status(200).json({message: "Inicio en faena registrado.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Cerrar expediente ({motivo, detalle}).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async cerrar(req, res, next) {
+    try {
+      const data = await expedienteService.cerrar(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({message: "Expediente cerrado.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Corrección: quitar el inicio en faena ({detalle}).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async volverAAprobado(req, res, next) {
+    try {
+      const data = await expedienteService.volverAAprobado(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({message: "Inicio en faena quitado.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Corrección: reabre un expediente cerrado ({detalle}).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async reabrir(req, res, next) {
+    try {
+      const data = await expedienteService.reabrir(
+          req.params.id, req.body, req.user,
+      );
+      res.status(200).json({message: "Expediente reabierto.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Historial de estados de un expediente.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async historialEstados(req, res, next) {
+    try {
+      const data = await expedienteService.historialEstados(
+          req.params.id, req.user,
+      );
+      res.status(200).json({message: "Historial de estados.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Instancias de Requerimiento de un expediente (opcionalmente de un
+   * sujeto: ?personaId=, ?recursoId= o ?empresa=true; ?estado=activo por
+   * defecto, "retirado" o "todos").
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async listarRequerimientos(req, res, next) {
+    try {
+      const {personaId, recursoId, empresa, estado} = req.query;
+      const data = await expedienteService.listarRequerimientos(
+          req.params.id,
+          {personaId, recursoId, empresa: empresa === "true", estado},
+          req.user,
+      );
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Reintenta la generación de instancias de un expediente "en_proceso".
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async reintentarGeneracion(req, res, next) {
+    try {
+      const data = await expedienteService.reintentarGeneracion(
+          req.params.id, req.user,
+      );
+      res.status(200).json({message: "Generación completada.", data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Recalcula los contadores de un expediente desde sus instancias.
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async repararResumen(req, res, next) {
+    try {
+      const data = await expedienteService.repararResumen(
+          req.params.id, req.user,
+      );
+      res.status(200).json({message: "Contadores recalculados.", data});
     } catch (error) {
       next(error);
     }

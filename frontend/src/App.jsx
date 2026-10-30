@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./routes/ProtectedRoute";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
@@ -15,6 +15,7 @@ import { ProyectoFormPage } from "./pages/proyectos/ProyectoFormPage";
 import { EmpresasListPage } from "./pages/empresas/EmpresasListPage";
 import { EmpresaFormPage } from "./pages/empresas/EmpresaFormPage";
 import { EmpresaDetailPage } from "./pages/empresas/EmpresaDetailPage";
+import { EmpresaRecursosPage } from "./pages/empresas/EmpresaRecursosPage";
 import { PersonasListPage } from "./pages/personas/PersonasListPage";
 import { PersonaFormPage } from "./pages/personas/PersonaFormPage";
 import { PersonaDetailPage } from "./pages/personas/PersonaDetailPage";
@@ -26,11 +27,15 @@ import { PerfilParticipacionFormPage } from "./pages/perfiles-participacion/Perf
 import { PerfilParticipacionDetailPage } from "./pages/perfiles-participacion/PerfilParticipacionDetailPage";
 import { ConfigurarRequerimientosPage } from "./pages/perfiles-participacion/ConfigurarRequerimientosPage";
 import { RespaldosPage } from "./pages/respaldos/RespaldosPage";
+import { ConfiguracionIAPage } from "./pages/configuracion/ConfiguracionIAPage";
+import { ConfiguracionAcreditacionPage } from "./pages/configuracion/ConfiguracionAcreditacionPage";
+import { RevisionesIAListPage } from "./pages/revisiones-ia/RevisionesIAListPage";
+import { NuevaRevisionPage } from "./pages/revisiones-ia/NuevaRevisionPage";
+import { SesionRevisionPage } from "./pages/revisiones-ia/SesionRevisionPage";
 import { PerfilesRecursoListPage } from "./pages/perfiles-recurso/PerfilesRecursoListPage";
 import { PerfilRecursoFormPage } from "./pages/perfiles-recurso/PerfilRecursoFormPage";
 import { ParticipacionesListPage } from "./pages/participaciones/ParticipacionesListPage";
 import { RequerimientosListPage } from "./pages/requerimientos/RequerimientosListPage";
-import { RequerimientoFormPage } from "./pages/requerimientos/RequerimientoFormPage";
 import { ExpedientesListPage } from "./pages/expedientes/ExpedientesListPage";
 import { ExpedienteFormPage } from "./pages/expedientes/ExpedienteFormPage";
 import { ExpedienteDetailPage } from "./pages/expedientes/ExpedienteDetailPage";
@@ -46,6 +51,13 @@ import { ReemplazarAcreditacionWizardPage } from "./pages/acreditaciones/Reempla
 // admin_comercial (su alcance es exclusivamente Mandante + Usuario).
 const ROLES_OPERACIONAL = ["superadmin", "mandante_admin", "mandante_lector", "evaluador"];
 const ROLES_EMPRESAS = [...ROLES_OPERACIONAL, "admin_comercial"];
+
+// Rutas antiguas /requerimientos/:id y /requerimientos/:id/editar: abren el catálogo con el
+// modal de edición de ese Requerimiento.
+function RedirigirARequerimiento() {
+  const { id } = useParams();
+  return <Navigate to={`/requerimientos?editar=${encodeURIComponent(id)}`} replace />;
+}
 
 function App() {
   return (
@@ -105,6 +117,51 @@ function App() {
 
                     {/* Módulo Usuarios (superadmin / mandante_admin /
                         admin_comercial — cada uno con su propio alcance) */}
+                    {/* Revisiones IA: operan superadmin y evaluador; los roles de Mandante solo leen */}
+                    <Route
+                      path="/revisiones-ia"
+                      element={
+                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
+                          <RevisionesIAListPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/revisiones-ia/nueva"
+                      element={
+                        <ProtectedRoute allowedRoles={["superadmin", "evaluador"]}>
+                          <NuevaRevisionPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    {/* El panel de tipos documentales pasó a Configuración IA → Tipos documentales */}
+                    <Route path="/revisiones-ia/tipos-documentales" element={<Navigate to="/configuracion/ia?tab=tipos" replace />} />
+                    <Route
+                      path="/revisiones-ia/:sesionId"
+                      element={
+                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
+                          <SesionRevisionPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    {/* Configuración → Inteligencia Artificial: superadmin (todas las pestañas), mandante_admin (Fuentes) y evaluador (Mapeo documental) */}
+                    <Route
+                      path="/configuracion/ia"
+                      element={
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "evaluador"]}>
+                          <ConfiguracionIAPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    {/* Configuración → Niveles de acreditación: superadmin (cualquier Mandante) y mandante_admin (el suyo) */}
+                    <Route
+                      path="/configuracion/acreditacion"
+                      element={
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
+                          <ConfiguracionAcreditacionPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     {/* Respaldo y restauración de la base de datos: exclusivo de superadmin */}
                     <Route
                       path="/respaldos"
@@ -232,6 +289,16 @@ function App() {
                       element={
                         <ProtectedRoute allowedRoles={ROLES_EMPRESAS}>
                           <EmpresaDetailPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    {/* Personas y Maquinarias de una Empresa: sin admin_comercial (no tiene
+                        acceso a Personas ni Recursos) */}
+                    <Route
+                      path="/empresas/:id/recursos"
+                      element={
+                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
+                          <EmpresaRecursosPage />
                         </ProtectedRoute>
                       }
                     />
@@ -402,7 +469,8 @@ function App() {
                       }
                     />
 
-                    {/* Módulo Requerimientos (catálogo global) */}
+                    {/* Módulo Requerimientos: catálogo por Mandante. Crear y editar se hacen en un
+                        modal del catálogo; las rutas antiguas del formulario redirigen a él. */}
                     <Route
                       path="/requerimientos"
                       element={
@@ -411,22 +479,9 @@ function App() {
                         </ProtectedRoute>
                       }
                     />
-                    <Route
-                      path="/requerimientos/nuevo"
-                      element={
-                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin"]}>
-                          <RequerimientoFormPage />
-                        </ProtectedRoute>
-                      }
-                    />
-                    <Route
-                      path="/requerimientos/:id"
-                      element={
-                        <ProtectedRoute allowedRoles={ROLES_OPERACIONAL}>
-                          <RequerimientoFormPage />
-                        </ProtectedRoute>
-                      }
-                    />
+                    <Route path="/requerimientos/nuevo" element={<Navigate to="/requerimientos?nuevo=1" replace />} />
+                    <Route path="/requerimientos/:id" element={<RedirigirARequerimiento />} />
+                    <Route path="/requerimientos/:id/editar" element={<RedirigirARequerimiento />} />
 
                     {/* Módulo Expedientes (aislado por Mandante) */}
                     <Route

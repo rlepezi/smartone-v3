@@ -4,13 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --mode qa",
+    "dev:emuladores": "vite --mode emuladores",
     "build": "vite build",
+    "build:qa": "vite build --mode qa",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "docx-preview": "0.4.1",
+    "exceljs": "^4.4.0",
     "firebase": "^12.18.0",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",

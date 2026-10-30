@@ -6,6 +6,7 @@ import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
 import { EntityIconTile } from "../../../components/shared/EntityIconTile";
 import { ConfirmacionModal } from "../../../components/shared/ConfirmacionModal";
+import { aMayusculas } from "../../../utils/texto";
 
 // Mismos campos/validaciones que EmpresaFormPage.jsx (modo creación) —
 // reutiliza empresaService.crear tal cual, sin reimplementar la
@@ -27,7 +28,8 @@ const CrearEmpresaInline = ({ mandanteId, onCreada, onCancelar }) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: name === "rut" ? formatRutDisplay(value) : value,
+      [name]: name === "rut" ? formatRutDisplay(value)
+        : name === "razonSocial" || name === "nombreFantasia" ? aMayusculas(value) : value,
     }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
   };

@@ -10,7 +10,7 @@ import { spacing, radius } from "../theme/spacing";
 import { typography } from "../theme/typography";
 import { formatRut } from "../utils/formatRut";
 import { formatNombre } from "../utils/formatNombre";
-import { diasRestantes } from "../utils/formatDate";
+import { diasRestantes } from "../utils/fechas";
 import { GradientHeader } from "../components/GradientHeader";
 import { SectionCard } from "../components/SectionCard";
 import { ProgressRow } from "../components/ProgressRow";

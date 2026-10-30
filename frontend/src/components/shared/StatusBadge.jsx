@@ -1,6 +1,7 @@
 import React from "react";
 import { CheckCircle2, XCircle, AlertCircle, Clock, PauseCircle } from "lucide-react";
 import { cn } from "../../utils/cn";
+import { ESTADOS_CUMPLIMIENTO } from "../../utils/estadosCumplimiento";
 
 // Paleta de estado unificada para todo el sistema:
 //   positivo (sage): activo, cumple, aprobado, en_ejecucion
@@ -9,7 +10,7 @@ import { cn } from "../../utils/cn";
 //   negativo (rojo): no_cumple, inactivo, bloqueado
 //   informativo neutro (primary — token custom, NUNCA sky-* genérico):
 //     planificado, creado
-//   terminal/cerrado (gris/slate): finalizado(a), archivado, cerrado, historica
+//   terminal/cerrado (gris/slate): finalizado(a), archivado, cerrado, reemplazada
 
 export const MAPA_ACTIVO_INACTIVO = {
   activo: {
@@ -48,24 +49,10 @@ export const MAPA_ACTIVO_DESACTIVADO = {
 };
 
 // Compartido por Dashboard, Expediente y Reportes (resultado de Evaluación).
-export const MAPA_EVALUACION = {
-  cumple: {
-    label: "Cumple",
-    className: "bg-sage-lighter text-sage-darker border-sage-light",
-  },
-  no_cumple: {
-    label: "No Cumple",
-    className: "bg-red-50 text-red-700 border-red-200",
-  },
-  no_aplica: {
-    label: "No Aplica",
-    className: "bg-slate-100 text-slate-600 border-slate-200",
-  },
-  pendiente: {
-    label: "Pendiente",
-    className: "bg-amber-50 text-amber-700 border-amber-200",
-  },
-};
+// Colores desde utils/estadosCumplimiento (los mismos de las donas y sus leyendas).
+export const MAPA_EVALUACION = Object.fromEntries(
+  ESTADOS_CUMPLIMIENTO.map((e) => [e.key, { label: e.label, className: e.badge }]),
+);
 
 // Compartido por Participación (detalle y lista) y por el estado de
 // Asignación embebido en Proyecto (mismo set de palabras, "suspendida" no

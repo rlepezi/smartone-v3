@@ -28,17 +28,14 @@ export const empresaService = {
     // Personas y Maquinarias de la Participación del Expediente, agrupadas
     // por sujeto con sus Perfiles de Recurso (y el catálogo para nombrarlos).
     const filtro = { participacionId: expediente?.participacionId, estado: "activa" };
-    const [evaluaciones, personas, recursos, perfiles] = await Promise.all([
-      evaluacionService.obtenerVigentesPorExpediente(expediente?.id),
+    const [filasEmpresa, personas, recursos, perfiles] = await Promise.all([
+      evaluacionService.filasDeSujeto(expediente?.id, { empresa: true }),
       expediente ? participacionPersonasApi.listar(filtro) : [],
       expediente ? participacionRecursosApi.listar(filtro) : [],
       perfilesRecursoApi.listar({ mandanteId }).catch(() => []),
     ]);
     const sujetos = agruparSujetos(personas || [], recursos || []);
     const perfilesPorId = Object.fromEntries((perfiles || []).map((p) => [p.id, p]));
-    const requerimientosEmpresa = evaluacionService.filtrarNivelEmpresa(
-        evaluaciones,
-    );
-    return { expediente, evaluaciones, requerimientosEmpresa, sujetos, perfilesPorId };
+    return { expediente, filasEmpresa, sujetos, perfilesPorId };
   },
 };

@@ -5,8 +5,10 @@ import { proyectoService } from "../../services/proyectoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
 import { ConfirmacionModal } from "./ConfirmacionModal";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { CrearPerfilRecurso } from "../perfiles-recurso/CrearPerfilRecurso";
+import { SelectorPerfilRecurso } from "../perfiles-recurso/SelectorPerfilRecurso";
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 // Modal "Cambiar Proyecto" / "Asignar a Proyecto" — compartido entre
 // Persona y Recurso (parametrizado por `entidadTipo`, en vez de dos
@@ -27,6 +29,8 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
   const [proyectos, setProyectos] = useState([]);
   const [perfilesOpciones, setPerfilesOpciones] = useState([]);
   const [perfilesRecursoOpciones, setPerfilesRecursoOpciones] = useState([]);
+  // Mandante cuyos Perfiles de Recurso ya se cargaron (el aviso de "sin perfiles" espera a la carga).
+  const [perfilesRecursoDe, setPerfilesRecursoDe] = useState(null);
   const [formData, setFormData] = useState({
     proyectoDestinoId: "", perfilParticipacionId: "", perfilRecursoIds: [], fechaInicio: hoyISO(),
   });
@@ -34,8 +38,10 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
   const [guardando, setGuardando] = useState(false);
   const [serverError, setServerError] = useState(null);
   const [resultado, setResultado] = useState(null);
-  // 409 CONFIRMACION_REQUERIDA: asignaciones que se finalizarán, pendientes de confirmar.
+  // 409 CONFIRMACION_REQUERIDA: asignaciones que se finalizarán y/o Expediente nuevo de la
+  // Empresa en el Proyecto destino, pendientes de confirmar.
   const [afectados, setAfectados] = useState(null);
+  const [nuevoExpediente, setNuevoExpediente] = useState(null);
 
   useEffect(() => {
     proyectoService.listar({})
@@ -56,10 +62,28 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
       .then((data) => setPerfilesOpciones(data || []))
       .catch((err) => console.error("Error al cargar perfiles de participación:", err));
 
-    perfilRecursoService.listar({ mandanteId, tipo: esPersona ? "persona" : "recurso", estado: "activo" })
-      .then((data) => setPerfilesRecursoOpciones(data || []))
-      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
+    cargarPerfilesRecurso(mandanteId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proyectoSeleccionado?.mandanteId, esPersona]);
+
+  const tipoPerfil = esPersona ? "persona" : "recurso";
+  function cargarPerfilesRecurso(mandanteId) {
+    return perfilRecursoService.listar({ mandanteId, tipo: tipoPerfil, estado: "activo" })
+      .then((data) => setPerfilesRecursoOpciones(data || []))
+      .catch((err) => console.error("Error al cargar perfiles de recurso:", err))
+      .finally(() => setPerfilesRecursoDe(mandanteId));
+  }
+
+  // Perfil creado desde este modal: se recarga la lista; si era el primero, queda elegido.
+  const handlePerfilCreado = ({ id }) => {
+    const eraElPrimero = perfilesRecursoOpciones.length === 0;
+    cargarPerfilesRecurso(proyectoSeleccionado.mandanteId);
+    if (eraElPrimero && id) {
+      setFormData((prev) => (prev.perfilRecursoIds.length ? prev : { ...prev, perfilRecursoIds: [id] }));
+      setErrors((prev) => ({ ...prev, perfilRecursoIds: null }));
+    }
+  };
+  const perfilesRecursoListos = Boolean(proyectoSeleccionado) && perfilesRecursoDe === proyectoSeleccionado.mandanteId;
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -100,9 +124,11 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
     } catch (err) {
       if (err.codigo === "CONFIRMACION_REQUERIDA") {
         setAfectados(err.detalle?.afectados || []);
+        setNuevoExpediente(err.detalle?.nuevoExpediente || null);
       } else {
         console.error("Error al cambiar el Proyecto:", err);
         setAfectados(null);
+        setNuevoExpediente(null);
         setServerError(err.message || "No se pudo cambiar el Proyecto.");
       }
     } finally {
@@ -190,53 +216,30 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-              {esPersona ? "Perfiles de Recurso * (uno o más)" : "Perfil de Recurso *"}
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label className="block text-xs font-semibold text-gray-700">
+                {esPersona ? "Perfiles de Recurso * (uno o más)" : "Perfil de Recurso *"}
+              </label>
+            </div>
             {!proyectoSeleccionado ? (
               <p className="text-[11px] text-slate-400">Seleccione primero un Proyecto.</p>
-            ) : esPersona ? (
-              <div className="flex flex-wrap gap-2">
-                {perfilesRecursoOpciones.map((p) => {
-                  const activo = formData.perfilRecursoIds.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      aria-pressed={activo}
-                      onClick={() => {
-                        setFormData((prev) => ({
-                          ...prev,
-                          perfilRecursoIds: activo
-                            ? prev.perfilRecursoIds.filter((x) => x !== p.id) : [...prev.perfilRecursoIds, p.id],
-                        }));
-                        setErrors((prev) => ({ ...prev, perfilRecursoIds: null }));
-                      }}
-                      className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors ${
-                        activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      {p.nombre}
-                    </button>
-                  );
-                })}
-              </div>
+            ) : perfilesRecursoListos && perfilesRecursoOpciones.length === 0 ? (
+              <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={proyectoSeleccionado.mandanteId} onCreado={handlePerfilCreado} />
             ) : (
-              <select
-                value={formData.perfilRecursoIds[0] || ""}
-                onChange={(e) => {
-                  setFormData((prev) => ({ ...prev, perfilRecursoIds: e.target.value ? [e.target.value] : [] }));
+              <SelectorPerfilRecurso
+                tipo={tipoPerfil}
+                perfiles={perfilesRecursoOpciones}
+                valor={formData.perfilRecursoIds}
+                onChange={(ids) => {
+                  setFormData((prev) => ({ ...prev, perfilRecursoIds: ids }));
                   setErrors((prev) => ({ ...prev, perfilRecursoIds: null }));
                 }}
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
-                  errors.perfilRecursoIds ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                }`}
-              >
-                <option value="">Seleccione un Perfil de Recurso...</option>
-                {perfilesRecursoOpciones.map((p) => (
-                  <option key={p.id} value={p.id}>{p.nombre}</option>
-                ))}
-              </select>
+                mandanteId={proyectoSeleccionado.mandanteId}
+                onPerfilCreado={() => cargarPerfilesRecurso(proyectoSeleccionado.mandanteId)}
+                error={errors.perfilRecursoIds || null}
+                anchoCompleto
+                etiqueta={esPersona ? "Perfiles de Recurso" : "Perfil de Recurso"}
+              />
             )}
             {errors.perfilRecursoIds && <p className="text-xs text-red-500 mt-1">{errors.perfilRecursoIds}</p>}
           </div>
@@ -270,8 +273,8 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-            <input
-              type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
+            <DateInput
+              name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
               className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
                 errors.fechaInicio ? "border-red-400 bg-red-50/30" : "border-gray-200"
               }`}
@@ -296,8 +299,10 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
       {afectados && (
         <ConfirmacionModal
           peligro
-          titulo="Se finalizarán asignaciones vigentes"
-          mensaje={`Para continuar con ${proyectoSeleccionado?.nombre || "el Proyecto destino"} se finalizarán las siguientes asignaciones. Revise la lista y confirme.`}
+          titulo={afectados.length > 0 ? "Se finalizarán asignaciones vigentes" : "Se creará un Expediente nuevo"}
+          mensaje={afectados.length > 0
+            ? `Para continuar con ${proyectoSeleccionado?.nombre || "el Proyecto destino"} se finalizarán las siguientes asignaciones. Revise la lista y confirme.`
+            : null}
           items={afectados.map((a) => ({
             key: `${a.tipo}-${a.id}-${a.proyectoId}`,
             principal: a.nombre,
@@ -305,9 +310,23 @@ export const CambiarProyectoModal = ({ entidadTipo, entidadId, tieneParticipacio
           }))}
           textoConfirmar="Confirmar cambio"
           ocupado={guardando}
-          onCancelar={() => setAfectados(null)}
+          onCancelar={() => { setAfectados(null); setNuevoExpediente(null); }}
           onConfirmar={() => enviar(true)}
-        />
+        >
+          {nuevoExpediente && (
+            <p className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+              <strong>{nuevoExpediente.empresaNombre || "La Empresa"}</strong>{" "}
+              {nuevoExpediente.creaParticipacion
+                ? "no participa en "
+                : "no tiene un Expediente abierto en "}
+              <strong>{nuevoExpediente.proyectoNombre || "el Proyecto destino"}</strong>
+              {nuevoExpediente.creaParticipacion
+                ? ": se creará su Participación y un Expediente nuevo."
+                : ": se creará un Expediente nuevo."}
+              {" "}Si {etiquetaEntidad} debía sumarse al Expediente de otra Empresa, use primero &quot;Cambiar empresa&quot;.
+            </p>
+          )}
+        </ConfirmacionModal>
       )}
     </div>
   );

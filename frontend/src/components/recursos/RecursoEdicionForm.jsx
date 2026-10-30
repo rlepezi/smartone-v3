@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
+import { CampoIdentificacionRecurso } from "../shared/CampoIdentificacionRecurso";
+import { errorIdentificacion, normalizarPatente } from "../../utils/identificacionRecurso";
 import { Truck, Building2, AlertCircle, Repeat } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { recursoService } from "../../services/recursoService";
@@ -12,15 +14,19 @@ import { CambiarEmpresaRecursoModal } from "../recursos/CambiarEmpresaRecursoMod
 import { CambiarProyectoModal } from "../shared/CambiarProyectoModal";
 import { MandanteChip } from "../shared/MandanteChip";
 import { SelectConBusqueda } from "../shared/SelectConBusqueda";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
+import { CampoMandante } from "../shared/CampoMandante";
 import { SugerenciasChips } from "../shared/SugerenciasChips";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { OpcionesRadio } from "../shared/OpcionesRadio";
+import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import { formatRutDisplay as formatRutBusqueda } from "../../utils/rutFormatters";
 import { SUGERENCIAS_TIPO_RELACION_RECURSO } from "../../utils/sugerenciasRelacionLaboral";
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin"];
 const OTRO_SENTINEL = "__otro__";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 
 // Formulario de datos identitarios (crear / editar). Se usa en dos lugares:
 //   - RecursoFormPage: solo para CREAR (pantalla propia).
@@ -39,6 +45,8 @@ export const RecursoEdicionForm = ({
     nombre: "",
     tipo: "",
     estado: "activo",
+    // Alta: patente por defecto. Las maquinarias anteriores llegan sin tipo (null) y deben elegirlo.
+    tipoIdentificacion: "patente",
     patente: "",
     marca: "",
     modelo: "",
@@ -53,6 +61,13 @@ export const RecursoEdicionForm = ({
   const [tiposDisponibles, setTiposDisponibles] = useState([]);
   const [tipoPersonalizado, setTipoPersonalizado] = useState("");
   const [empresasOpciones, setEmpresasOpciones] = useState([]);
+  // Mandante en contexto (alta): con uno solo, o con el propio del rol, viene asignado igual que en
+  // Nueva Empresa; con varios se elige. Acota las Empresas a las asociadas a ese Mandante.
+  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
+  const mandanteFiltro = contextoMandante.mandanteId;
+  const empresasDelMandante = mandanteFiltro
+    ? empresasOpciones.filter((e) => (e.mandanteIds || []).includes(mandanteFiltro))
+    : empresasOpciones;
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
@@ -132,6 +147,7 @@ export const RecursoEdicionForm = ({
           tipo: data.tipo || "",
           estado: data.estado || "activo",
           patente: data.patente || "",
+          tipoIdentificacion: data.tipoIdentificacion || null,
           marca: data.marca || "",
           modelo: data.modelo || "",
           anio: data.anio ? String(data.anio) : "",
@@ -182,11 +198,12 @@ export const RecursoEdicionForm = ({
   const validateForm = () => {
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
-    if (!formData.tipo) newErrors.tipo = "El tipo es obligatorio.";
+    if (!formData.tipo) newErrors.tipo = "El tipo de maquinaria es obligatorio.";
     if (usaTipoPersonalizado && !tipoPersonalizado.trim()) {
       newErrors.tipoPersonalizado = "Debe especificar el tipo.";
     }
-    if (!formData.patente.trim()) newErrors.patente = "La patente es obligatoria.";
+    const errorId = errorIdentificacion(formData.tipoIdentificacion, formData.patente);
+    if (errorId) newErrors.patente = errorId;
     if (!esEdicion) {
       if (!formData.empresaId) {
         newErrors.empresaId = "Debe seleccionar una Empresa.";
@@ -209,7 +226,8 @@ export const RecursoEdicionForm = ({
       nombre: formData.nombre.trim(),
       tipo: usaTipoPersonalizado ? tipoPersonalizado.trim() : formData.tipo,
       estado: formData.estado,
-      patente: formData.patente.trim(),
+      tipoIdentificacion: formData.tipoIdentificacion,
+      patente: formData.tipoIdentificacion === "patente" ? normalizarPatente(formData.patente) : formData.patente.trim(),
       confirmarPatenteDuplicada,
       marca: formData.marca.trim() || null,
       modelo: formData.modelo.trim() || null,
@@ -301,6 +319,13 @@ export const RecursoEdicionForm = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
+                <CampoMandante
+                  contexto={contextoMandante}
+                  conFoco={false}
+                  onChange={() => elegirCampo("empresaId", "")}
+                />
+              </div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Empresa *</label>
                 <SelectConBusqueda
                   bloque
@@ -313,12 +338,15 @@ export const RecursoEdicionForm = ({
                   placeholder="Buscar por nombre o RUT..."
                   options={[
                     { value: "", label: "Seleccione una Empresa..." },
-                    ...empresasOpciones.map((e) => ({
+                    ...empresasDelMandante.map((e) => ({
                       value: e.id, label: e.razonSocial, logoUrl: e.logoUrl || null, buscar: e.rut ? `${e.rut} ${formatRutBusqueda(e.rut)}` : "",
                     })),
                   ]}
                 />
                 {errors.empresaId && <p className="text-xs text-red-500 mt-1">{errors.empresaId}</p>}
+                {mandanteFiltro && empresasOpciones.length > 0 && empresasDelMandante.length === 0 && (
+                  <p className="text-[11px] font-semibold text-amber-700 mt-1">No hay Empresas asociadas a este Mandante.</p>
+                )}
               </div>
 
               <div>
@@ -340,8 +368,7 @@ export const RecursoEdicionForm = ({
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de Inicio *</label>
-                <input
-                  type="date"
+                <DateInput
                   name="fechaInicio"
                   value={formData.fechaInicio}
                   onChange={handleChange}
@@ -380,7 +407,7 @@ export const RecursoEdicionForm = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de maquinaria *</label>
               <select
                 name="tipo"
                 value={formData.tipo}
@@ -405,6 +432,7 @@ export const RecursoEdicionForm = ({
                 <option value={OTRO_SENTINEL}>+ Otro (especificar)</option>
               </select>
               {errors.tipo && <p className="text-xs text-red-500 mt-1">{errors.tipo}</p>}
+              <p className="text-[11px] text-slate-400 mt-1">Se usa para sugerir la clasificación al asignarla a un proyecto.</p>
               {usaTipoPersonalizado && (
                 <div className="mt-2">
                   <input
@@ -430,16 +458,14 @@ export const RecursoEdicionForm = ({
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Estado</label>
-              <select
+              <OpcionesRadio
                 name="estado"
                 value={formData.estado}
                 onChange={handleChange}
                 disabled={!puedeEscribir}
-                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-              >
-                <option value="activo">Activo</option>
-                <option value="inactivo">Inactivo</option>
-              </select>
+                opciones={OPCIONES_ACTIVO_INACTIVO}
+                ariaLabel="Estado"
+              />
             </div>
 
             {esEdicion && !enDetalle && mandanteActual && (
@@ -471,21 +497,14 @@ export const RecursoEdicionForm = ({
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Patente / Identificación *</label>
-              <input
-                type="text"
-                name="patente"
-                value={formData.patente}
-                onChange={handleChange}
-                disabled={!puedeEscribir}
-                placeholder="Ej: ABCD12"
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed ${
-                  errors.patente ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                }`}
-              />
-              {errors.patente && <p className="text-xs text-red-500 mt-1">{errors.patente}</p>}
-            </div>
+            <CampoIdentificacionRecurso
+              tipo={formData.tipoIdentificacion}
+              valor={formData.patente}
+              disabled={!puedeEscribir}
+              onCambiarTipo={(v) => handleChange({ target: { name: "tipoIdentificacion", value: v } })}
+              onCambiarValor={(v) => handleChange({ target: { name: "patente", value: v } })}
+              error={errors.patente}
+            />
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Marca (Opcional)</label>

@@ -6,8 +6,9 @@ import { perfilParticipacionService } from "../../services/perfilParticipacionSe
 import { participacionService } from "../../services/participacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { SelectConBusqueda } from "./SelectConBusqueda";
+import { hoyISO } from "../../utils/fechas";
+import { DateInput } from "../ui/DateInput";
 
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 const ESTADOS_PROYECTO_NO_ELEGIBLES = ["finalizado", "archivado"];
 
 const claseCampo = (error) =>
@@ -187,7 +188,7 @@ export const NuevaParticipacionModal = ({ empresaId = null, proyectoId = null, o
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Fecha de inicio *</label>
-            <input type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange} disabled={bloqueado} className={claseCampo(errors.fechaInicio)} />
+            <DateInput name="fechaInicio" value={formData.fechaInicio} onChange={handleChange} disabled={bloqueado} className={claseCampo(errors.fechaInicio)} />
             {errors.fechaInicio && <p className="text-xs text-red-500 mt-1">{errors.fechaInicio}</p>}
           </div>
           <div className="flex justify-end gap-2 pt-2">

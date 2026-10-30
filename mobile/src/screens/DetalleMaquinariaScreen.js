@@ -7,7 +7,7 @@ import { proyectosApi } from "../api/proyectos";
 import { colors } from "../theme/colors";
 import { spacing, radius } from "../theme/spacing";
 import { typography } from "../theme/typography";
-import { diasRestantes } from "../utils/formatDate";
+import { diasRestantes } from "../utils/fechas";
 import { GradientHeader } from "../components/GradientHeader";
 import { SectionCard } from "../components/SectionCard";
 import { ProgressRow } from "../components/ProgressRow";

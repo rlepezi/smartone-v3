@@ -1,0 +1,184 @@
+{
+  "nombre": "Carpeta de Arranque Transemel",
+  "profundidadSubcontratos": 1,
+  "secciones": [
+    {
+      "clave": "revision_carpeta",
+      "nombre": "Revisión Carpeta de arranque",
+      "alias": ["revision carpeta de arranque", "revision carpeta", "carpeta de arranque"],
+      "numeroSugerido": "00",
+      "obligatoria": false,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "cronograma",
+      "nombre": "Cronograma de actividades",
+      "alias": ["cronograma", "cronograma de actividades", "carta gantt", "gantt"],
+      "numeroSugerido": null,
+      "obligatoria": false,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "trabajadores",
+      "nombre": "Carpetas Personales",
+      "alias": ["carpetas personales", "carpeta personal", "carpeta de trabajadores", "carpetas de trabajadores", "trabajadores"],
+      "numeroSugerido": "03",
+      "obligatoria": true,
+      "tipo": "entidades", "entidad": "persona", "rolEntidad": "trabajador",
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [
+        {"clave": "listado_trabajadores", "nombre": "Listado de trabajadores", "alias": ["listado", "listado de trabajadores", "nomina"], "excluir": [], "obligatorio": false, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false}
+      ],
+      "documentos": [
+        {"clave": "contrato", "nombre": "Contrato de trabajo", "alias": ["contrato", "contrato de trabajo"], "excluir": ["anexo"], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "anexo_contrato", "nombre": "Anexo de contrato", "alias": ["anexo", "anexo contrato", "anexo de contrato"], "excluir": [], "obligatorio": false, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "cedula", "nombre": "Cédula de identidad", "alias": ["c.i.", "ci", "cedula", "carnet", "cedula de identidad", "cedula identidad"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": "CEDULA_CL", "requerimientoId": null, "datosSensibles": false},
+        {"clave": "antecedentes", "nombre": "Certificado de antecedentes", "alias": ["antecedentes", "certificado de antecedentes", "cert antecedentes"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": true},
+        {"clave": "epp", "nombre": "Entrega de EPP", "alias": ["epp", "entrega de epp", "elementos de proteccion personal"], "excluir": [], "obligatorio": true, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "odi", "nombre": "ODI (Obligación de Informar)", "alias": ["odi", "obligacion de informar", "derecho a saber", "das"], "excluir": [], "obligatorio": true, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "riohs", "nombre": "RIOHS", "alias": ["riohs", "rhios", "riosh", "rioh", "reglamento interno"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "examen_ocupacional", "nombre": "Examen ocupacional", "alias": ["ocupacional", "examen ocupacional", "ex ocupacional", "preocupacional", "examen preocupacional", "examen medico"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": true},
+        {"clave": "psicosensotecnico", "nombre": "Examen psicosensotécnico", "alias": ["psicosensotecnico", "psicosensometrico", "psicotecnico", "examen psicosensotecnico"], "excluir": [], "obligatorio": false, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": true},
+        {"clave": "examen_drogas", "nombre": "Examen de drogas", "alias": ["drogas", "examen drogas", "examen de drogas", "test de drogas"], "excluir": [], "obligatorio": false, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": true},
+        {"clave": "competencias", "nombre": "Certificado de competencias", "alias": ["competencia", "competencias", "competencia laboral", "certificado de competencia laboral"], "excluir": [], "obligatorio": false, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "titulo", "nombre": "Certificado de título", "alias": ["titulo", "certificado de titulo", "cert titulo"], "excluir": [], "obligatorio": false, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false}
+      ],
+      "requerimientoId": null
+    },
+    {
+      "clave": "mutualidad",
+      "nombre": "Certificados Mutualidad",
+      "alias": ["mutualidad", "mutual", "certificado de mutualidad", "certificados mutualidad", "ach", "ist", "achs", "mutual de seguridad"],
+      "numeroSugerido": "04",
+      "obligatoria": true,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "matriz_riesgos",
+      "nombre": "Matriz IPER",
+      "alias": ["matriz iper", "miper", "iper", "matriz de riesgos", "matriz de riesgo"],
+      "numeroSugerido": "09",
+      "obligatoria": true,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "expertos_prevencion",
+      "nombre": "Expertos Prevención de Riesgos",
+      "alias": ["expertos prevencion de riesgos", "experto prevencion", "expertos", "prevencionista", "experto en prevencion"],
+      "numeroSugerido": "12",
+      "obligatoria": false,
+      "tipo": "entidades", "entidad": "persona", "rolEntidad": "experto_prevencion",
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [],
+      "documentos": [
+        {"clave": "cv", "nombre": "Currículum", "alias": ["cv", "curriculum", "curriculum vitae"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "titulo_experto", "nombre": "Título", "alias": ["titulo", "certificado de titulo"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "resolucion_seremi", "nombre": "Resolución Servicio de Salud", "alias": ["resolucion", "seremi", "servicio de salud", "resolucion servicio de salud"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "registro_experto", "nombre": "Registro de experto", "alias": ["registro", "registro de experto", "registro experto"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false}
+      ],
+      "requerimientoId": null
+    },
+    {
+      "clave": "conductores",
+      "nombre": "Antecedentes Conductores y Operadores",
+      "alias": ["antecedentes conductores y operadores", "listado y antecedentes de conductores", "conductores", "operadores", "antecedentes de conductores"],
+      "numeroSugerido": "13",
+      "obligatoria": false,
+      "tipo": "entidades", "entidad": "persona", "rolEntidad": "conductor_operador",
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [
+        {"clave": "listado_conductores", "nombre": "Listado de conductores", "alias": ["listado", "listado de conductores", "nomina"], "excluir": [], "obligatorio": false, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false}
+      ],
+      "documentos": [
+        {"clave": "hoja_vida_conductor", "nombre": "Hoja de vida del conductor", "alias": ["hoja de vida", "hoja de vida conductor", "hoja vida"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "curso_manejo", "nombre": "Curso 4x4 o manejo defensivo", "alias": ["4x4", "manejo defensivo", "curso 4x4", "curso manejo defensivo", "conduccion defensiva"], "excluir": [], "obligatorio": true, "multiple": true, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false},
+        {"clave": "licencia", "nombre": "Licencia de conducir", "alias": ["licencia", "licencia de conducir", "lic conducir"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": "LICENCIA_CL", "requerimientoId": null, "datosSensibles": false},
+        {"clave": "psicosensometrico", "nombre": "Examen psicosensométrico", "alias": ["psicosensometrico", "psicosensotecnico", "psicotecnico"], "excluir": [], "obligatorio": true, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": true}
+      ],
+      "requerimientoId": null
+    },
+    {
+      "clave": "vehiculos",
+      "nombre": "Vehículos y Maquinarias",
+      "nota": "Documentos por definir",
+      "alias": ["vehiculos y maquinarias", "listado de vehiculos", "vehiculos", "maquinarias", "maquinaria"],
+      "numeroSugerido": "14",
+      "obligatoria": false,
+      "tipo": "entidades", "entidad": "maquinaria", "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [
+        {"clave": "listado_vehiculos", "nombre": "Listado de vehículos", "alias": ["listado", "listado de vehiculos"], "excluir": [], "obligatorio": false, "multiple": false, "tipoDocumentalCodigo": null, "requerimientoId": null, "datosSensibles": false}
+      ],
+      "documentos": [],
+      "requerimientoId": null
+    },
+    {
+      "clave": "epp",
+      "nombre": "EPP",
+      "alias": ["epp", "elementos de proteccion personal", "equipos de proteccion personal"],
+      "numeroSugerido": "21",
+      "obligatoria": false,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "procedimientos",
+      "nombre": "Procedimientos",
+      "alias": ["procedimientos", "procedimientos de trabajo", "procedimiento de trabajo"],
+      "numeroSugerido": "26",
+      "obligatoria": true,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "difusion_procedimientos",
+      "nombre": "Difusión de procedimientos",
+      "alias": ["difusion de procedimientos", "difusion procedimientos", "difusion"],
+      "numeroSugerido": "27",
+      "obligatoria": true,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 1, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "sustancias_peligrosas",
+      "nombre": "Listado y declaración de sustancias peligrosas",
+      "alias": ["sustancias peligrosas", "listado y declaracion sustancias peligrosas", "hds", "hojas de seguridad"],
+      "numeroSugerido": null,
+      "obligatoria": false,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "cumplimiento_legal",
+      "nombre": "Declaración de cumplimiento legal",
+      "alias": ["declaracion de cumplimiento legal", "cumplimiento legal", "f30", "f30 1", "certificado f30"],
+      "numeroSugerido": null,
+      "obligatoria": false,
+      "tipo": "archivos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    },
+    {
+      "clave": "subcontratos",
+      "nombre": "Subcontratos",
+      "alias": ["subcontratos", "subcontratistas", "subcontrato", "subcontratista"],
+      "numeroSugerido": "32",
+      "obligatoria": false,
+      "tipo": "subcontratos", "entidad": null, "rolEntidad": null,
+      "cardinalidad": {"min": 0, "max": null},
+      "archivosSeccion": [], "documentos": [], "requerimientoId": null
+    }
+  ]
+}

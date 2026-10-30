@@ -18,8 +18,7 @@ import { PasoRequerimientosPreview } from "./wizard-reemplazo/PasoRequerimientos
 import { PasoConfirmacionReemplazo } from "./wizard-reemplazo/PasoConfirmacionReemplazo";
 import { ResumenReemplazoPanel } from "../../components/acreditaciones/ResumenReemplazoPanel";
 import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { hoyISO } from "../../utils/fechas";
 
 const aMillis = (valor) => {
   if (!valor) return 0;

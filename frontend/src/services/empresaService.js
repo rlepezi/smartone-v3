@@ -63,6 +63,13 @@ export const empresaService = {
     return res.data;
   },
 
+  // Personas y Maquinarias con relación con la Empresa y sus Proyectos de asignación activa,
+  // resueltos en el backend en una sola llamada: { empresa, filas }.
+  async obtenerRecursos(id) {
+    const res = await apiClient(`/empresas/${id}/recursos`);
+    return res.data;
+  },
+
   async obtenerResumen(id) {
     const res = await apiClient(`/empresas/${id}/resumen`);
     return res.data;

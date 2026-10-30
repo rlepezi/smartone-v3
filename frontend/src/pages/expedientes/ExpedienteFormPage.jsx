@@ -10,18 +10,11 @@ import { perfilRequerimientoService } from "../../services/perfilRequerimientoSe
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { mandanteService } from "../../services/mandanteService";
 import { acreditacionService } from "../../services/acreditacionService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha, aFechaISO, hoyISO } from "../../utils/fechas";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { EmpresaChip } from "../../components/shared/EmpresaChip";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { TIPOS_ENTIDAD } from "../../services/requerimientoService";
-
-// Fecha de la Participación (Timestamp serializado, Date o string) a "YYYY-MM-DD" para el preview.
-const aFechaISO = (valor) => {
-  if (!valor) return new Date().toISOString().slice(0, 10);
-  const ms = valor._seconds ? valor._seconds * 1000 : new Date(valor).getTime();
-  return new Date(Number.isNaN(ms) ? Date.now() : ms).toISOString().slice(0, 10);
-};
 
 // Dato de solo lectura (mismo estilo atenuado que los campos no editables del resto del sistema).
 const Dato = ({ icon: Icon, etiqueta, children }) => (
@@ -142,7 +135,7 @@ export const ExpedienteFormPage = () => {
         .previewNueva({
           empresaId: participacion.empresaId,
           perfilParticipacionId: participacion.perfilParticipacionId,
-          fechaInicio: aFechaISO(participacion.fechaInicio),
+          fechaInicio: aFechaISO(participacion.fechaInicio) || hoyISO(),
           seleccion: [],
         })
         .then((d) => d?.empresa || null)

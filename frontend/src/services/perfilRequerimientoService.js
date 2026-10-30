@@ -16,14 +16,6 @@ export const perfilRequerimientoService = {
     return res.data;
   },
 
-  async crear(payload) {
-    const res = await apiClient("/perfil-requerimientos", {
-      method: "POST",
-      body: payload,
-    });
-    return res.data;
-  },
-
   async actualizar(id, payload) {
     const res = await apiClient(`/perfil-requerimientos/${id}`, {
       method: "PUT",

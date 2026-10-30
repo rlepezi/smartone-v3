@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { LayoutModalDocumento } from "../expedientes/documentacion/LayoutModalDocumento";
 import { recursoService } from "../../services/recursoService";
 import { empresaService } from "../../services/empresaService";
 import { SugerenciasChips } from "./SugerenciasChips";
 import { ConfirmacionModal } from "./ConfirmacionModal";
 import { SUGERENCIAS_TIPO_MAQUINARIA } from "../../utils/sugerenciasRelacionLaboral";
+import { CampoIdentificacionRecurso } from "./CampoIdentificacionRecurso";
+import { SelectorPerfilRecurso } from "../perfiles-recurso/SelectorPerfilRecurso";
+import { perfilRecursoService } from "../../services/perfilRecursoService";
+import { RequerimientosNuevoPerfilModal } from "../perfiles-recurso/RequerimientosNuevoPerfilModal";
+import { errorIdentificacion, normalizarPatente } from "../../utils/identificacionRecurso";
 
 // Mismo criterio que ModalCrearPersona.jsx, para Recurso (maquinaria).
 // Sin "Tipo de Relación": la RelaciónRecurso inicial (entidad 19) se crea
@@ -15,16 +20,41 @@ import { SUGERENCIAS_TIPO_MAQUINARIA } from "../../utils/sugerenciasRelacionLabo
 // PasoAsignaciones.jsx (wizard de Nueva Acreditación) como
 // ProyectoDetailPage.jsx (alta rápida desde "Recursos Asignados").
 //
-// La Empresa la fija el contexto y se muestra como primer campo. Patente obligatoria y no única:
+// La Empresa la fija el contexto y se muestra como primer campo. Identificación obligatoria
+// (patente chilena o N° de serie / código interno, ver CampoIdentificacionRecurso) y no única:
 // si otra maquinaria activa visible ya la usa (409 PATENTE_DUPLICADA) se avisa y se pide
 // confirmación para continuar.
-export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
+// `mandanteId` (opcional): con él, la clasificación se elige como Perfil de Recurso del Mandante
+// (select + "+ Nuevo perfil") y su nombre se guarda como `tipo`; `onCreada(recurso)` recibe además
+// `perfilRecursoId` para dejarlo asignado. Sin Mandante (catálogo de la Empresa, que puede tener
+// varios), se mantiene "Tipo de maquinaria" como texto con sugerencias.
+// `inicial` (opcional): { nombre, patente } para precargar (p. ej. "Crear desde carpeta").
+// `documento` (opcional): carpeta para ver el padrón o el listado al lado del formulario.
+export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticipacionId = null, onCreada, onCerrar, inicial = null, documento = null }) => {
+  const patenteRef = useRef(null);
   const [empresaNombre, setEmpresaNombre] = useState("");
   const [patenteDuplicada, setPatenteDuplicada] = useState(null); // {recursoId, nombre, patente}
-  const [formData, setFormData] = useState({ patente: "", nombre: "", tipo: "" });
+  const [formData, setFormData] = useState({
+    tipoIdentificacion: "patente", patente: inicial?.patente || "", nombre: inicial?.nombre || "", tipo: "",
+  });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
+  // Perfiles de Recurso (maquinaria) activos del Mandante y el elegido.
+  const [perfiles, setPerfiles] = useState([]);
+  const [perfilIds, setPerfilIds] = useState([]);
+  const conPerfil = Boolean(mandanteId);
+  // Perfil recién creado: desde un Expediente (`perfilParticipacionId`) se pregunta qué
+  // Requerimientos le aplican.
+  const [perfilNuevo, setPerfilNuevo] = useState(null);
+
+  const cargarPerfiles = () => {
+    if (!mandanteId) return;
+    perfilRecursoService.listar({ mandanteId, tipo: "recurso", estado: "activo" })
+      .then((data) => setPerfiles(data || []))
+      .catch(() => setPerfiles([]));
+  };
+  useEffect(cargarPerfiles, [mandanteId]);
 
   useEffect(() => {
     if (!empresaId) return;
@@ -46,9 +76,14 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
 
   const validateForm = () => {
     const newErrors = {};
-    if (!formData.patente.trim()) newErrors.patente = "La identificación / patente es obligatoria.";
+    const errorId = errorIdentificacion(formData.tipoIdentificacion, formData.patente);
+    if (errorId) newErrors.patente = errorId;
     if (!formData.nombre.trim()) newErrors.nombre = "La marca / modelo es obligatoria.";
-    if (!formData.tipo.trim()) newErrors.tipo = "El tipo de maquinaria es obligatorio.";
+    if (conPerfil) {
+      if (perfilIds.length === 0) newErrors.tipo = "Elija el Perfil de Recurso (o cree uno con «Nuevo perfil»).";
+    } else if (!formData.tipo.trim()) {
+      newErrors.tipo = "El tipo de maquinaria es obligatorio.";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -56,16 +91,19 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
   const crear = async (confirmarPatenteDuplicada) => {
     setLoading(true);
     try {
+      const perfil = conPerfil ? perfiles.find((p) => p.id === perfilIds[0]) : null;
       const creado = await recursoService.crear({
         nombre: formData.nombre.trim(),
-        tipo: formData.tipo.trim(),
+        // Con Perfil de Recurso, su nombre es la clasificación (sugiere el perfil al asignarla).
+        tipo: perfil ? perfil.nombre : formData.tipo.trim(),
         empresaId,
         estado: "activo",
-        patente: formData.patente.trim(),
+        tipoIdentificacion: formData.tipoIdentificacion,
+        patente: formData.tipoIdentificacion === "patente" ? normalizarPatente(formData.patente) : formData.patente.trim(),
         confirmarPatenteDuplicada,
       });
       setPatenteDuplicada(null);
-      onCreada(creado);
+      onCreada(perfil ? { ...creado, perfilRecursoId: perfil.id } : creado);
     } catch (err) {
       if (err.codigo === "PATENTE_DUPLICADA") {
         setPatenteDuplicada(err.detalle || {});
@@ -86,17 +124,14 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCerrar}>
-      <div
-        className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+    <>
+      <LayoutModalDocumento
+        titulo="Nueva Maquinaria"
+        onCerrar={onCerrar}
+        documento={documento}
+        nombreBuscado={formData.nombre}
+        campoFocoRef={patenteRef}
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Nueva Maquinaria</h3>
-          <button type="button" onClick={onCerrar} className="text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {serverError && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">{serverError}</div>
@@ -110,17 +145,14 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
               />
               <p className="text-[11px] text-slate-400 mt-1">La Maquinaria se crea con su relación con esta Empresa.</p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Identificación / Patente *</label>
-              <input
-                type="text" name="patente" value={formData.patente} onChange={handleChange}
-                placeholder="Ej: ABCD12 o Retroexcavadora CAT"
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
-                  errors.patente ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                }`}
-              />
-              {errors.patente && <p className="text-xs text-red-500 mt-1">{errors.patente}</p>}
-            </div>
+            <CampoIdentificacionRecurso
+              inputRef={patenteRef}
+              tipo={formData.tipoIdentificacion}
+              valor={formData.patente}
+              onCambiarTipo={(v) => elegir("tipoIdentificacion", v)}
+              onCambiarValor={(v) => elegir("patente", v)}
+              error={errors.patente}
+            />
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Marca / Modelo *</label>
               <input
@@ -132,18 +164,41 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
               />
               {errors.nombre && <p className="text-xs text-red-500 mt-1">{errors.nombre}</p>}
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo Maquinaria *</label>
-              <input
-                type="text" name="tipo" value={formData.tipo} onChange={handleChange}
-                placeholder="Ej: Camioneta"
-                className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
-                  errors.tipo ? "border-red-400 bg-red-50/30" : "border-gray-200"
-                }`}
-              />
-              {errors.tipo && <p className="text-xs text-red-500 mt-1">{errors.tipo}</p>}
-              <SugerenciasChips opciones={SUGERENCIAS_TIPO_MAQUINARIA} valor={formData.tipo} onElegir={(v) => elegir("tipo", v)} />
-            </div>
+            {conPerfil ? (
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Perfil de Recurso *</label>
+                <SelectorPerfilRecurso
+                  tipo="recurso"
+                  perfiles={perfiles}
+                  valor={perfilIds}
+                  onChange={(ids) => { setPerfilIds(ids); if (errors.tipo) setErrors((prev) => ({ ...prev, tipo: null })); }}
+                  mandanteId={mandanteId}
+                  onPerfilCreado={(perfil) => {
+                    cargarPerfiles();
+                    if (perfilParticipacionId && perfil?.id && !perfil.existente && !perfil.reactivado) {
+                      setPerfilNuevo({ id: perfil.id, nombre: perfil.nombre, tipo: "recurso" });
+                    }
+                  }}
+                  error={errors.tipo}
+                  anchoCompleto
+                />
+                <p className="text-[11px] text-slate-400 mt-1">Queda asignado al ingresarla a un proyecto de este Mandante.</p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Tipo de maquinaria *</label>
+                <input
+                  type="text" name="tipo" value={formData.tipo} onChange={handleChange}
+                  placeholder="Ej: Camioneta"
+                  className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                    errors.tipo ? "border-red-400 bg-red-50/30" : "border-gray-200"
+                  }`}
+                />
+                {errors.tipo && <p className="text-xs text-red-500 mt-1">{errors.tipo}</p>}
+                <p className="text-[11px] text-slate-400 mt-1">Se usa para sugerir la clasificación al asignarla a un proyecto.</p>
+                <SugerenciasChips opciones={SUGERENCIAS_TIPO_MAQUINARIA} valor={formData.tipo} onElegir={(v) => elegir("tipo", v)} />
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-end gap-3 pt-2">
             <button type="button" onClick={onCerrar} className="px-4 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 rounded-xl transition-all">
@@ -157,7 +212,14 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
             </button>
           </div>
         </form>
-      </div>
+      </LayoutModalDocumento>
+      {perfilNuevo && (
+        <RequerimientosNuevoPerfilModal
+          perfilParticipacionId={perfilParticipacionId}
+          perfil={perfilNuevo}
+          onCerrar={() => setPerfilNuevo(null)}
+        />
+      )}
       {patenteDuplicada && (
         <ConfirmacionModal
           peligro
@@ -169,6 +231,6 @@ export const ModalCrearRecurso = ({ empresaId, onCreada, onCerrar }) => {
           onConfirmar={() => crear(true)}
         />
       )}
-    </div>
+    </>
   );
 };

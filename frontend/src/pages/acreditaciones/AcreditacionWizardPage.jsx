@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Check, RotateCcw, Sparkles } from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 import { participacionService } from "../../services/participacionService";
 import { expedienteService } from "../../services/expedienteService";
 import { acreditacionService } from "../../services/acreditacionService";
@@ -15,12 +15,30 @@ import { PasoPerfil } from "./wizard/PasoPerfil";
 import { PasoAsignaciones } from "./wizard/PasoAsignaciones";
 import { PasoRequerimientos } from "./wizard/PasoRequerimientos";
 import { PasoResumen } from "./wizard/PasoResumen";
+import {
+  CLASE_RESALTADO, REF_PASO, REF_FECHA_INICIO, refRecurso, enfocarElemento,
+} from "./asistenteNavegacion";
 import { ResumenAcreditacionPanel } from "../../components/shared/ResumenAcreditacionPanel";
 import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
+import { hoyISO } from "../../utils/fechas";
+import { useAuth } from "../../contexts/AuthContext";
+import { useCarpetaWizard } from "../../hooks/useCarpetaWizard";
+import { DocumentacionWizard } from "./wizard/DocumentacionWizard";
+import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
+import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
+import { limpiarCarpetasWizard } from "../../services/fuentes/carpetaLocal";
+import { MAPEO_VACIO } from "../../utils/repositorioDocumental";
+import { validarCarpetaEmpresa, carpetaDeUrlSharePoint } from "../../utils/carpetaEmpresa";
+
+// Identificador de esta sesión del asistente: clave temporal de la carpeta local elegida antes de
+// que exista el expediente.
+const nuevaSesionWizard = () => (typeof crypto !== "undefined" && crypto.randomUUID ?
+  crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 // `id` es el identificador interno y fijo de cada paso (lo usan `step`, los "Editar" del resumen y
 // el estado guardado). El número que ve el usuario es la posición dentro de los pasos VISIBLES: para
-// roles con Mandante fijo el paso Mandante se omite y Empresa pasa a ser el 1.
+// roles con Mandante fijo, o cuando hay un solo Mandante activo, el paso Mandante se omite y
+// Empresa pasa a ser el 1.
 const PASOS = [
   { id: 1, label: "Mandante" },
   { id: 2, label: "Empresa" },
@@ -32,10 +50,6 @@ const PASOS = [
 ];
 const PASO_CONFIRMACION = 7;
 
-// Roles cuyo Mandante viene fijo desde su perfil: no eligen Mandante en el wizard.
-const ROLES_MANDANTE_FIJO = ["mandante_admin", "mandante_lector"];
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 
 // El wizard se pierde por completo si el usuario navega a otra pantalla
 // (p.ej. a Personas a crear una desde el flujo completo) y vuelve — el
@@ -120,11 +134,11 @@ const StepIndicator = ({ step, pasos }) => (
   </div>
 );
 
-export const AcreditacionWizardPage = () => {
+// `mandanteFijo`: Mandante que no se elige (el propio del rol o el único activo): el paso Mandante
+// se omite y este es el del flujo. `mandantes`: los elegibles en el paso Mandante.
+const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   const navigate = useNavigate();
   const { profile } = useAuth();
-  // Mandante fijo del actor (mandante_admin): el paso Mandante se omite y este es el del flujo.
-  const mandanteFijo = ROLES_MANDANTE_FIJO.includes(profile?.rol) ? profile?.mandanteId || null : null;
   const pasosVisibles = mandanteFijo ? PASOS.filter((p) => p.id !== 1) : PASOS;
   const primerPaso = pasosVisibles[0].id;
   // Número que ve el usuario para un paso (posición entre los visibles).
@@ -161,12 +175,24 @@ export const AcreditacionWizardPage = () => {
   const [seleccion, setSeleccion] = useState(() => leerBorradorValido(mandanteFijo)?.seleccion || []); // [{tipo, id, nombre, perfilRecursoIds}]
   const [fechaInicio, setFechaInicio] = useState(() => leerBorradorValido(mandanteFijo)?.fechaInicio || hoyISO());
   const [previewRequerimientos, setPreviewRequerimientos] = useState(() => leerBorradorValido(mandanteFijo)?.previewRequerimientos || null);
+  // Carpeta de empresa del futuro expediente (opcional, paso Empresa), dentro de la fuente documental
+  // del Mandante: { tipo, ruta, etiqueta, url, fuenteId, mapeo } | null. Al confirmar se vincula
+  // (find-or-create). El handle local de la subcarpeta vive en IndexedDB con una clave temporal de
+  // esta sesión del asistente. Un borrador con el formato anterior (sin ruta) se descarta.
+  const [sesionWizard, setSesionWizard] = useState(() => leerBorradorValido(mandanteFijo)?.sesionWizard || nuevaSesionWizard());
+  const [repositorioWizard, setRepositorioWizard] = useState(() => {
+    const r = leerBorradorValido(mandanteFijo)?.repositorioWizard || null;
+    return r?.ruta ? r : null;
+  });
+  const carpetaWizard = useCarpetaWizard(profile?.uid, sesionWizard);
 
   const [ejecutando, setEjecutando] = useState(false);
   const [progreso, setProgreso] = useState(() => leerBorradorValido(mandanteFijo)?.progreso || null); // {participacionId, sujetosListo, expedienteId}
   const [errorEjecucion, setErrorEjecucion] = useState(null); // {paso, mensaje}
   // Asignaciones vigentes que se finalizarán al mover Personas/Maquinarias (pendiente de confirmar).
   const [confirmacionMovimiento, setConfirmacionMovimiento] = useState(null); // {afectados}
+  // Paso 5: se intentó continuar con seleccionados sin Perfil de Recurso (marca las filas).
+  const [erroresPaso5, setErroresPaso5] = useState(false);
 
   // Persiste el avance en cada cambio — así una navegación a otra
   // pantalla (p.ej. crear una Persona desde su propio formulario
@@ -180,13 +206,20 @@ export const AcreditacionWizardPage = () => {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
         version: BORRADOR_VERSION,
         step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido,
-        seleccion, fechaInicio, previewRequerimientos, progreso,
+        seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard,
       }));
     } catch {
       // sessionStorage lleno o bloqueado (modo privado) — no es crítico,
       // el wizard sigue funcionando en memoria para esta misma sesión.
     }
-  }, [step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido, seleccion, fechaInicio, previewRequerimientos, progreso]);
+  }, [step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido, seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard]);
+
+  // Limpieza defensiva de carpetas temporales: las de este usuario de otras sesiones del asistente
+  // (abandonadas) y las de más de 24 h.
+  useEffect(() => {
+    if (!profile?.uid) return;
+    limpiarCarpetasWizard(profile.uid, sesionWizard).catch(() => null);
+  }, [profile?.uid, sesionWizard]);
 
   // Borradores de versiones anteriores del wizard: se descartan, ver BORRADOR_VERSION.
   useEffect(() => {
@@ -266,26 +299,84 @@ export const AcreditacionWizardPage = () => {
   // haya quedado seleccionado (p. ej. desde el estado guardado de una sesión anterior).
   const proyectoNoAplica = Boolean(proyectoSel) && estadoTarjetaProyecto(proyectoSel) === "no_aplica";
 
-  // Error real que impide crear (no cuenta un simple pendiente de documentación).
-  // Cada Persona/Maquinaria seleccionada necesita su Perfil de Recurso (por ID).
-  const sinPerfil = seleccion.find((s) => !(s.perfilRecursoIds || []).length);
-  const motivoBloqueo =
-    !mandanteEfectivo ? `falta seleccionar el Mandante (Paso ${numeroPaso(1)}).` :
-    !empresaSel ? `falta seleccionar la Empresa (Paso ${numeroPaso(2)}).` :
-    !proyectoSel ? `falta seleccionar el Proyecto (Paso ${numeroPaso(3)}).` :
-    proyectoNoAplica ? MENSAJE_NO_APLICA :
-    !perfilSel ? `falta elegir el Perfil de Participación (Paso ${numeroPaso(4)}).` :
-    !fechaInicio ? "falta la fecha de inicio." :
-    sinPerfil ? `falta el Perfil de Recurso de ${sinPerfil.nombre} (Paso ${numeroPaso(5)}).` :
-    null;
+  // Errores reales que impiden crear (no cuenta un simple pendiente de documentación). Cada uno
+  // apunta a su paso y al elemento a corregir (`ref`, ver asistenteNavegacion.js): el resumen
+  // los lista todos con su botón "Corregir". Cada Persona/Maquinaria seleccionada necesita su
+  // Perfil de Recurso (por ID).
+  const sinPerfil = seleccion.filter((s) => !(s.perfilRecursoIds || []).length);
+  const problemas = [
+    !mandanteEfectivo && !mandanteFijo && {
+      paso: 1, ref: REF_PASO[1], etiqueta: "Ir a Mandante",
+      mensaje: `Falta seleccionar el Mandante (Paso ${numeroPaso(1)}).`,
+    },
+    !empresaSel && {
+      paso: 2, ref: REF_PASO[2], etiqueta: "Ir a Empresa",
+      mensaje: `Falta seleccionar la Empresa (Paso ${numeroPaso(2)}).`,
+    },
+    !proyectoSel && {
+      paso: 3, ref: REF_PASO[3], etiqueta: "Ir a Proyecto",
+      mensaje: `Falta seleccionar el Proyecto (Paso ${numeroPaso(3)}).`,
+    },
+    proyectoNoAplica && { paso: 3, ref: REF_PASO[3], etiqueta: "Ir a Proyecto", mensaje: MENSAJE_NO_APLICA },
+    !perfilSel && {
+      paso: 4, ref: REF_PASO[4], etiqueta: "Ir a Perfil",
+      mensaje: `Falta elegir el Perfil de Participación (Paso ${numeroPaso(4)}).`,
+    },
+    !fechaInicio && {
+      paso: PASO_CONFIRMACION, ref: REF_FECHA_INICIO, etiqueta: "Ir a la fecha",
+      mensaje: "Falta la fecha de inicio.",
+    },
+    ...sinPerfil.map((s) => ({
+      paso: 5, ref: refRecurso(s.tipo, s.id), etiqueta: `Ir a ${s.nombre}`,
+      mensaje: `Falta el Perfil de Recurso de ${s.nombre} (Paso ${numeroPaso(5)}).`,
+    })),
+  ].filter(Boolean);
+
+  // Único punto de navegación a un problema: vuelve al paso (sin perder datos) y, cuando el
+  // elemento ya está en pantalla, hace scroll, lo resalta y le da foco.
+  const irAProblema = (paso, ref) => {
+    if (paso === 5) setErroresPaso5(true);
+    setStep(paso);
+    enfocarElemento(ref);
+  };
 
   // Paso Requerimientos: requisitos pendientes (sin documentación reutilizable) del preview ya calculado.
   const pendientesRequerimientos = previewRequerimientos?.total ? previewRequerimientos.total.total - previewRequerimientos.total.reutilizables : 0;
 
+  const claveVerificacion = empresaSel && repositorioWizard
+    ? [mandanteEfectivo, empresaSel.id, proyectoSel?.id || "", repositorioWizard.ruta || "", repositorioWizard.url || ""].join("|")
+    : null;
+  const [verificacion, setVerificacion] = useState({ clave: null, error: null });
+  useEffect(() => {
+    if (!claveVerificacion) return undefined;
+    let vigente = true;
+    carpetaEmpresaService.verificar({
+      mandanteId: mandanteEfectivo, empresaId: empresaSel.id, proyectoId: proyectoSel?.id || null,
+      ...(repositorioWizard.tipo === "sharepoint" ? { url: repositorioWizard.url } : { ruta: repositorioWizard.ruta }),
+    })
+      .then(() => { if (vigente) setVerificacion({ clave: claveVerificacion, error: null }); })
+      .catch((err) => { if (vigente) setVerificacion({ clave: claveVerificacion, error: err.message || "No se pudo verificar la carpeta." }); });
+    return () => { vigente = false; };
+    // claveVerificacion resume todo lo que se verifica.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveVerificacion]);
+
+  // La carpeta vinculada (opcional) debe ser de la Empresa elegida: si no, no se avanza.
+  const carpetaNoCoincide = Boolean(empresaSel && repositorioWizard) && !validarCarpetaEmpresa(
+    repositorioWizard.tipo === "local" ? repositorioWizard.etiqueta : carpetaDeUrlSharePoint(repositorioWizard.url),
+    empresaSel,
+  ).valida;
+
+  // La carpeta elegida se verifica en el backend (sin escribir): de la empresa, no vinculada a otro
+  // expediente activo y, con el proyecto ya elegido, de ese proyecto. Mientras siga elegida con
+  // error, el asistente no avanza.
+  const verificandoCarpeta = Boolean(claveVerificacion) && verificacion.clave !== claveVerificacion;
+  const errorCarpeta = claveVerificacion && verificacion.clave === claveVerificacion ? verificacion.error : null;
+
   const puedeContinuar =
     step === 1 ? Boolean(mandanteEfectivo) :
-    step === 2 ? Boolean(empresaSel) :
-    step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica :
+    step === 2 ? Boolean(empresaSel) && !carpetaNoCoincide && !errorCarpeta && !verificandoCarpeta :
+    step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica && !errorCarpeta && !verificandoCarpeta :
     step === 4 ? Boolean(perfilSel) :
     step === 5 ? true :
     step === 6 ? true : false;
@@ -302,6 +393,12 @@ export const AcreditacionWizardPage = () => {
   const handleContinuar = () => {
     if (step === 3 && proyectoNoAplica) return;
     if (!puedeContinuar) return;
+    // Paso 5: no avanza con seleccionados sin perfil (sin seleccionados sí se puede continuar).
+    if (step === 5 && sinPerfil.length > 0) {
+      irAProblema(5, refRecurso(sinPerfil[0].tipo, sinPerfil[0].id));
+      return;
+    }
+    setErroresPaso5(false);
     setStep((s) => s + 1);
   };
 
@@ -330,6 +427,9 @@ export const AcreditacionWizardPage = () => {
     setPreviewRequerimientos(null);
     setProgreso(null);
     setErrorEjecucion(null);
+    carpetaWizard.olvidar();
+    setRepositorioWizard(null);
+    setSesionWizard(nuevaSesionWizard());
   };
 
   // Paso 1. Cambiar de Mandante con avance posterior pide confirmación y limpia Empresa, Proyecto,
@@ -389,6 +489,8 @@ export const AcreditacionWizardPage = () => {
       return;
     }
     setEmpresaSel(empresa);
+    // La carpeta vinculada se conserva: se vuelve a validar contra la nueva Empresa (si no es suya,
+    // se muestra la advertencia y no se puede continuar).
     setPerfilFijo(false);
     setPerfilSugerido(null);
     // Cambiar de Empresa invalida el Proyecto/Perfil ya elegidos — el
@@ -507,8 +609,32 @@ export const AcreditacionWizardPage = () => {
     try {
       // Si la Participación pendiente ya tenía un Expediente en curso, se reutiliza.
       const expedienteId = pendiente?.expedienteId || (await expedienteService.crear({ participacionId })).id;
+      // Documentación elegida en el paso Empresa: se guarda en el expediente recién creado (escritura
+      // aparte, mismo endpoint y Bitácora que la pestaña Documentación). Si falla, el expediente NO
+      // se revierte: se avisa en su detalle.
+      let falloRepositorio = false;
+      if (repositorioWizard) {
+        try {
+          // Carpeta de empresa (find-or-create + validación) y, en ella, la carpeta del personal y la
+          // de maquinarias elegidas en Asignaciones.
+          const carpetaEmpresa = await carpetaEmpresaService.vincular(repositorioWizard.tipo === "sharepoint"
+            ? { expedienteId, url: repositorioWizard.url } : { expedienteId, ruta: repositorioWizard.ruta });
+          const { carpetaPersonas = null, carpetaRecursos = null } = repositorioWizard.mapeo || {};
+          if (carpetaPersonas || carpetaRecursos) {
+            await carpetaEmpresaService.actualizar(carpetaEmpresa.id, { carpetaPersonas, carpetaRecursos });
+          }
+          // Carpeta de cada persona/maquinaria elegida desde la carpeta (en su participación).
+          for (const s of seleccion.filter((x) => x.carpetaRelativa)) {
+            await repositorioDocumentalService.asignarCarpetaSujeto(expedienteId, {
+              tipo: s.tipo, sujetoId: s.id, carpetaRelativa: s.carpetaRelativa,
+            });
+          }
+        } catch {
+          falloRepositorio = true;
+        }
+      }
       limpiarEstadoGuardado();
-      navigate(`/expedientes/${expedienteId}`);
+      navigate(`/expedientes/${expedienteId}${falloRepositorio ? "?aviso=repositorio" : ""}`);
     } catch (err) {
       setProgreso({ participacionId, sujetosListo: true });
       setErrorEjecucion({
@@ -557,9 +683,14 @@ export const AcreditacionWizardPage = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
       <div className="lg:col-span-2 min-w-0 space-y-6">
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
+      <div
+        data-asistente-ref={REF_PASO[step] || undefined}
+        className={`bg-white p-6 rounded-2xl border border-gray-100 shadow-card scroll-mt-24 ${CLASE_RESALTADO}`}
+      >
         {step === 1 && !mandanteFijo && (
           <PasoMandante
+            mandantes={mandantes}
+            error={errorMandantes}
             mandanteId={mandanteIdWizard}
             onSeleccionar={handleSeleccionarMandante}
           />
@@ -569,6 +700,20 @@ export const AcreditacionWizardPage = () => {
             mandanteId={mandanteEfectivo}
             empresaId={empresaSel?.id}
             onSeleccionar={handleSeleccionarEmpresa}
+          />
+        )}
+        {step === 2 && empresaSel && (
+          <DocumentacionWizard
+            key={`${sesionWizard}|${empresaSel?.id || ""}`}
+            valor={repositorioWizard}
+            carpeta={carpetaWizard}
+            empresa={empresaSel}
+            usuarioId={profile?.uid}
+            mandanteId={mandanteEfectivo}
+            puedeConfigurarBase={profile?.rol === "superadmin"}
+            onCambiar={setRepositorioWizard}
+            errorCarpeta={errorCarpeta}
+            verificando={verificandoCarpeta}
           />
         )}
         {step === 3 && (
@@ -581,6 +726,12 @@ export const AcreditacionWizardPage = () => {
             onCambiarEmpresa={progreso?.participacionId ? undefined : () => setStep(2)}
             avisoPerfil={perfilSugerido}
           />
+        )}
+        {step === 3 && errorCarpeta && (
+          <p role="alert" className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
+            Carpeta de la empresa: {errorCarpeta}{" "}
+            <button type="button" onClick={() => setStep(2)} className="font-bold underline">Cambiarla en el paso Empresa</button>
+          </p>
         )}
         {step === 4 && (
           <PasoPerfil
@@ -599,6 +750,13 @@ export const AcreditacionWizardPage = () => {
             proyectoSel={proyectoSel}
             seleccion={seleccion}
             onCambiarSeleccion={setSeleccion}
+            mostrarErrores={erroresPaso5}
+            onIrAProblema={(ref) => irAProblema(5, ref)}
+            carpeta={repositorioWizard?.tipo === "local" ? carpetaWizard : null}
+            mapeo={repositorioWizard?.mapeo || null}
+            onCambiarMapeo={(tipo, ruta) => setRepositorioWizard((r) => (r ? {
+              ...r, mapeo: { ...(r.mapeo || MAPEO_VACIO), [tipo === "persona" ? "carpetaPersonas" : "carpetaRecursos"]: ruta },
+            } : r))}
           />
         )}
         {step === 6 && (
@@ -608,6 +766,7 @@ export const AcreditacionWizardPage = () => {
             fechaInicio={fechaInicio}
             seleccion={seleccion}
             empresaNombre={empresaSel?.razonSocial}
+            fechaTerminoProyecto={proyectoSel?.fechaTerminoReprogramada || proyectoSel?.fechaTermino || null}
             onCargado={setPreviewRequerimientos}
           />
         )}
@@ -624,9 +783,10 @@ export const AcreditacionWizardPage = () => {
             progreso={progreso}
             errorEjecucion={errorEjecucion}
             onConfirmar={() => ejecutarAcreditacion(false)}
-            requisitosPerfil={requisitosPerfil}
             onIrAPaso={setStep}
-            motivoBloqueo={motivoBloqueo}
+            problemas={problemas}
+            onCorregir={irAProblema}
+            repositorio={repositorioWizard}
           />
         )}
       </div>
@@ -661,12 +821,15 @@ export const AcreditacionWizardPage = () => {
               type="button"
               onClick={handleContinuar}
               disabled={!puedeContinuar}
+              title={step === 2 && carpetaNoCoincide ? "La carpeta vinculada no corresponde a la empresa seleccionada" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
             >
-              {step === 6 && pendientesRequerimientos > 0 ? `Continuar con ${pendientesRequerimientos} ${pendientesRequerimientos === 1 ? "pendiente" : "pendientes"} →` : step === 6 ? "Continuar →" : "Continuar"}
+              {step === 6 ? "Continuar →" : "Continuar"}
             </button>
             {step === 6 && pendientesRequerimientos > 0 && (
-              <p className="text-[11px] text-slate-400">Podrás completar estos requisitos posteriormente desde el expediente.</p>
+              <p className="text-[11px] text-slate-400">
+                {pendientesRequerimientos} {pendientesRequerimientos === 1 ? "requerimiento quedará" : "requerimientos quedarán"} por evaluar en el expediente.
+              </p>
             )}
           </div>
         </div>
@@ -690,15 +853,13 @@ export const AcreditacionWizardPage = () => {
         proyectoSel={proyectoSel}
         perfilSel={perfilSel}
         seleccion={seleccion}
-        mostrarRequerimientos={step >= 6}
-        preview={previewRequerimientos}
-        cargandoPreview={step === 6 && !previewRequerimientos}
         mostrarExpediente={step >= 4 && step < 6}
         requisitosTotal={requisitosPerfil ? requisitosPerfil.length : null}
         reutilizadosEmpresa={previewEmpresa ? previewEmpresa.reutilizables : null}
         mostrarDocumentacion={step === 5}
         documentacion={previewSeleccion}
         proyectoActualId={proyectoSel?.id}
+        repositorio={empresaSel ? repositorioWizard : undefined}
       />
       </div>
       {confirmacionMovimiento && (
@@ -718,5 +879,22 @@ export const AcreditacionWizardPage = () => {
         />
       )}
     </div>
+  );
+};
+
+// El Mandante en contexto se resuelve ANTES de montar el asistente, porque de él dependen los pasos
+// visibles, el paso inicial y la validez del borrador guardado.
+export const AcreditacionWizardPage = () => {
+  const contexto = useMandanteContexto();
+  if (!contexto.modo) {
+    return <div className="py-16 text-center text-slate-400 text-xs">Cargando...</div>;
+  }
+  const mandanteFijo = contexto.modo === "fijo" || contexto.modo === "unico" ? contexto.mandanteId : null;
+  return (
+    <AsistenteAcreditacion
+      mandanteFijo={mandanteFijo}
+      mandantes={contexto.mandantes}
+      errorMandantes={contexto.error}
+    />
   );
 };

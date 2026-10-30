@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from "react";
+import { PatenteChip } from "../shared/PatenteChip";
+import { formatCatalogo } from "../../utils/formatCatalogo";
 import { X, Search, Plus } from "lucide-react";
 import { acreditacionService } from "../../services/acreditacionService";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
+import { CrearPerfilRecurso } from "../perfiles-recurso/CrearPerfilRecurso";
+import { SelectorPerfilRecurso } from "../perfiles-recurso/SelectorPerfilRecurso";
 import { ErrorBanner } from "../shared/ErrorBanner";
 import { ActionButton } from "../shared/ActionButton";
 import { ModalCrearPersona } from "../shared/ModalCrearPersona";
 import { ModalCrearRecurso } from "../shared/ModalCrearRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { RequerimientosNuevoPerfilModal } from "../perfiles-recurso/RequerimientosNuevoPerfilModal";
 import { disponibilidadDe, BadgesDisponibilidad } from "../acreditaciones/PanelSeleccionEntidades";
-
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+import { hoyISO } from "../../utils/fechas";
 
 const CHIPS = [
   { key: "todas", label: "Todas" },
@@ -22,10 +26,10 @@ const CHIPS = [
 // Acreditación"/"Reemplazar Acreditación" (acreditacionService.asignarEntidad): si ya está activa
 // en otro Proyecto, la traslada (cierra su participación anterior, reutiliza su documentación
 // vigente) en vez de fallar por duplicado — nunca crea una entidad nueva, solo reutiliza el
-// catálogo de la Empresa. `tipo` acá es "persona"|"recurso" (mismo que usa SelectorRecursoAsignado);
+// catálogo de la Empresa. `tipo` acá es "persona"|"recurso" (mismo que usa SujetosAsignados);
 // se traduce a "persona"|"maquinaria" para el backend, igual que ya hace PasoAsignaciones.jsx.
 export const IngresarRecursoModal = ({
-  tipo, empresaId, mandanteId, proyectoDestinoId, proyectoDestinoNombre, onIngresado, onCerrar,
+  tipo, empresaId, mandanteId, perfilParticipacionId = null, proyectoDestinoId, proyectoDestinoNombre, onIngresado, onCerrar,
 }) => {
   const esPersona = tipo === "persona";
   const tipoApi = esPersona ? "persona" : "maquinaria";
@@ -45,6 +49,13 @@ export const IngresarRecursoModal = ({
   // Traslado desde otro Proyecto: el backend responde 409 CONFIRMACION_REQUERIDA con las
   // asignaciones que se finalizarán (Empresa actual y Proyecto); se confirman en un modal.
   const [afectados, setAfectados] = useState(null);
+  // Perfil de Recurso recién creado: se pregunta qué Requerimientos le aplican.
+  const [perfilNuevo, setPerfilNuevo] = useState(null);
+  const preguntarRequerimientos = (perfil) => {
+    if (perfilParticipacionId && perfil?.id && !perfil.existente && !perfil.reactivado) {
+      setPerfilNuevo({ id: perfil.id, nombre: perfil.nombre, tipo: tipoPerfil });
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -55,12 +66,25 @@ export const IngresarRecursoModal = ({
       .finally(() => setLoading(false));
   }, [empresaId, tipoApi]);
 
+  const tipoPerfil = esPersona ? "persona" : "recurso";
+  const cargarPerfiles = () => perfilRecursoService.listar({ mandanteId, tipo: tipoPerfil, estado: "activo" })
+    .then((data) => setPerfilesDisponibles(data || []))
+    .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
+
   useEffect(() => {
     if (!mandanteId) return;
-    perfilRecursoService.listar({ mandanteId, tipo: esPersona ? "persona" : "recurso", estado: "activo" })
-      .then((data) => setPerfilesDisponibles(data || []))
-      .catch((err) => console.error("Error al cargar perfiles de recurso:", err));
-  }, [esPersona, mandanteId]);
+    cargarPerfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoPerfil, mandanteId]);
+
+  // Perfil creado desde este modal: se recarga la lista; si era el primero, queda elegido.
+  const handlePerfilCreado = (perfil) => {
+    const { id } = perfil;
+    const eraElPrimero = perfilesDisponibles.length === 0;
+    cargarPerfiles();
+    preguntarRequerimientos(perfil);
+    if (eraElPrimero && id && perfilRecursoIds.length === 0) setPerfilRecursoIds([id]);
+  };
 
   // Al elegir a alguien se preselecciona el perfil del mismo nombre que su Función (Persona) o su
   // clasificación descriptiva (Maquinaria); si no hay coincidencia, se elige a mano.
@@ -97,6 +121,11 @@ export const IngresarRecursoModal = ({
     const conEstado = { ...entidad, participacionActiva: null };
     setItems((prev) => [...prev, conEstado]);
     elegir(conEstado);
+    // Maquinaria creada con su Perfil de Recurso: queda asignado (y la lista se recarga por si es nuevo).
+    if (entidad.perfilRecursoId) {
+      setPerfilRecursoIds([entidad.perfilRecursoId]);
+      cargarPerfiles();
+    }
     setModalCrearAbierto(false);
   };
 
@@ -200,7 +229,15 @@ export const IngresarRecursoModal = ({
                     >
                       <span className="min-w-0">
                         <span className="block text-xs font-bold text-carbon-dark truncate">{nombreDe(i)}</span>
-                        {secundarioDe(i) && <span className="block text-[11px] text-slate-400 font-mono truncate">{secundarioDe(i)}</span>}
+                        {esPersona ? (
+                          secundarioDe(i) && <span className="block text-[11px] text-slate-400 font-mono truncate">{secundarioDe(i)}</span>
+                        ) : (i.patente || i.tipo) && (
+                          // Maquinaria: patente (como placa) y su tipo.
+                          <span className="mt-1 flex items-center gap-2 min-w-0">
+                            <PatenteChip valor={i.patente} tipo={i.tipoIdentificacion} />
+                            {i.tipo && <span className="text-[11px] text-slate-500 truncate">{formatCatalogo(i.tipo)}</span>}
+                          </span>
+                        )}
                       </span>
                       <BadgesDisponibilidad item={i} proyectoActualId={proyectoDestinoId} seleccionada={activo} />
                     </button>
@@ -213,41 +250,24 @@ export const IngresarRecursoModal = ({
 
         {seleccionado && (
           <div className="px-5 pt-3 border-t border-slate-100">
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-              {esPersona ? "Perfiles de Recurso (uno o más)" : "Perfil de Recurso"}
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className="block text-[11px] font-semibold text-slate-500">
+                {esPersona ? "Perfiles de Recurso (uno o más)" : "Perfil de Recurso"}
+              </label>
+            </div>
             {perfilesDisponibles.length === 0 ? (
-              <p className="text-[11px] text-slate-400">Sin Perfiles de Recurso configurados para este Mandante.</p>
-            ) : esPersona ? (
-              <div className="flex flex-wrap gap-1.5">
-                {perfilesDisponibles.map((p) => {
-                  const activo = perfilRecursoIds.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      aria-pressed={activo}
-                      onClick={() => setPerfilRecursoIds((prev) => (activo ? prev.filter((x) => x !== p.id) : [...prev, p.id]))}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${
-                        activo ? "bg-primary text-white border-primary" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                      }`}
-                    >
-                      {p.nombre}
-                    </button>
-                  );
-                })}
-              </div>
+              <CrearPerfilRecurso tipo={tipoPerfil} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
             ) : (
-              <select
-                value={perfilRecursoIds[0] || ""}
-                onChange={(e) => setPerfilRecursoIds(e.target.value ? [e.target.value] : [])}
-                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-              >
-                <option value="">Seleccione un Perfil de Recurso...</option>
-                {perfilesDisponibles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.nombre}</option>
-                ))}
-              </select>
+              <SelectorPerfilRecurso
+                tipo={tipoPerfil}
+                perfiles={perfilesDisponibles}
+                valor={perfilRecursoIds}
+                onChange={setPerfilRecursoIds}
+                mandanteId={mandanteId}
+                onPerfilCreado={(perfil) => { cargarPerfiles(); preguntarRequerimientos(perfil); }}
+                anchoCompleto
+                etiqueta={esPersona ? "Perfiles de Recurso" : "Perfil de Recurso"}
+              />
             )}
           </div>
         )}
@@ -281,10 +301,19 @@ export const IngresarRecursoModal = ({
           <ModalCrearRecurso
             empresaId={empresaId}
             mandanteId={mandanteId}
+            perfilParticipacionId={perfilParticipacionId}
             onCreada={handleCreada}
             onCerrar={() => setModalCrearAbierto(false)}
           />
         )
+      )}
+
+      {perfilNuevo && (
+        <RequerimientosNuevoPerfilModal
+          perfilParticipacionId={perfilParticipacionId}
+          perfil={perfilNuevo}
+          onCerrar={() => setPerfilNuevo(null)}
+        />
       )}
 
       {afectados && seleccionado && (

@@ -45,27 +45,6 @@ class PerfilRequerimientoController {
   }
 
   /**
-   * Crea un nuevo vínculo.
-   * @param {Object} req Petición Express.
-   * @param {Object} res Respuesta Express.
-   * @param {Function} next Siguiente middleware.
-   * @return {Promise<void>}
-   */
-  async create(req, res, next) {
-    try {
-      const nuevoVinculo = await perfilRequerimientoService.crearVinculo(
-          req.body, req.user,
-      );
-      res.status(201).json({
-        message: "Vínculo creado exitosamente.",
-        data: nuevoVinculo,
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
    * Fija en un solo paso el estado deseado de varios pares Perfil de
    * Participación + Requerimiento (a qué Perfiles de Recurso aplican, o
    * desvinculados).

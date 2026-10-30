@@ -1,197 +1,211 @@
 import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, ClipboardList, LayoutGrid, CheckCircle2,
-  History, ChevronDown, ChevronUp, ChevronRight, Download, Building2, Users, Truck, ArrowRightCircle,
-  ListPlus,
+  History, ChevronDown, ChevronUp, ChevronRight, Download, Building2, Users, Truck,
+  Home, ExternalLink, Info, ClipboardCheck,
+  Clock, XCircle, X, Percent, AlertTriangle, Lock, CalendarClock, Sparkles, FolderOpen,
 } from "lucide-react";
+import { TabDocumentacion } from "../../components/expedientes/documentacion/TabDocumentacion";
+import { PanelDocumentos } from "../../components/expedientes/documentacion/PanelDocumentos";
+import { ConPanelDocumentos } from "../../components/expedientes/documentacion/ConPanelDocumentos";
+import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
+import { RevisionIAExpediente } from "../../components/revisiones-ia/expediente/RevisionIAExpediente";
 import { useAuth } from "../../contexts/AuthContext";
-import { expedienteService, ESTADOS_EXPEDIENTE, TRANSICIONES_VALIDAS } from "../../services/expedienteService";
+import { expedienteService, etiquetaMotivoCierre } from "../../services/expedienteService";
 import { proyectoService } from "../../services/proyectoService";
 import { empresaService } from "../../services/empresaService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
-import { evaluacionService } from "../../services/evaluacionService";
 import { evidenciaService } from "../../services/evidenciaService";
 import { evidenciaRequerimientoService } from "../../services/evidenciaRequerimientoService";
+import { participacionService } from "../../services/participacionService";
 import { sujetoService, nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { describirEvento } from "../../utils/bitacoraFormatters";
-import { formatTiempoRelativo } from "../../utils/fechaFormatters";
+import { formatFecha, formatFechaHora, formatTiempoRelativo } from "../../utils/fechas";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { ActionButton } from "../../components/shared/ActionButton";
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { MandanteChip } from "../../components/shared/MandanteChip";
-import { EmpresaChip } from "../../components/shared/EmpresaChip";
 import { EstadoExpedienteStepper } from "../../components/shared/EstadoExpedienteStepper";
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { formatCatalogo } from "../../utils/formatCatalogo";
-import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 import { mandanteService } from "../../services/mandanteService";
+import { revisionExpedienteService } from "../../services/revisionExpedienteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
-import { calcularConteosEvaluacion, calcularResumenCumplimiento } from "../../utils/cumplimientoCalculos";
-import { KpiAnillo } from "../../components/shared/DetalleUI";
+import {
+  porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio, textoPorcentaje, nivelAcreditacion,
+} from "../../utils/cumplimientoCalculos";
+import { BadgeAcreditacion } from "../../components/shared/BadgeAcreditacion";
+import { MultiSegmentRing } from "../../components/shared/MultiSegmentRing";
+import { CLASE_PISTA_DONA, segmentosCumplimiento } from "../../utils/estadosCumplimiento";
 import { PlanillaEvaluacion } from "../../components/expedientes/PlanillaEvaluacion";
-import { SelectorRecursoAsignado } from "../../components/expedientes/SelectorRecursoAsignado";
+import { SujetosAsignados } from "../../components/expedientes/SujetosAsignados";
+import { useAccionesEstadoExpediente } from "../../components/expedientes/AccionesEstadoExpediente";
+import { HistorialEstadosExpediente } from "../../components/expedientes/HistorialEstadosExpediente";
+import { problemasExpediente, textoProblemas, estadoVisibleExpediente } from "../../utils/alertasExpediente";
+import { resumenTextoVencimientos } from "../../utils/vencimientos";
+import { VencimientosExpediente } from "../../components/expedientes/VencimientosExpediente";
 import { ConfigurarRequerimientosModal } from "../../components/perfiles-participacion/ConfigurarRequerimientosModal";
 
-const ESTADO_MAP = ESTADOS_EXPEDIENTE.reduce((acc, e) => {
-  acc[e.value] = { label: e.label, className: e.color };
-  return acc;
-}, {});
-
-// Criterio de "Pendientes" vs "Evaluadas" para las sub-pestañas del selector de recurso —
-// aislado en su propia función, con nombre explícito, para poder ajustarlo después sin tocar el
-// resto del componente. Default: Pendiente = al menos un requisito Sin Evaluar o con resultado
-// "pendiente"; Evaluada = el 100% de sus requisitos aplicables ya está resuelto
-// (Cumple/No Cumple/No Aplica), sin ninguno Sin Evaluar ni Pendiente.
-// `totalAplicable === 0` (nadie tiene ningún Requerimiento para su función/nivel) queda Pendiente
-// también, nunca Evaluada — "0 de 0" es matemáticamente 100%, pero no hay nada resuelto de
-// verdad: casi siempre indica una función mal asignada, y merece revisión, no pasar desapercibido.
-const calcularEstadoSujeto = ({ conteos, sinEvaluar, totalAplicable }) => (
-  (totalAplicable === 0 || sinEvaluar > 0 || conteos.pendiente > 0) ? "pendiente" : "evaluada"
+// Criterio de "Pendientes" vs "Evaluadas" para las sub-pestañas del selector de recurso, desde
+// los contadores del sujeto en el Expediente: Evaluada = todas sus instancias activas resueltas
+// (Cumple/No Cumple/No Aplica, ninguna pendiente ni sin evaluar). Sin instancias (nada que evaluar
+// para su función) queda Pendiente, nunca Evaluada: casi siempre indica una función mal asignada.
+const calcularEstadoSujeto = (resumen) => (
+  (!resumen || !resumen.activas || resumen.pendiente > 0) ? "pendiente" : "evaluada"
 );
 
-// Construyen los ítems del selector (avancePct/estado) para Personas/Maquinarias — funciones
-// puras (todo por parámetro, nada de closures) para poder llamarlas tanto en el render (con el
-// estado ya en memoria) como justo después de Guardar Evaluación, con los datos recién pedidos al
-// servidor, SIN esperar a que termine el siguiente render (evita la sugerencia de "seguir con el
-// siguiente pendiente" trabajando con datos todavía viejos).
-// Requerimientos del snapshot que aplican a un sujeto agrupado (Persona o Maquinaria, con el
-// conjunto de sus Perfiles de Recurso), según la regla única de utils/aplicabilidadRequerimiento.js.
-// Una Persona con varios perfiles recibe la unión, sin duplicados.
-const requerimientosDeSujeto = (expedienteData, sujeto) =>
-  (expedienteData.requerimientosAplicables || []).filter((r) => aplicaRequerimientoASujeto(r, sujeto));
-
-const construirPersonasItems = (expedienteData, evaluacionesData, personasAsignadas, personasOptions, perfilesPorId = {}) => {
-  const vigentesExpediente = evaluacionesData.filter((e) => e.estado === "vigente");
-  return personasAsignadas.map((a) => {
+// Ítems del selector (avancePct/estado) para Personas/Maquinarias, desde resumenSujetos de la
+// cabecera del Expediente (una sola lectura, sin cruzar requisitos con sujetos). Funciones puras,
+// reutilizadas justo después de Guardar Evaluación con los datos recién pedidos.
+const construirPersonasItems = (expedienteData, personasAsignadas, personasOptions, perfilesPorId = {}) =>
+  personasAsignadas.map((a) => {
     const p = personasOptions.find((x) => x.id === a.personaId);
-    const reqs = requerimientosDeSujeto(expedienteData, a);
-    const vigentesDeElla = vigentesExpediente.filter((v) =>
-      v.personaId === a.personaId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
-    const { conteos, avancePct } = calcularConteosEvaluacion(vigentesDeElla);
-    const sinEvaluar = Math.max(0, reqs.length - vigentesDeElla.length);
+    const resumen = resumenDeSujeto(expedienteData, { personaId: a.personaId });
     return {
       id: a.personaId,
       nombre: p ? `${p.nombre} ${p.apellido || ""}`.trim() : a.personaId,
       subtitulo: nombresPerfiles(a.perfilRecursoIds, perfilesPorId),
-      busqueda: p?.rut || "",
-      avancePct,
-      estado: calcularEstadoSujeto({ conteos, sinEvaluar, totalAplicable: reqs.length }),
+      busqueda: p?.rut ? formatRutDisplay(p.rut) : "",
+      avancePct: porcentajeCumplimiento(resumen),
+      estado: calcularEstadoSujeto(resumen),
+      requerimientos: resumen?.activas || 0,
+      resumen: resumen || resumenVacio(),
+      fechaInicio: a.fechaInicio || null,
     };
   });
-};
 
-const construirRecursosItems = (expedienteData, evaluacionesData, recursosAsignados, recursosOptions) => {
-  const vigentesExpediente = evaluacionesData.filter((e) => e.estado === "vigente");
-  return recursosAsignados.map((a) => {
+const construirRecursosItems = (expedienteData, recursosAsignados, recursosOptions) =>
+  recursosAsignados.map((a) => {
     const r = recursosOptions.find((x) => x.id === a.recursoId);
-    const requerimientosMaquinaria = requerimientosDeSujeto(expedienteData, a);
-    const vigentesDeEl = vigentesExpediente.filter((v) =>
-      v.recursoId === a.recursoId && requerimientosMaquinaria.some((req) => req.requerimientoId === v.requerimientoId));
-    const { conteos, avancePct } = calcularConteosEvaluacion(vigentesDeEl);
-    const sinEvaluar = Math.max(0, requerimientosMaquinaria.length - vigentesDeEl.length);
+    const resumen = resumenDeSujeto(expedienteData, { recursoId: a.recursoId });
     return {
       id: a.recursoId,
       nombre: r?.nombre || a.recursoId,
       subtitulo: r?.tipo ? formatCatalogo(r.tipo) : "",
       busqueda: r?.patente || "",
-      avancePct,
-      estado: calcularEstadoSujeto({ conteos, sinEvaluar, totalAplicable: requerimientosMaquinaria.length }),
+      tipoIdentificacion: r?.tipoIdentificacion || null,
+      avancePct: porcentajeCumplimiento(resumen),
+      estado: calcularEstadoSujeto(resumen),
+      requerimientos: resumen?.activas || 0,
+      resumen: resumen || resumenVacio(),
+      fechaInicio: a.fechaInicio || null,
     };
   });
+
+// Desglose numérico de un conjunto de contadores (Expediente completo, Empresa, Personas o
+// Recursos) para el donut, la leyenda y los puntos de color de "Resumen por componente".
+// "Pendiente" incluye los requisitos aún sin evaluar (así los cuenta el backend).
+const desglose = (resumen) => {
+  const r = resumen || resumenVacio();
+  return {
+    total: r.activas || 0,
+    evaluados: evaluadosDe(r),
+    cumple: r.cumple || 0,
+    pendiente: r.pendiente || 0,
+    noCumple: r.noCumple || 0,
+    noAplica: r.noAplica || 0,
+    avancePct: porcentajeCumplimiento(r),
+    segmentos: segmentosCumplimiento(r),
+  };
 };
 
-// "general" es una pestaña más del switch (no un estado sin selección aparte): permite volver en
-// cualquier momento a la vista comparativa de los 3 niveles, sin la restricción de "sin vuelta
-// atrás" que sí aplica entre Empresa/Personas/Maquinarias — arranca seleccionada por defecto.
+const pctDe = (valor, total) => (total > 0 ? Math.round((valor / total) * 100) : 0);
+
+// Pestañas del detalle. "General" es una pestaña más a la que siempre se puede volver;
+// Empresa/Personas/Recursos filtran qué sujeto evalúa la Planilla. La activa se destaca con texto
+// primario en negrita, subrayado de 3px y fondo suave; vive en la URL (?tab=) para conservarla al
+// recargar.
 const NIVELES = [
   { key: "general", label: "General", Icono: LayoutGrid },
   { key: "empresa", label: "Empresa", Icono: Building2 },
   { key: "persona", label: "Personas", Icono: Users },
-  { key: "recurso", label: "Maquinarias", Icono: Truck },
+  { key: "recurso", label: "Recursos", Icono: Truck },
+  { key: "vencimientos", label: "Vencimientos", Icono: CalendarClock },
+  { key: "revisiones_ia", label: "Revisiones IA", Icono: Sparkles },
+  { key: "documentacion", label: "Documentación", Icono: FolderOpen },
 ];
 
-// Switch General/Empresa/Personas/Maquinarias — vive dentro de la tarjeta "Cumplimiento
-// Documental" de la Planilla (se le pasa como `tabsNivel`), no como barra aparte, para que cambiar
-// de nivel se sienta como cambiar de vista de una misma tarjeta y no como navegar a otra sección.
-// Grid 2x2 (no una fila de 4): con 4 pestañas en una sola fila, forzarlas a caber comprimía o
-// cortaba "Maquinarias" en la tarjeta angosta de 3 columnas (Personas/Maquinarias); en 2 filas de
-// 2 cada botón tiene la mitad del ancho de la tarjeta para su propio texto, siempre completo, sin
-// scroll ni recorte.
-const SelectorNivel = ({ activo, onChange }) => (
-  <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-50 border border-slate-100">
-    {NIVELES.map(({ key, label, Icono }) => (
+// `badges`: { key: { cantidad, vencidos, texto } } — rojo si hay vencidos, ámbar si solo hay
+// próximos. `ocultas`: pestañas que no se muestran (Vencimientos en un Expediente cerrado).
+const TabsNivel = ({ activo, onChange, badges = {}, ocultas = [] }) => (
+  <div role="tablist" className="flex items-end gap-1 px-4 pt-2 border-b border-slate-200 overflow-x-auto">
+    {NIVELES.filter(({ key }) => !ocultas.includes(key)).map(({ key, label, Icono }) => (
       <button
         key={key}
         type="button"
+        role="tab"
+        aria-selected={activo === key}
         onClick={() => onChange(key)}
-        className={`flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-          activo === key ? "bg-white text-primary-dark shadow-sm border border-primary-light" : "text-slate-500 hover:text-carbon-dark"
+        className={`inline-flex items-center gap-2 px-5 py-3 -mb-px text-sm whitespace-nowrap rounded-t-xl border-b-[3px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
+          activo === key
+            ? "border-primary text-primary font-bold bg-primary-lighter"
+            : "border-transparent text-slate-500 font-semibold bg-transparent hover:bg-slate-50"
         }`}
       >
         <Icono className="w-4 h-4" />
         {label}
+        {badges[key]?.cantidad > 0 && (
+          <span
+            className={`min-w-5 h-5 px-1.5 rounded-full text-[10px] font-black flex items-center justify-center ${
+              badges[key].vencidos ? "bg-red-500 text-white" : "bg-amber-400 text-white"
+            }`}
+            title={badges[key].texto}
+          >
+            {badges[key].cantidad}
+          </span>
+        )}
       </button>
     ))}
   </div>
 );
 
-// Mini-tarjeta de un nivel dentro del panel "Resumen" — mismo lenguaje visual que las 4 tarjetas
-// de estado de "Respaldo de Base de Datos" (icono en cuadrado de color + borde/sombra propios) y
-// el mismo ícono que su pestaña en el switch de arriba (`EntityIconTile` es el componente
-// compartido que ya usan las listas para ese cuadrado, no uno nuevo). `metricas` es la lista de
-// líneas a mostrar (Empresa trae 4, Personas/Maquinarias traen 5 por la línea extra de cantidad
-// asignada) para no hardcodear el layout tres veces.
-// `variante="expandida"`: cuando se muestra sola (una pestaña puntual seleccionada) crece para
-// llenar el alto de la fila (mismo alto que "Cumplimiento Documental" al lado, vía CSS
-// grid+flex — sin medir nada en JS) en vez de quedar chica con espacio vacío debajo.
-// `variante="compacta"` (los 3 bloques a la vez, sin tab elegido): solo ícono + nombre + % — con
-// `cantidad` (Personas/Maquinarias asignadas, si aplica) y `statsInline` (Evaluados/Sin
-// Evaluar/No Cumple) al lado del anillo, no como lista debajo — el detalle completo
-// (Requerimientos a evaluar/No Aplica) se reserva para cuando el usuario ya eligió ese nivel
-// puntual (variante "expandida").
-const TarjetaResumenNivel = ({ Icono, nombre, pct, metricas, statsInline, cantidad, variante = "compacta" }) => {
-  const expandida = variante === "expandida";
+// Etiqueta pequeña de cada dato de contexto del encabezado.
+const CLASE_ETIQUETA_CONTEXTO = "text-[10px] font-bold text-slate-400 uppercase tracking-wider";
+
+// Puntos de color con conteos: Cumple / Pendiente / No Cumple / No Aplica.
+const PuntosEstado = ({ d }) => (
+  <div className="flex items-center gap-3 text-[11px] font-bold text-carbon-dark">
+    {d.segmentos.map((p) => ({ v: p.value, dot: p.dot, t: p.label })).map((p) => (
+      <span key={p.t} title={p.t} className="flex items-center gap-1">
+        <span className={`w-2 h-2 rounded-full ${p.dot}`} />
+        {p.v}
+      </span>
+    ))}
+  </div>
+);
+
+// Tarjetas de resumen de la pestaña Empresa, Personas o Recursos: % de cumplimiento (con su nivel
+// de acreditación) y contadores.
+const KpisComponente = ({ d, umbrales }) => {
+  const nivel = nivelAcreditacion(d.avancePct, umbrales, d.evaluados === 0);
   return (
-    <div className={`bg-white rounded-2xl border border-slate-100 shadow-card flex flex-col ${expandida ? "p-6 h-full" : "p-4"}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <EntityIconTile icon={Icono} />
-          <span className={`font-bold text-carbon-dark truncate ${expandida ? "text-sm" : "text-xs"}`}>{nombre}</span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {!expandida && (cantidad || statsInline) && (
-            <div className="flex items-center gap-2.5">
-              {cantidad && (
-                <span title={cantidad.label} className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold whitespace-nowrap">
-                  {cantidad.valor} {cantidad.label}
-                </span>
-              )}
-              {statsInline && statsInline.map((s) => (
-                <span key={s.label} title={s.label} className="flex items-center gap-1">
-                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-                  <span className="text-[11px] font-bold text-carbon-dark">{s.valor}</span>
-                </span>
-              ))}
-            </div>
-          )}
-          <KpiAnillo pct={pct} size={expandida ? 64 : 40} strokeWidth={expandida ? 7 : 5} textoClass={expandida ? "text-sm" : "text-[9px]"} />
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className={`flex items-center gap-3 p-4 rounded-2xl border ${nivel.caja}`}>
+        <Percent className={`w-5 h-5 ${nivel.icono}`} />
+        <div>
+          <p className={`text-lg font-black leading-none ${nivel.texto}`}>{textoPorcentaje(d.avancePct)}</p>
+          <p className={`text-[11px] mt-1 font-bold ${nivel.texto}`}>{nivel.etiqueta || "Cumplimiento"}</p>
         </div>
       </div>
-      {expandida && (
-        <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5 text-[11px] flex-1 min-h-0 flex flex-col justify-center">
-          {metricas.map((m) => (
-            <div key={m.label} className="flex items-center justify-between">
-              <span className="text-slate-500">{m.label}</span>
-              <span className={`font-bold ${m.clase || "text-carbon-dark"}`}>{m.valor}</span>
-            </div>
-          ))}
+      {[
+        { n: d.total, l: "Requisitos totales", box: "bg-primary-lighter/60 border-primary-light", Icono: ClipboardCheck, ic: "text-primary" },
+        { n: d.cumple, l: "Cumplen", box: "bg-sage-lighter border-slate-100", Icono: CheckCircle2, ic: "text-sage-darker" },
+        { n: d.pendiente, l: "Pendientes", box: "bg-amber-50 border-amber-100", Icono: Clock, ic: "text-amber-500" },
+        { n: d.noCumple, l: "No cumplen", box: "bg-red-50 border-red-100", Icono: XCircle, ic: "text-red-500" },
+      ].map((k) => (
+        <div key={k.l} className={`flex items-center gap-3 p-4 rounded-2xl border ${k.box}`}>
+          <k.Icono className={`w-5 h-5 ${k.ic}`} />
+          <div>
+            <p className="text-lg font-black text-carbon-dark leading-none">{k.n}</p>
+            <p className="text-[11px] text-slate-500 mt-1">{k.l}</p>
+          </div>
         </div>
-      )}
+      ))}
     </div>
   );
 };
@@ -199,8 +213,8 @@ const TarjetaResumenNivel = ({ Icono, nombre, pct, metricas, statsInline, cantid
 export const ExpedienteDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const { profile } = useAuth();
-  const puedeTransicionar = ["superadmin", "mandante_admin", "evaluador"].includes(profile?.rol);
   // Quién puede editar el catálogo del Perfil de Participación (mismo alcance que
   // ConfigurarRequerimientosPage.jsx: ahí evaluador/mandante_lector quedan en solo lectura).
   const puedeConfigurarRequerimientos = ["superadmin", "mandante_admin"].includes(profile?.rol);
@@ -211,9 +225,18 @@ export const ExpedienteDetailPage = () => {
   const [proyecto, setProyecto] = useState(null);
   const [empresa, setEmpresa] = useState(null);
   const [perfil, setPerfil] = useState(null);
+  const [participacion, setParticipacion] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [transicionando, setTransicionando] = useState(false);
+  // Historial de estados (expedienteEstados): null mientras carga.
+  const [historialEstados, setHistorialEstados] = useState(null);
+  // Vencimientos del Expediente (GET /expedientes/:id/vencimientos): fuente única de la pestaña
+  // Vencimientos, los badges y los avisos por sujeto y por requisito. null mientras carga.
+  const [vencimientos, setVencimientos] = useState(null);
+  // "Renovar" desde la pestaña Vencimientos: { tipoEntidad, sujetoId, instanciaId, nombre, requerimiento }.
+  const [renovar, setRenovar] = useState(null);
+  // Filtro con el que parte la tabla de requisitos (lo fija la alerta de "En Ejecución").
+  const [filtroRequisitos, setFiltroRequisitos] = useState("");
   const [configurarRequerimientosAbierto, setConfigurarRequerimientosAbierto] = useState(false);
   // PlanillaEvaluacion carga su propio `expediente` (independiente del de más arriba) — este
   // contador fuerza su refresco cuando el modal "Configurar Requerimientos" cambia algo, para que
@@ -228,7 +251,6 @@ export const ExpedienteDetailPage = () => {
   const [bitacoraCargando, setBitacoraCargando] = useState(false);
   const [bitacoraError, setBitacoraError] = useState(null);
 
-  const [evaluaciones, setEvaluaciones] = useState([]);
   // Evidencia documental del Expediente y sus vínculos a Requerimientos: solo para el indicador de
   // "documentación adjunta", que es INDEPENDIENTE del estado (evaluar no exige documentos).
   const [evidenciasDoc, setEvidenciasDoc] = useState({ evidencias: [], vinculos: [] });
@@ -242,13 +264,47 @@ export const ExpedienteDetailPage = () => {
   // primero de la nueva lista. Arranca en "general" (vista comparativa de los 3 niveles a la
   // vez) — a diferencia de Empresa/Personas/Maquinarias, "General" es una pestaña más a la que
   // siempre se puede volver, no un estado inicial sin retorno.
-  const [nivelActivo, setNivelActivo] = useState("general");
-  const [recursoSeleccionadoId, setRecursoSeleccionadoId] = useState(null);
+  // La pestaña activa vive en la URL (?tab=empresa|persona|recurso; sin parámetro, General).
+  const nivelActivo = NIVELES.some((n) => n.key === params.get("tab")) ? params.get("tab") : "general";
+  // `?sujeto=<id>` (desde la ficha de una Persona o Maquinaria) la deja elegida y abre sus requisitos.
+  const [recursoSeleccionadoId, setRecursoSeleccionadoId] = useState(() => params.get("sujeto") || null);
+  // Panel "Detalle" de Personas/Recursos cerrado con la X: sin fila elegida ni planilla debajo.
+  const [detalleCerrado, setDetalleCerrado] = useState(false);
+  // Modal con los requisitos (planilla) de la Persona o Maquinaria elegida en el listado.
+  const [requisitosAbiertos, setRequisitosAbiertos] = useState(() => Boolean(params.get("sujeto")));
 
-  // Sugerencia "seguir con el siguiente pendiente" tras Guardar Evaluación (ver
-  // verificarSugerenciaSiguiente): { nivel, id, nombre } del próximo pendiente del mismo nivel, o
-  // null si no aplica (sujeto aún no completo, o ya no queda nadie más pendiente).
+  // Aviso tras Guardar Evaluación cuando el sujeto quedó completo (ver verificarSugerenciaSiguiente):
+  // { nivel, siguiente, restantes, total }. `siguiente` es el próximo pendiente del mismo nivel, o
+  // null si ya no queda ninguno ("todo evaluado"). null = sin aviso.
   const [sugerenciaSiguiente, setSugerenciaSiguiente] = useState(null);
+
+  // Repositorio documental (carpeta local o SharePoint): pestaña Documentación y panel de documentos.
+  const [repositorioDoc, setRepositorioDoc] = useState(null);
+  const [repositorioDocError, setRepositorioDocError] = useState(null);
+  const [repositorioDocIntento, setRepositorioDocIntento] = useState(0);
+  useEffect(() => {
+    let vigente = true;
+    repositorioDocumentalService.obtener(id)
+      .then((d) => { if (vigente) { setRepositorioDoc(d); setRepositorioDocError(null); } })
+      .catch((err) => { if (vigente) setRepositorioDocError(err.message || "No se pudo cargar la documentación del expediente."); });
+    return () => { vigente = false; };
+  }, [id, repositorioDocIntento]);
+
+  // Ubicación de los documentos de cada requerimiento (precedencia: carpeta asignada en el
+  // expediente, vínculo de la plantilla, tipo documental), para el panel de documentos. Si no se
+  // puede leer, el panel sigue funcionando como antes (carpeta asignada o raíz).
+  const [ubicacionesIA, setUbicacionesIA] = useState(null);
+  useEffect(() => {
+    let vigente = true;
+    revisionExpedienteService.obtenerConfig(id)
+      .then((d) => {
+        if (!vigente) return;
+        setUbicacionesIA(Object.fromEntries((d?.requerimientos || []).map((r) => [r.requerimientoId,
+          { ...(r.ubicacion || {}), tipoEntidad: r.tipoEntidad, nombre: r.nombre }])));
+      })
+      .catch(() => { if (vigente) setUbicacionesIA(null); });
+    return () => { vigente = false; };
+  }, [id, repositorioDocIntento]);
 
   // `silencioso`: al guardar una evaluación o adjuntar evidencia (onGuardado de la Planilla) hay
   // que refrescar evaluaciones/expediente, pero SIN tapar toda la pantalla con el loader de carga
@@ -264,24 +320,32 @@ export const ExpedienteDetailPage = () => {
     try {
       const data = await expedienteService.obtenerPorId(id);
       setExpediente(data);
+      expedienteService.historialEstados(id)
+        .then((h) => setHistorialEstados(h || []))
+        .catch(() => setHistorialEstados([]));
+      expedienteService.vencimientos(id)
+        .then((v) => setVencimientos(v || { items: [], totales: {} }))
+        .catch(() => setVencimientos({ items: [], totales: {} }));
 
-      const [proyectoData, empresaData, perfilData, sujetosData, evaluacionesData, evidenciasData, vinculosData] = await Promise.all([
+      const [
+        proyectoData, empresaData, perfilData, sujetosData, evidenciasData, vinculosData, participacionData,
+      ] = await Promise.all([
         proyectoService.obtenerPorId(data.proyectoId).catch(() => null),
         empresaService.obtenerPorId(data.empresaId).catch(() => null),
         perfilParticipacionService.obtenerPorId(data.perfilParticipacionId).catch(() => null),
         sujetoService.listar({ participacionId: data.participacionId, estado: "activa" }).catch(() => []),
-        evaluacionService.listarPorExpediente(data.id, false).catch(() => []),
         evidenciaService.listar({ expedienteId: data.id }).catch(() => []),
         evidenciaRequerimientoService.listarPorExpediente(data.id).catch(() => []),
+        participacionService.obtenerPorId(data.participacionId).catch(() => null),
       ]);
+      setParticipacion(participacionData);
       setEvidenciasDoc({ evidencias: evidenciasData || [], vinculos: vinculosData || [] });
       setProyecto(proyectoData);
       setEmpresa(empresaData);
       setPerfil(perfilData);
       mandanteService.obtenerPorId(data.mandanteId).then(setMandante).catch(() => setMandante(null));
       setSujetosParticipacion(sujetosData || []);
-      setEvaluaciones(evaluacionesData || []);
-      return { expedienteData: data, sujetosData: sujetosData || [], evaluacionesData: evaluacionesData || [] };
+      return { expedienteData: data, sujetosData: sujetosData || [] };
     } catch (err) {
       console.error("Error al cargar el expediente:", err);
       setError(err.message || "No se pudo cargar el expediente.");
@@ -309,22 +373,21 @@ export const ExpedienteDetailPage = () => {
     cargarOpciones();
   }, []);
 
-  const handleTransicionar = async (nuevoEstado) => {
-    if (nuevoEstado === "cerrado" && !window.confirm("¿Cerrar este Expediente? Es una transición terminal, no podrá revertirse ni editarse después.")) {
-      return;
-    }
-    setTransicionando(true);
-    setError(null);
-    try {
-      await expedienteService.transicionar(id, { estado: nuevoEstado });
-      await cargarDatos();
-    } catch (err) {
-      console.error("Error al transicionar expediente:", err);
-      setError(err.message || "No se pudo transicionar el expediente.");
-    } finally {
-      setTransicionando(false);
-    }
-  };
+  // Acciones de estado (Registrar inicio en faena, Cerrar, Quitar inicio en faena, Reabrir) y sus modales.
+  const accionesEstado = useAccionesEstadoExpediente({
+    expediente,
+    rol: profile?.rol,
+    alcanceCierre: {
+      empresa: empresa?.razonSocial || null,
+      proyecto: proyecto?.nombre || null,
+      personas: sujetosParticipacion.filter((a) => a.personaId).length,
+      maquinarias: sujetosParticipacion.filter((a) => a.recursoId).length,
+    },
+    onCambiado: () => {
+      setRecargarPlanillaSenal((n) => n + 1);
+      return cargarDatos(true);
+    },
+  });
 
   const toggleBitacora = () => {
     const abriendo = !bitacoraAbierta;
@@ -343,7 +406,6 @@ export const ExpedienteDetailPage = () => {
     }
   };
 
-  const estadoInfo = (estado) => ESTADOS_EXPEDIENTE.find((e) => e.value === estado) || ESTADOS_EXPEDIENTE[0];
 
   const irAHistorial = () => {
     if (!bitacoraAbierta) toggleBitacora();
@@ -366,56 +428,105 @@ export const ExpedienteDetailPage = () => {
     );
   }
 
-  const transicionesDisponibles = TRANSICIONES_VALIDAS[expediente.estado] || [];
+  const cerrado = expediente.estado === "cerrado";
+  const vencidosExpediente = vencimientos ? vencimientos.totales?.vencidos || 0 : undefined;
+  const problemas = problemasExpediente(expediente, vencidosExpediente);
+  const estadoVisible = estadoVisibleExpediente(expediente, vencidosExpediente);
+
+  // Vencimientos agrupados (todo sale de la respuesta del endpoint, sin cálculos propios).
+  const itemsVencimiento = vencimientos?.items || [];
+  const contarVencimientos = (lista) => ({
+    vencidos: lista.filter((it) => it.clasificacion === "vencido").length,
+    proximos: lista.filter((it) => it.clasificacion !== "vencido").length,
+  });
+  const badgeDe = (lista) => {
+    const c = contarVencimientos(lista);
+    return { cantidad: c.vencidos || c.proximos, vencidos: c.vencidos > 0, texto: resumenTextoVencimientos(c) };
+  };
+  const totalesVencimiento = contarVencimientos(itemsVencimiento);
+  const badgesTabs = {
+    vencimientos: badgeDe(itemsVencimiento),
+    empresa: badgeDe(itemsVencimiento.filter((it) => it.tipoEntidad === "empresa")),
+    persona: badgeDe(itemsVencimiento.filter((it) => it.tipoEntidad === "persona")),
+    recurso: badgeDe(itemsVencimiento.filter((it) => it.tipoEntidad === "recurso")),
+  };
+  const vencimientosPorInstancia = Object.fromEntries(
+    itemsVencimiento.map((it) => [it.instanciaId, { clasificacion: it.clasificacion, dias: it.dias }]),
+  );
+  const alertasPorSujeto = {};
+  itemsVencimiento.forEach((it) => {
+    if (it.tipoEntidad === "empresa" || !it.sujeto?.id) return;
+    const c = contarVencimientos(itemsVencimiento.filter((x) => x.sujeto?.id === it.sujeto.id));
+    alertasPorSujeto[it.sujeto.id] = { vencidos: c.vencidos, texto: resumenTextoVencimientos(c) };
+  });
+  const puedeEvaluarExpediente = ["superadmin", "evaluador"].includes(profile?.rol);
+  // "Ver requerimiento": la instancia en su pestaña (personas y maquinarias con sus requisitos abiertos).
+  const verRequerimientoVencido = (it) => {
+    const siguiente = new URLSearchParams();
+    siguiente.set("tab", it.tipoEntidad);
+    if (it.tipoEntidad !== "empresa") siguiente.set("sujeto", it.sujeto.id);
+    navigate(`/expedientes/${id}?${siguiente.toString()}`);
+  };
+
+  // Fecha en que se alcanzó cada etapa del stepper (0 Creado, 1 En ejecución, 2 Completado,
+  // 3 Cerrado), desde el historial: la última vez que se llegó a ese estado.
+  const ETAPA_DE_ESTADO = { creado: 0, en_ejecucion: 1, completado: 2, completado_pendientes: 2, cerrado: 3 };
+  const fechasEtapas = [expediente.createdAt];
+  (historialEstados || []).forEach((h) => {
+    const etapa = ETAPA_DE_ESTADO[h.estadoNuevo];
+    if (etapa !== undefined) fechasEtapas[etapa] = h.createdAt;
+  });
+
+  // Aviso de "Completado con pendientes": lleva a la tabla de requisitos de la Empresa filtrada.
+  const verRequisitosConProblemas = () => {
+    setFiltroRequisitos("con_problemas");
+    cambiarNivel("empresa");
+  };
 
   // Personas y Maquinarias activas de la Participación de ESTE Expediente (agrupadas: una
   // entrada por sujeto, con el conjunto de sus Perfiles de Recurso).
   const personasAsignadas = sujetosParticipacion.filter((a) => a.personaId);
   const recursosAsignados = sujetosParticipacion.filter((a) => a.recursoId);
 
-  const vigentesExpediente = evaluaciones.filter((e) => e.estado === "vigente");
-
-  // Indicador de documentación adjunta — PARALELO al estado (evaluar no exige documentos): de todos
-  // los pares Requerimiento × sujeto aplicables, cuántos tienen evidencia activa adjunta.
-  const idsEvidenciaPorReq = {};
-  evidenciasDoc.vinculos.filter((v) => v.estado === "activo").forEach((v) => {
-    (idsEvidenciaPorReq[v.requerimientoId] ||= new Set()).add(v.evidenciaId);
-  });
-  const tieneDocumento = (reqId, { personaId = null, recursoId = null } = {}) => {
-    const ids = idsEvidenciaPorReq[reqId];
-    if (!ids) return false;
-    return evidenciasDoc.evidencias.some((e) => {
-      if (!ids.has(e.id)) return false;
-      if (personaId) return e.personaId === personaId;
-      if (recursoId) return e.recursoId === recursoId;
-      return !e.personaId && !e.recursoId;
-    });
-  };
-  const paresDocumentacion = (expediente.requerimientosAplicables || []).flatMap((r) => {
-    if (r.tipoEntidad === "empresa") return [tieneDocumento(r.requerimientoId)];
-    return [...personasAsignadas, ...recursosAsignados]
-      .filter((a) => aplicaRequerimientoASujeto(r, a))
-      .map((a) => tieneDocumento(r.requerimientoId, a.personaId
-        ? { personaId: a.personaId } : { recursoId: a.recursoId }));
-  });
-  const totalConDocumento = paresDocumentacion.filter(Boolean).length;
-  const totalPares = paresDocumentacion.length;
+  // Indicador de documentación adjunta — PARALELO al estado (evaluar no exige documentos): de las
+  // instancias activas del Expediente, cuántas tienen al menos una evidencia activa enlazada.
+  const evidenciasActivas = new Set(
+    evidenciasDoc.evidencias.filter((e) => e.estado !== "inactivo").map((e) => e.id),
+  );
+  const instanciasConDocumento = new Set(
+    evidenciasDoc.vinculos
+      .filter((v) => v.estado === "activo" && evidenciasActivas.has(v.evidenciaId))
+      .map((v) => v.expedienteRequerimientoId),
+  );
+  const totalPares = expediente.resumen?.activas || 0;
+  const totalConDocumento = Math.min(instanciasConDocumento.size, totalPares);
   const pctDocumentacion = totalPares > 0 ? Math.round((totalConDocumento / totalPares) * 100) : 0;
 
-  // Ítems del selector, con su avance individual — mismo cálculo (calcularConteosEvaluacion) que
-  // usa la Planilla para el sujeto seleccionado, aplicado acá a CADA Persona/Maquinaria asignada
-  // para la vista compacta de la lista. Un solo fetch de evaluaciones (arriba) alimenta ambas
-  // vistas, nunca dos consultas por fila. Mismas funciones puras que reutiliza
-  // verificarSugerenciaSiguiente tras Guardar Evaluación.
-  const personasItems = construirPersonasItems(expediente, evaluaciones, personasAsignadas, personasOptions, perfilesPorId);
-  const recursosItems = construirRecursosItems(expediente, evaluaciones, recursosAsignados, recursosOptions);
+  // Ítems del selector, con su avance individual: contadores por sujeto de la cabecera.
+  const personasItems = construirPersonasItems(expediente, personasAsignadas, personasOptions, perfilesPorId);
+  const recursosItems = construirRecursosItems(expediente, recursosAsignados, recursosOptions);
 
   const itemsActivos = nivelActivo === "persona" ? personasItems : nivelActivo === "recurso" ? recursosItems : [];
   // Selección derivada, no sincronizada por efecto: si lo elegido ya no está en la lista
   // vigente (o nunca se eligió nada) cae automáticamente al primero — así nunca queda
   // desincronizada del contenido real.
-  const seleccionadoId = itemsActivos.some((i) => i.id === recursoSeleccionadoId)
-    ? recursoSeleccionadoId : (itemsActivos[0]?.id ?? null);
+  const seleccionadoId = detalleCerrado ? null
+    : itemsActivos.some((i) => i.id === recursoSeleccionadoId)
+      ? recursoSeleccionadoId : (itemsActivos[0]?.id ?? null);
+  // Elegir una fila la deja seleccionada (panel de detalle) y abre sus requisitos en el modal.
+  const seleccionarSujeto = (sujetoId) => {
+    setRecursoSeleccionadoId(sujetoId);
+    setDetalleCerrado(sujetoId === null);
+    setRequisitosAbiertos(sujetoId !== null);
+  };
+
+  // Clic en una fila del listado: solo muestra su detalle. Los requisitos se abren con el botón
+  // "Evaluar requisitos" del panel de detalle.
+  const verDetalleSujeto = (sujetoId) => {
+    setRecursoSeleccionadoId(sujetoId);
+    setDetalleCerrado(sujetoId === null);
+    setRequisitosAbiertos(false);
+  };
 
   // Navegación ←/→ entre evaluados del mismo nivel, sin subir al panel de selección: solo tiene
   // sentido cuando el sujeto activo YA está evaluado (revisar sus requisitos ya resueltos, no
@@ -428,8 +539,8 @@ export const ExpedienteDetailPage = () => {
     total: evaluadosDelNivel.length,
     hayAnterior: indiceEvaluado > 0,
     haySiguiente: indiceEvaluado < evaluadosDelNivel.length - 1,
-    onAnterior: () => setRecursoSeleccionadoId(evaluadosDelNivel[indiceEvaluado - 1].id),
-    onSiguiente: () => setRecursoSeleccionadoId(evaluadosDelNivel[indiceEvaluado + 1].id),
+    onAnterior: () => seleccionarSujeto(evaluadosDelNivel[indiceEvaluado - 1].id),
+    onSiguiente: () => seleccionarSujeto(evaluadosDelNivel[indiceEvaluado + 1].id),
   };
 
   // Ya cargados acá (personasOptions/recursosOptions/personasAsignadas) — se pasan tal cual a la
@@ -438,164 +549,171 @@ export const ExpedienteDetailPage = () => {
   // fetch ni loader de pantalla completa.
   const personaConocida = nivelActivo === "persona" ? personasOptions.find((p) => p.id === seleccionadoId) || null : null;
   const recursoConocido = nivelActivo === "recurso" ? recursosOptions.find((r) => r.id === seleccionadoId) || null : null;
+
+  // Panel de documentos junto a la evaluación (Empresa, y Personas/Recursos dentro del modal).
+  // Panel de documentos junto a la evaluación (Empresa, y Personas/Recursos dentro del modal): solo
+  // previsualiza. Configurar carpetas (asignar la de un sujeto, asociar la de un requerimiento)
+  // pueden superadmin, evaluador y mandante_admin.
+  const puedeConfigurarDocumentos = Boolean(repositorioDoc?.puedeEditar);
+  const carpetaDeSujeto = (tipo, sujetoId) => sujetosParticipacion
+    .find((a) => (tipo === "persona" ? a.personaId : a.recursoId) === sujetoId && a.carpetaRelativa)?.carpetaRelativa || null;
+  const panelDocumentos = (tipo, sujeto) => (
+    <PanelDocumentos
+      key={`${tipo}|${sujeto?.id || ""}`}
+      expedienteId={id}
+      usuarioId={profile?.uid}
+      repositorio={repositorioDoc?.repositorioDocumental || null}
+      origenCarpeta={repositorioDoc?.origen || null}
+      tipo={tipo}
+      sujeto={sujeto}
+      carpetaSujeto={sujeto ? carpetaDeSujeto(tipo, sujeto.id) : null}
+      puedeEditar={puedeConfigurarDocumentos}
+      onRepositorio={setRepositorioDoc}
+      empresa={empresa}
+      mandanteId={expediente?.mandanteId}
+      ubicaciones={ubicacionesIA}
+      puedeReanalizar={["superadmin", "evaluador", "mandante_admin"].includes(profile?.rol)}
+      proyecto={proyecto}
+      puedeDefinirReglas={profile?.rol === "superadmin"}
+      onIrADocumentacion={() => { setRequisitosAbiertos(false); cambiarNivel("documentacion"); }}
+      onCarpetaAsignada={() => cargarDatos(true)}
+    />
+  );
   const sujetoConocido = nivelActivo === "persona"
     ? personasAsignadas.find((a) => a.personaId === seleccionadoId) || null
     : nivelActivo === "recurso" ? recursosAsignados.find((a) => a.recursoId === seleccionadoId) || null : null;
 
-  // Resumen: detalle numérico completo por nivel (Empresa/Personas/Maquinarias), agregando TODAS
-  // las Personas o Maquinarias entre sí — un total del Expediente completo, independiente de cuál
-  // esté seleccionada en el panel de al lado (SelectorRecursoAsignado). Reutiliza
-  // calcularResumenCumplimiento (misma fórmula de avancePct que el donut de "Cumplimiento
-  // Documental"), sin duplicar el cálculo de conteos.
-  const reqsEmpresa = (expediente.requerimientosAplicables || [])
-    .filter((r) => aplicaRequerimientoASujeto(r, { tipoEntidad: "empresa" }));
-  const vigentesEmpresaNivel = vigentesExpediente.filter((v) => !v.personaId && !v.recursoId && reqsEmpresa.some((r) => r.requerimientoId === v.requerimientoId));
-  const resumenEmpresa = calcularResumenCumplimiento(reqsEmpresa.length, vigentesEmpresaNivel);
+  // Resumen por componente (Empresa/Personas/Recursos): suma de los contadores de sus sujetos, un
+  // total del Expediente completo, independiente del sujeto seleccionado.
+  const resumenEmpresaBase = resumenDeSujeto(expediente, {}) || resumenVacio();
+  const resumenPersonasBase = sumarResumenes(personasAsignadas.map((a) => resumenDeSujeto(expediente, { personaId: a.personaId })));
+  const resumenRecursosBase = sumarResumenes(recursosAsignados.map((a) => resumenDeSujeto(expediente, { recursoId: a.recursoId })));
+  const dEmpresa = desglose(resumenEmpresaBase);
+  const dPersonas = desglose(resumenPersonasBase);
+  const dRecursos = desglose(resumenRecursosBase);
 
-  const totalPersonasNivel = personasAsignadas.reduce((sum, a) => sum + requerimientosDeSujeto(expediente, a).length, 0);
-  const vigentesPersonasNivel = personasAsignadas.flatMap((a) => {
-    const reqs = requerimientosDeSujeto(expediente, a);
-    return vigentesExpediente.filter((v) => v.personaId === a.personaId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
-  });
-  const resumenPersonas = calcularResumenCumplimiento(totalPersonasNivel, vigentesPersonasNivel);
+  // Cumplimiento Documental de la pestaña General: los contadores del Expediente completo.
+  const dGeneral = desglose(expediente.resumen || resumenVacio());
 
-  const totalMaquinariasNivel = recursosAsignados.reduce((sum, a) => sum + requerimientosDeSujeto(expediente, a).length, 0);
-  const vigentesMaquinariasNivel = recursosAsignados.flatMap((a) => {
-    const reqs = requerimientosDeSujeto(expediente, a);
-    return vigentesExpediente.filter((v) => v.recursoId === a.recursoId && reqs.some((r) => r.requerimientoId === v.requerimientoId));
-  });
-  const resumenMaquinarias = calcularResumenCumplimiento(totalMaquinariasNivel, vigentesMaquinariasNivel);
-
-  // Cumplimiento Documental en el estado inicial (sin tab elegido): la SUMA exacta de los 3
-  // niveles de arriba, misma fuente de datos que el Resumen de al lado — nunca el catálogo de
-  // requerimientosAplicables sin expandir (calcularSinEvaluar), que subestima "Sin Evaluar" cuando
-  // un mismo Requerimiento de nivel Persona/Maquinaria aplica a varias personas/máquinas, y
-  // mostraría un % inconsistente con la suma de las 3 tarjetas de Resumen en la misma pantalla.
-  const conteosGenerales = calcularConteosEvaluacion([
-    ...vigentesEmpresaNivel, ...vigentesPersonasNivel, ...vigentesMaquinariasNivel,
-  ]).conteos;
-  const sinEvaluarGeneral = resumenEmpresa.sinEvaluar + resumenPersonas.sinEvaluar + resumenMaquinarias.sinEvaluar;
-
-  const metricasNivel = (resumen, extra) => [
-    ...(extra ? [extra] : []),
-    { label: "Requerimientos a evaluar", valor: resumen.total },
-    { label: "Evaluados", valor: resumen.evaluados },
-    { label: "No Cumple", valor: resumen.noCumple, clase: resumen.noCumple > 0 ? "text-red-600" : undefined },
-    { label: "No Aplica", valor: resumen.noAplica },
+  const componentes = [
+    { key: "empresa", nombre: "Empresa", Icono: Building2, d: dEmpresa },
+    { key: "persona", nombre: "Personas", Icono: Users, d: dPersonas },
+    { key: "recurso", nombre: "Recursos", Icono: Truck, d: dRecursos },
   ];
-
-  // Versión resumida de las mismas cifras, para mostrar al lado del anillo en la variante
-  // compacta (mismos colores que ya usa EstadoCumplimientoPanel/ResumenCumplimientoLista para
-  // Cumple/Sin Evaluar/No Cumple, así el punto de color se lee igual en toda la pantalla).
-  const statsInlineDe = (resumen) => [
-    { label: "Evaluados", valor: resumen.evaluados, dot: "bg-sage-dark" },
-    { label: "Sin Evaluar", valor: resumen.sinEvaluar, dot: "bg-slate-300" },
-    { label: "No Cumple", valor: resumen.noCumple, dot: "bg-red-500" },
-  ];
-
-  // Sin tab elegido: los 3 bloques a la vez (vista comparativa), tamaño compacto. Con un tab
-  // elegido: solo el bloque de ese nivel, en tamaño "expandida" (crece para llenar la fila junto
-  // al donut, ver TarjetaResumenNivel) — nunca los 3 al mismo tiempo que uno solo seleccionado.
-  const tarjetaEmpresa = (
-    <TarjetaResumenNivel
-      Icono={Building2}
-      nombre="Empresa"
-      pct={resumenEmpresa.avancePct}
-      metricas={metricasNivel(resumenEmpresa)}
-      statsInline={statsInlineDe(resumenEmpresa)}
-      variante={nivelActivo === "general" ? "compacta" : "expandida"}
-    />
-  );
-  const tarjetaPersonas = (
-    <TarjetaResumenNivel
-      Icono={Users}
-      nombre="Personas"
-      pct={resumenPersonas.avancePct}
-      metricas={metricasNivel(resumenPersonas, { label: "Personas asignadas", valor: personasAsignadas.length })}
-      statsInline={statsInlineDe(resumenPersonas)}
-      cantidad={{ label: "personas", valor: personasAsignadas.length }}
-      variante={nivelActivo === "general" ? "compacta" : "expandida"}
-    />
-  );
-  const tarjetaMaquinarias = (
-    <TarjetaResumenNivel
-      Icono={Truck}
-      nombre="Maquinarias"
-      pct={resumenMaquinarias.avancePct}
-      metricas={metricasNivel(resumenMaquinarias, { label: "Maquinarias asignadas", valor: recursosAsignados.length })}
-      statsInline={statsInlineDe(resumenMaquinarias)}
-      cantidad={{ label: "maquinarias", valor: recursosAsignados.length }}
-      variante={nivelActivo === "general" ? "compacta" : "expandida"}
-    />
-  );
-
-  const resumenNiveles =
-    nivelActivo === "empresa" ? tarjetaEmpresa :
-    nivelActivo === "persona" ? tarjetaPersonas :
-    nivelActivo === "recurso" ? tarjetaMaquinarias :
-    <div className="h-full flex flex-col gap-3">{tarjetaEmpresa}{tarjetaPersonas}{tarjetaMaquinarias}</div>;
 
   const cambiarNivel = (key) => {
-    setNivelActivo(key);
+    const siguiente = new URLSearchParams(params);
+    if (key === "general") siguiente.delete("tab");
+    else siguiente.set("tab", key);
+    setParams(siguiente, { replace: true });
     setRecursoSeleccionadoId(null);
+    setDetalleCerrado(false);
+    setRequisitosAbiertos(false);
+  };
+
+  // "Evaluar manualmente" desde la matriz de Revisiones IA: abre la pestaña del sujeto y, en
+  // Personas/Recursos, sus requisitos.
+  const evaluarManualDesdeRevision = (fila) => {
+    cambiarNivel(fila.tipoEntidad);
+    if (fila.tipoEntidad !== "empresa") {
+      setRecursoSeleccionadoId(fila.sujetoId);
+      setRequisitosAbiertos(true);
+    }
   };
 
   // Tras Guardar Evaluación en el nivel Persona/Maquinaria: si el sujeto que se acaba de evaluar
-  // quedó "evaluada" (100% resuelto), muestra un modal — con TODOS los pendientes que aún quedan
-  // en ese mismo nivel para elegir con cuál seguir (el usuario elige, nunca salta solo), o con el
-  // aviso de que ya no queda ninguno si era el último. En Empresa no aplica (una sola entidad).
+  // quedó "evaluada" (100% resuelto) y aún quedan pendientes en ese nivel, pregunta si se quiere
+  // evaluar al siguiente (mostrando su nombre): seguir evaluando o cerrar el modal de requisitos.
+  // Si era el último, el modal de requisitos se cierra solo y se avisa que está todo evaluado.
+  // En Empresa no aplica (una sola entidad).
   const verificarSugerenciaSiguiente = async (nivel, idAnterior) => {
     const datos = await cargarDatos(true);
     if (!datos) return;
-    const { expedienteData, sujetosData, evaluacionesData } = datos;
+    const { expedienteData, sujetosData } = datos;
     const items = nivel === "persona"
-      ? construirPersonasItems(expedienteData, evaluacionesData, sujetosData.filter((a) => a.personaId), personasOptions, perfilesPorId)
-      : construirRecursosItems(expedienteData, evaluacionesData, sujetosData.filter((a) => a.recursoId), recursosOptions);
-    const actual = items.find((i) => i.id === idAnterior);
-    if (!actual || actual.estado !== "evaluada") return;
-    const pendientes = items.filter((i) => i.id !== idAnterior && i.estado !== "evaluada");
-    setSugerenciaSiguiente({ nivel, opciones: pendientes, total: items.length });
+      ? construirPersonasItems(expedienteData, sujetosData.filter((a) => a.personaId), personasOptions, perfilesPorId)
+      : construirRecursosItems(expedienteData, sujetosData.filter((a) => a.recursoId), recursosOptions);
+    const indice = items.findIndex((i) => i.id === idAnterior);
+    if (indice === -1 || items[indice].estado !== "evaluada") return;
+    // El siguiente pendiente en el orden del listado, partiendo del recién evaluado.
+    const enOrden = [...items.slice(indice + 1), ...items.slice(0, indice)];
+    const pendientes = enOrden.filter((i) => i.estado !== "evaluada");
+    if (pendientes.length === 0) setRequisitosAbiertos(false);
+    setSugerenciaSiguiente({ nivel, siguiente: pendientes[0] || null, restantes: pendientes.length, total: items.length });
   };
 
   const irASiguientePendiente = (id) => {
-    setRecursoSeleccionadoId(id);
+    seleccionarSujeto(id);
     setSugerenciaSiguiente(null);
   };
 
+  // "Cerrar" en la pregunta del siguiente: cierra también el modal de requisitos.
+  const cerrarRequisitosTrasEvaluar = () => {
+    setSugerenciaSiguiente(null);
+    setRequisitosAbiertos(false);
+  };
+
   // Al cerrar el aviso de "ya se evaluó todo": sube al inicio de la pantalla — con todo evaluado
-  // lo siguiente suele ser revisar el estado general/transicionar el Expediente, arriba del todo,
-  // no seguir mirando el detalle de la última persona/maquinaria evaluada.
+  // lo siguiente suele ser revisar el estado general/transicionar el Expediente, arriba del todo.
   const cerrarAvisoTodoEvaluado = () => {
     setSugerenciaSiguiente(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Transicionar de estado ya no tiene su propia card: se ofrece acá, en el mismo menú ⋮ del
-  // encabezado donde ya viven "Ir a Planilla de Evaluación"/"Ver historial" — sigue disponible
-  // también como acción de fila en el listado de Expedientes.
+  // Planilla de requisitos (Empresa / Persona / Recurso). El resumen y los "datos de la evaluación"
+  // ya no se dibujan dentro de la Planilla: viven en la cabecera y en las pestañas de esta pantalla.
+  const planilla = ["empresa", "persona", "recurso"].includes(nivelActivo) ? (
+    <PlanillaEvaluacion
+      expedienteId={id}
+      nivel={nivelActivo}
+      personaId={nivelActivo === "persona" ? seleccionadoId : null}
+      recursoId={nivelActivo === "recurso" ? seleccionadoId : null}
+      personaConocida={personaConocida}
+      recursoConocido={recursoConocido}
+      sujetoConocido={sujetoConocido}
+      embebido
+      mostrarResumen={false}
+      mostrarDatosEvaluacion={false}
+      navegacionSujeto={navegacionSujeto}
+      recargarSenal={recargarPlanillaSenal}
+      vencimientosPorInstancia={vencimientosPorInstancia}
+      itemInicial={nivelActivo === "vencimientos" ? null : params.get("item")}
+      key={`${nivelActivo}|${filtroRequisitos}`}
+      filtroInicial={filtroRequisitos}
+      onGuardado={() => (
+        (nivelActivo === "persona" || nivelActivo === "recurso") && seleccionadoId
+          ? verificarSugerenciaSiguiente(nivelActivo, seleccionadoId)
+          : cargarDatos(true)
+      )}
+    />
+  ) : null;
+
+  // Menú ⋮: navegación y las acciones de estado secundarias (cerrar en la fase de evaluación;
+  // correcciones de superadmin). La acción principal del estado va como botón.
   const accionesMenu = [
     { label: "Ir a Planilla de Evaluación", icon: ClipboardList, onClick: () => navigate(`/expedientes/${id}/evaluar`) },
     { label: "Ver historial", icon: History, onClick: irAHistorial },
-    ...(puedeTransicionar ? transicionesDisponibles.map((estadoDestino) => ({
-      label: `Transicionar a: ${estadoInfo(estadoDestino).label}`,
-      icon: ArrowRightCircle,
-      disabled: transicionando,
-      onClick: () => handleTransicionar(estadoDestino),
-    })) : []),
+    ...accionesEstado.accionesMenu,
   ];
 
+  const nombreEmpresa = empresa?.razonSocial || expediente.empresaId;
+  const fechaInicioParticipacion = participacion?.fechaInicio || null;
+  const proyectoTexto = proyecto ? `${proyecto.nombre} (${proyecto.codigo})` : expediente.proyectoId;
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-xs text-slate-400">
+        <Link to="/" className="hover:text-primary" aria-label="Inicio"><Home className="w-3.5 h-3.5" /></Link>
+        <ChevronRight className="w-3 h-3" />
         <Link to="/expedientes" className="font-semibold hover:text-primary">Expedientes</Link>
         <ChevronRight className="w-3 h-3" />
-        <span className="font-semibold text-slate-600">{empresa?.razonSocial || expediente.empresaId}</span>
+        <span className="font-semibold text-slate-600">{nombreEmpresa}</span>
       </nav>
 
       {/* Encabezado */}
       <div className="flex items-start justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3">
           <button
             type="button"
             onClick={() => navigate("/expedientes")}
@@ -604,15 +722,57 @@ export const ExpedienteDetailPage = () => {
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <h2 className="text-xl font-bold text-gray-900 tracking-tight">
-              {empresa?.razonSocial || expediente.empresaId}
-            </h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-xl font-bold text-gray-900 tracking-tight">{nombreEmpresa}</h2>
+              <Link
+                to={`/empresas/${expediente.empresaId}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-primary hover:bg-slate-50 whitespace-nowrap"
+              >
+                Ver detalle de empresa
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Link>
+            </div>
             <p className="text-xs text-gray-500">
               {proyecto ? `${proyecto.nombre} (${proyecto.codigo})` : expediente.proyectoId}
             </p>
+            {/* Contexto que no está en el título: RUT, Mandante, tipo de participación y fecha de inicio. */}
+            <dl className="flex items-center gap-x-5 gap-y-1.5 flex-wrap mt-2 text-xs">
+              {empresa?.rut && (
+                <div className="flex items-center gap-1.5">
+                  <dt className={CLASE_ETIQUETA_CONTEXTO}>RUT</dt>
+                  <dd className="font-mono text-slate-600">{formatRutDisplay(empresa.rut)}</dd>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <dt className={CLASE_ETIQUETA_CONTEXTO}>Mandante</dt>
+                <dd>
+                  {mandante
+                    ? <MandanteChip nombre={getMandanteDisplayName(mandante)} logoUrl={mandante.logoUrl || null} />
+                    : <span className="text-slate-400">-</span>}
+                </dd>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <dt className={CLASE_ETIQUETA_CONTEXTO}>Tipo de participación</dt>
+                <dd className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-primary-lighter text-primary-dark border border-primary-light">
+                  {perfil?.nombre || "-"}
+                </dd>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <dt className={CLASE_ETIQUETA_CONTEXTO}>Inicio participación</dt>
+                <dd className="font-bold text-carbon-dark">{formatFecha(fechaInicioParticipacion)}</dd>
+              </div>
+            </dl>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {cerrado && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+              <Lock className="w-3.5 h-3.5" />
+              Cerrado el {formatFecha(expediente.fechaCierre)}
+              {expediente.motivoCierre ? ` · ${etiquetaMotivoCierre(expediente.motivoCierre)}` : ""}
+            </span>
+          )}
+          {accionesEstado.botonPrincipal}
           <ActionButton icon={ArrowLeft} onClick={() => navigate("/expedientes")}>Ver en lista</ActionButton>
           {/* No existe generación de paquete/PDF del expediente: queda pendiente en vez de improvisar un formato. */}
           <ActionButton icon={Download} disabled title="Próximamente">Descargar expediente</ActionButton>
@@ -622,197 +782,434 @@ export const ExpedienteDetailPage = () => {
 
       <ErrorBanner message={error} />
 
-      {/* Banner de estado + stepper completo + contexto */}
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-5">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Estado</span>
-          <span className={`inline-flex items-center px-3.5 py-1.5 rounded-full text-sm font-black border ${ESTADO_MAP[expediente.estado]?.className || ""}`}>
-            {ESTADO_MAP[expediente.estado]?.label || expediente.estado}
-          </span>
-        </div>
-        <EstadoExpedienteStepper estado={expediente.estado} variante="completa" />
-        {/* Documentación adjunta: indicador aparte, no un paso — se puede aprobar sin adjuntar documentos
-            (verificación presencial), pero queda a la vista cuánto respaldo documental hay. */}
-        {totalPares > 0 && (
-          <div className="flex items-center gap-3 flex-wrap p-3 rounded-xl bg-slate-50 border border-slate-100">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Documentación adjunta</span>
-            <div className="flex-1 min-w-[8rem] h-1.5 bg-slate-200 rounded-full overflow-hidden">
-              <div className="h-full bg-primary rounded-full" style={{ width: `${pctDocumentacion}%` }} />
-            </div>
-            <span className="text-xs font-bold text-carbon-dark whitespace-nowrap">
-              {pctDocumentacion}%
-              <span className="ml-1.5 font-medium text-slate-400">
-                ({totalConDocumento} de {totalPares} requerimientos con documento)
-              </span>
-            </span>
-          </div>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-4 border-t border-slate-100">
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 min-w-0">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Mandante</p>
-            {mandante ? <MandanteChip nombre={getMandanteDisplayName(mandante)} logoUrl={mandante.logoUrl || null} /> : <span className="text-xs text-slate-400">-</span>}
-          </div>
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 min-w-0">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Proyecto</p>
-            <p className="text-xs font-bold text-carbon-dark truncate">{proyecto?.nombre || expediente.proyectoId}</p>
-            {proyecto?.codigo && <p className="text-[11px] text-slate-500 font-mono">{proyecto.codigo}</p>}
-          </div>
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 min-w-0">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Tipo de participación</p>
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-primary-lighter text-primary-dark border border-primary-light">
-              {perfil?.nombre || "-"}
-            </span>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 min-w-0">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Empresa</p>
-            <EmpresaChip nombre={empresa?.razonSocial || expediente.empresaId} logoUrl={empresa?.logoUrl || null} conIniciales />
-            {empresa?.rut && <p className="text-[11px] text-slate-500 font-mono mt-0.5">{formatRutDisplay(empresa.rut)}</p>}
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        {/* Vista General/Empresa/Personas/Maquinarias — el switch vive dentro de la tarjeta
-            "Cumplimiento Documental" de la Planilla (tabsNivel) y controla el resto: donut,
-            resumen, datos de la evaluación y tabla de requisitos. */}
-        <div>
-          <PlanillaEvaluacion
-            expedienteId={id}
-            nivel={nivelActivo === "general" ? "ninguno" : nivelActivo}
-            personaId={nivelActivo === "persona" ? seleccionadoId : null}
-            recursoId={nivelActivo === "recurso" ? seleccionadoId : null}
-            personaConocida={personaConocida}
-            recursoConocido={recursoConocido}
-            sujetoConocido={sujetoConocido}
-            embebido
-            mostrarResumen
-            mostrarDatosEvaluacion
-            tabsNivel={<SelectorNivel activo={nivelActivo} onChange={cambiarNivel} />}
-            tituloCumplimiento={nivelActivo === "general" ? "Cumplimiento Documental General" : "Cumplimiento Documental"}
-            navegacionSujeto={navegacionSujeto}
-            recargarSenal={recargarPlanillaSenal}
-            accionRequisitos={nivelActivo !== "general" && puedeConfigurarRequerimientos ? (
-              <button
-                type="button"
-                onClick={() => setConfigurarRequerimientosAbierto(true)}
-                title="Agrega o quita Requerimientos del Perfil de Participación de este Expediente — el cambio se aplica al catálogo del Perfil y también a este Expediente."
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-500 hover:bg-slate-50 hover:text-primary whitespace-nowrap"
-              >
-                <ListPlus className="w-3.5 h-3.5" />
-                Agregar Requerimiento
-              </button>
-            ) : null}
-            conteosGenerales={nivelActivo === "general" ? conteosGenerales : null}
-            sinEvaluarGeneral={nivelActivo === "general" ? sinEvaluarGeneral : 0}
-            resumenNiveles={resumenNiveles}
-            panelExtra={(nivelActivo === "persona" || nivelActivo === "recurso") ? (
-              <SelectorRecursoAsignado
-                key={nivelActivo}
-                tipo={nivelActivo}
-                items={itemsActivos}
-                seleccionadoId={seleccionadoId}
-                onSeleccionar={setRecursoSeleccionadoId}
-                empresaId={expediente.empresaId}
-                mandanteId={expediente.mandanteId}
-                proyectoDestinoId={expediente.proyectoId}
-                proyectoDestinoNombre={proyecto?.nombre}
-                onIngresado={() => { cargarOpciones(); cargarDatos(true); }}
-              />
-            ) : null}
-            onGuardado={() => (
-              (nivelActivo === "persona" || nivelActivo === "recurso") && seleccionadoId
-                ? verificarSugerenciaSiguiente(nivelActivo, seleccionadoId)
-                : cargarDatos(true)
-            )}
-          />
-        </div>
-
-        {/* Card: Historial (auditoría/trazabilidad) */}
-        <div ref={historialRef} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
+      {problemas && (
+        <div role="alert" className="flex items-center gap-3 flex-wrap px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span className="flex-1 min-w-[12rem] font-semibold">Completado con pendientes: {textoProblemas(problemas)}.</span>
           <button
             type="button"
-            onClick={toggleBitacora}
-            className="w-full flex items-center justify-between"
+            onClick={verRequisitosConProblemas}
+            className="font-bold text-amber-900 underline underline-offset-2 hover:text-amber-950 whitespace-nowrap"
           >
-            <div className="flex items-center gap-2">
-              <History className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Historial</h3>
-            </div>
-            {bitacoraAbierta ? (
-              <ChevronUp className="w-4 h-4 text-slate-400" />
-            ) : (
-              <ChevronDown className="w-4 h-4 text-slate-400" />
-            )}
+            Ver requisitos con problemas
           </button>
+        </div>
+      )}
+      {cerrado && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+          <Lock className="w-4 h-4 shrink-0" />
+          <span>
+            Expediente cerrado: solo lectura. No se puede evaluar, subir documentos ni asignar personas o maquinarias.
+            {expediente.detalleCierre ? ` Detalle: ${expediente.detalleCierre}` : ""}
+          </span>
+        </div>
+      )}
 
-          {bitacoraAbierta && (
-            <div className="pt-2">
-              {bitacoraCargando ? (
-                <p className="text-xs text-slate-400 text-center py-4">Cargando historial...</p>
-              ) : bitacoraError ? (
-                <ErrorBanner message={bitacoraError} />
-              ) : !bitacoraEventos || bitacoraEventos.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">Sin eventos registrados.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {bitacoraEventos.map((evento) => (
-                    <li key={evento.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                      <div>
-                        <p className="font-semibold text-slate-700">{describirEvento(evento)}</p>
-                        <p className="text-[11px] text-slate-400">{evento.actorNombre}</p>
+      {/* Desde Nueva Acreditación: el expediente se creó, pero no se pudo guardar su carpeta. */}
+      {params.get("aviso") === "repositorio" && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span className="mr-auto">El expediente se creó, pero no se pudo guardar la carpeta. Configúrala en la pestaña Documentación.</span>
+          <button type="button" onClick={() => cambiarNivel("documentacion")} className="font-bold underline">Ir a Documentación</button>
+          <button type="button" aria-label="Cerrar aviso" onClick={() => { const p = new URLSearchParams(params); p.delete("aviso"); setParams(p, { replace: true }); }} className="p-1 rounded hover:bg-amber-100"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
+      {/* Estado del Expediente */}
+      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
+        <EstadoExpedienteStepper estado={estadoVisible} variante="completa" fechas={fechasEtapas} />
+        {expediente.fechaInicioEjecucion && (
+          <p className="mt-4 text-center text-[11px] text-slate-500">
+            En faena desde el <strong className="text-slate-700">{formatFecha(expediente.fechaInicioEjecucion)}</strong>
+          </p>
+        )}
+      </div>
+
+      {/* Pestañas */}
+      <div>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-card min-w-0">
+          <TabsNivel
+            activo={nivelActivo}
+            onChange={(key) => { setFiltroRequisitos(""); cambiarNivel(key); }}
+            badges={badgesTabs}
+            ocultas={cerrado ? ["vencimientos"] : []}
+          />
+
+          <div className="p-6 space-y-6">
+            {/* ── General ── */}
+            {nivelActivo === "general" && (
+              <>
+                <div>
+                  <h3 className="text-base font-bold text-carbon-dark">Resumen General del Expediente</h3>
+                  <p className="text-xs text-slate-500">Vista consolidada del cumplimiento documental de todos los componentes.</p>
+                </div>
+
+                {!cerrado && (totalesVencimiento.vencidos > 0 || totalesVencimiento.proximos > 0) && (
+                  <div className={`flex items-center gap-3 flex-wrap px-4 py-3 rounded-xl border text-xs ${
+                    totalesVencimiento.vencidos ? "bg-red-50 border-red-200 text-red-800" : "bg-amber-50 border-amber-200 text-amber-800"
+                  }`}>
+                    <CalendarClock className="w-4 h-4 shrink-0" />
+                    <span className="flex-1 font-semibold">
+                      {[
+                        totalesVencimiento.vencidos ? `${totalesVencimiento.vencidos} vencido${totalesVencimiento.vencidos === 1 ? "" : "s"}` : null,
+                        totalesVencimiento.proximos ? `${totalesVencimiento.proximos} próximo${totalesVencimiento.proximos === 1 ? "" : "s"} a vencer` : null,
+                      ].filter(Boolean).join(" · ")}
+                    </span>
+                    <button type="button" onClick={() => cambiarNivel("vencimientos")} className="font-bold underline underline-offset-2 whitespace-nowrap">
+                      Ver vencimientos
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-100 p-5 space-y-4">
+                    <h4 className="text-sm font-bold text-carbon-dark">Cumplimiento Documental General</h4>
+                    <div className="flex items-center gap-6 flex-wrap">
+                      {/* Dona segmentada por estado, con los mismos colores de la leyenda. El % del
+                          centro es el cumplimiento, en el color de texto principal. */}
+                      <div className="relative shrink-0" style={{ width: 140, height: 140 }}>
+                        <MultiSegmentRing
+                          segments={dGeneral.segmentos.map((s) => ({ key: s.key, value: s.value, className: s.ring }))}
+                          size={140}
+                          strokeWidth={12}
+                          trackClassName={CLASE_PISTA_DONA}
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center text-2xl font-black text-carbon-dark">
+                          {dGeneral.avancePct === null ? "—" : `${dGeneral.avancePct}%`}
+                        </span>
                       </div>
-                      <span className="text-[11px] text-slate-400 flex-shrink-0">
-                        {formatTiempoRelativo(evento.createdAt)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+                      <ul className="flex-1 min-w-[10rem] space-y-2.5 text-xs">
+                        {dGeneral.segmentos.map((s) => ({ t: s.label, v: s.value, dot: s.dot })).map((f) => (
+                          <li key={f.t} className="flex items-center justify-between gap-3">
+                            <span className="flex items-center gap-2 text-slate-600">
+                              <span className={`w-2.5 h-2.5 rounded-full ${f.dot}`} />
+                              {f.t}
+                            </span>
+                            <span className="font-bold text-carbon-dark">
+                              {f.v}
+                              <span className="ml-1.5 font-medium text-slate-400">({pctDe(f.v, dGeneral.total)}%)</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {dGeneral.evaluados === 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-primary-lighter border border-primary-light text-xs text-primary-dark">
+                        <Info className="w-4 h-4 shrink-0" />
+                        Aún no hay requisitos evaluados.
+                      </div>
+                    )}
+                    {/* Documentación adjunta: indicador aparte del estado — se puede aprobar sin adjuntar
+                        documentos (verificación presencial), pero queda a la vista cuánto respaldo hay. */}
+                    {totalPares > 0 && (
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Documentación adjunta</p>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-primary rounded-full" style={{ width: `${pctDocumentacion}%` }} />
+                        </div>
+                        <p className="text-xs font-bold text-carbon-dark">
+                          {pctDocumentacion}%
+                          <span className="ml-1.5 font-medium text-slate-400">
+                            ({totalConDocumento} de {totalPares} requerimientos con documento)
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-100 p-5 space-y-3">
+                    <h4 className="text-sm font-bold text-carbon-dark">Resumen por componente</h4>
+                    {componentes.map(({ key, nombre, Icono, d }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => cambiarNivel(key)}
+                        className="w-full flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:border-primary-light hover:bg-slate-50 text-left transition-colors"
+                      >
+                        <EntityIconTile icon={Icono} />
+                        <span className="text-xs font-bold text-carbon-dark">{nombre}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold whitespace-nowrap">
+                          {d.total} requisitos
+                        </span>
+                        <span className="ml-auto"><PuntosEstado d={d} /></span>
+                        <BadgeAcreditacion pct={d.avancePct} umbrales={mandante?.umbralesAcreditacion} sinEvaluar={d.evaluados === 0} />
+                        <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <HistorialEstadosExpediente historial={historialEstados} expediente={expediente} />
+              </>
+            )}
+
+            {/* ── Empresa ── */}
+            {nivelActivo === "empresa" && (
+              <>
+                <KpisComponente d={dEmpresa} umbrales={mandante?.umbralesAcreditacion} />
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-carbon-dark">Requisitos de la empresa</h4>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">{dEmpresa.total}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">Listado de requerimientos asociados a la empresa para este proyecto.</p>
+                  <ConPanelDocumentos panel={panelDocumentos("empresa", null)}>{planilla}</ConPanelDocumentos>
+                </div>
+
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-primary-lighter border border-primary-light text-xs text-primary-dark">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>Este expediente corresponde a la participación de <strong>{nombreEmpresa}</strong> en 1 proyecto.</span>
+                </div>
+              </>
+            )}
+
+            {/* ── Documentación ── */}
+            {nivelActivo === "documentacion" && !repositorioDoc && !repositorioDocError && (
+              <p className="py-8 text-center text-xs text-slate-400">Cargando la documentación del expediente...</p>
+            )}
+            {nivelActivo === "documentacion" && !repositorioDoc && repositorioDocError && (
+              <div className="py-8 text-center space-y-2">
+                <p className="text-xs text-red-600">{repositorioDocError}</p>
+                <button type="button" onClick={() => { setRepositorioDocError(null); setRepositorioDocIntento((n) => n + 1); }}
+                  className="text-xs font-bold text-primary hover:underline">Reintentar</button>
+              </div>
+            )}
+            {nivelActivo === "documentacion" && repositorioDoc && (
+              <TabDocumentacion
+                expedienteId={id}
+                usuarioId={profile?.uid}
+                datos={repositorioDoc}
+                onActualizado={setRepositorioDoc}
+                empresa={empresa}
+                mandanteId={expediente.mandanteId}
+                puedeConfigurarBase={["superadmin", "mandante_admin"].includes(profile?.rol)}
+                puedeConfigurarFuente={profile?.rol === "superadmin"}
+              />
+            )}
+
+            {/* ── Revisiones IA ── */}
+            {nivelActivo === "revisiones_ia" && (
+              <RevisionIAExpediente
+                expediente={expediente}
+                usuarioId={profile?.uid}
+                rol={profile?.rol}
+                onEvaluarManual={evaluarManualDesdeRevision}
+              />
+            )}
+
+            {/* ── Vencimientos ── (un enlace directo a un Expediente ya cerrado no muestra la lista) */}
+            {nivelActivo === "vencimientos" && cerrado && (
+              <p className="py-8 text-center text-xs text-slate-400">El expediente está cerrado: no tiene vencimientos que gestionar.</p>
+            )}
+            {nivelActivo === "vencimientos" && !cerrado && (
+              <VencimientosExpediente
+                datos={vencimientos}
+                puedeRenovar={puedeEvaluarExpediente}
+                onRenovar={(it) => setRenovar({
+                  tipoEntidad: it.tipoEntidad, sujetoId: it.sujeto?.id, instanciaId: it.instanciaId,
+                  nombre: it.sujeto?.nombre, requerimiento: it.requerimiento?.nombreCorto,
+                })}
+                onVer={verRequerimientoVencido}
+                itemInicial={params.get("item")}
+              />
+            )}
+
+            {/* ── Personas / Recursos ── */}
+            {(nivelActivo === "persona" || nivelActivo === "recurso") && (
+              <>
+                <KpisComponente d={nivelActivo === "persona" ? dPersonas : dRecursos} umbrales={mandante?.umbralesAcreditacion} />
+                <SujetosAsignados
+                  key={nivelActivo}
+                  tipo={nivelActivo}
+                  items={itemsActivos}
+                  seleccionadoId={seleccionadoId}
+                  onSeleccionar={verDetalleSujeto}
+                  empresaId={expediente.empresaId}
+                  empresaNombre={nombreEmpresa}
+                  mandanteId={expediente.mandanteId}
+                  umbralesAcreditacion={mandante?.umbralesAcreditacion}
+                  proyectoDestinoId={expediente.proyectoId}
+                  proyectoDestinoNombre={proyecto?.nombre}
+                  proyectoTexto={proyectoTexto}
+                  perfilParticipacionNombre={perfil?.nombre}
+                  perfilParticipacionId={expediente.perfilParticipacionId}
+                  onIngresado={() => { cargarOpciones(); cargarDatos(true); }}
+                  puedeConfigurar={puedeConfigurarRequerimientos && !cerrado}
+                  puedeIngresar={!cerrado}
+                  alertasVencimiento={alertasPorSujeto}
+                  onConfigurar={() => setConfigurarRequerimientosAbierto(true)}
+                  onIrARequisitos={() => setRequisitosAbiertos(true)}
+                />
+                {/* Requisitos de la fila elegida, en un modal sobre el listado. Solo se cierra con la X
+                    o con Cerrar: un clic fuera no descarta una evaluación a medio completar. */}
+                {requisitosAbiertos && seleccionadoId && (
+                  <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 bg-black/40 overflow-y-auto">
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label={`Requisitos de ${itemsActivos.find((i) => i.id === seleccionadoId)?.nombre || ""}`}
+                      className="bg-slate-50 rounded-2xl shadow-dropdown w-full max-w-[96rem] my-auto"
+                    >
+                      <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-white rounded-t-2xl">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            {nivelActivo === "persona" ? "Requisitos de la persona" : "Requisitos de la maquinaria"}
+                          </p>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h3 className="text-base font-bold text-carbon-dark truncate">
+                              {itemsActivos.find((i) => i.id === seleccionadoId)?.nombre}
+                            </h3>
+                            {/* Tipo de trabajador (Perfiles de persona) o tipo de maquinaria. */}
+                            {itemsActivos.find((i) => i.id === seleccionadoId)?.subtitulo && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-primary-lighter border border-primary-light text-primary-dark text-[11px] font-bold whitespace-nowrap">
+                                {itemsActivos.find((i) => i.id === seleccionadoId).subtitulo}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setRequisitosAbiertos(false)}
+                          aria-label="Cerrar"
+                          className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="p-5">
+                        <ConPanelDocumentos panel={panelDocumentos(nivelActivo, nivelActivo === "persona" ? personaConocida : recursoConocido)}>
+                          {planilla}
+                        </ConPanelDocumentos>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Historial del expediente (auditoría/trazabilidad) */}
+      <div ref={historialRef} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card space-y-4">
+        <button
+          type="button"
+          onClick={toggleBitacora}
+          className="w-full flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Historial del expediente</h3>
+          </div>
+          {bitacoraAbierta ? (
+            <ChevronUp className="w-4 h-4 text-slate-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400" />
+          )}
+        </button>
+
+        {bitacoraAbierta && (
+          <div className="pt-2">
+            {bitacoraCargando ? (
+              <p className="text-xs text-slate-400 text-center py-4">Cargando historial...</p>
+            ) : bitacoraError ? (
+              <ErrorBanner message={bitacoraError} />
+            ) : !bitacoraEventos || bitacoraEventos.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-4">Sin eventos registrados.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {bitacoraEventos.map((evento) => (
+                  <li key={evento.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                    <div>
+                      <p className="font-semibold text-slate-700">{describirEvento(evento)}</p>
+                      <p className="text-[11px] text-slate-400">{evento.actorNombre || "Sistema"}</p>
+                    </div>
+                    <span className="text-[11px] text-slate-400 flex-shrink-0 text-right" title={formatTiempoRelativo(evento.createdAt)}>
+                      {formatFechaHora(evento.createdAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
+      {accionesEstado.modales}
+
+      {renovar && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 bg-black/40 overflow-y-auto">
+          <div role="dialog" aria-modal="true" aria-label="Renovar documento" className="bg-slate-50 rounded-2xl shadow-dropdown w-full max-w-6xl my-auto">
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 bg-white rounded-t-2xl">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Renovar documento</p>
+                <h3 className="text-base font-bold text-carbon-dark truncate">
+                  {renovar.requerimiento}{renovar.nombre ? ` — ${renovar.nombre}` : ""}
+                </h3>
+                <p className="text-[11px] text-slate-500">Adjunta el documento nuevo, marca SI con la nueva fecha de vencimiento y guarda.</p>
+              </div>
+              <button type="button" onClick={() => setRenovar(null)} aria-label="Cerrar" className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5">
+              <PlanillaEvaluacion
+                expedienteId={id}
+                nivel={renovar.tipoEntidad}
+                personaId={renovar.tipoEntidad === "persona" ? renovar.sujetoId : null}
+                recursoId={renovar.tipoEntidad === "recurso" ? renovar.sujetoId : null}
+                embebido
+                mostrarResumen={false}
+                mostrarDatosEvaluacion={false}
+                soloInstanciaId={renovar.instanciaId}
+                vencimientosPorInstancia={vencimientosPorInstancia}
+                onGuardado={() => { setRenovar(null); cargarDatos(true); }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {sugerenciaSiguiente && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-          onClick={sugerenciaSiguiente.opciones.length === 0 ? cerrarAvisoTodoEvaluado : () => setSugerenciaSiguiente(null)}
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40"
+          onClick={sugerenciaSiguiente.siguiente ? undefined : cerrarAvisoTodoEvaluado}
         >
-          <div className="bg-white rounded-2xl shadow-dropdown w-full max-w-sm p-6 space-y-4 max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl shadow-dropdown w-full max-w-sm p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-sage-lighter text-sage-darker flex items-center justify-center shrink-0">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
               <h3 className="text-sm font-bold text-carbon-dark">
-                {sugerenciaSiguiente.opciones.length > 0 ? "Evaluación completa" : "¡Todo evaluado!"}
+                {sugerenciaSiguiente.siguiente ? "Evaluación completa" : "¡Todo evaluado!"}
               </h3>
             </div>
 
-            {sugerenciaSiguiente.opciones.length > 0 ? (
+            {sugerenciaSiguiente.siguiente ? (
               <>
                 <p className="text-xs text-slate-500">
-                  Todavía {sugerenciaSiguiente.opciones.length === 1 ? "queda 1 pendiente" : `quedan ${sugerenciaSiguiente.opciones.length} pendientes`} en {sugerenciaSiguiente.nivel === "persona" ? "Personas" : "Maquinarias"}.
-                  Elige con cuál continuar:
+                  {sugerenciaSiguiente.restantes === 1
+                    ? `Queda 1 ${sugerenciaSiguiente.nivel === "persona" ? "persona" : "maquinaria"} pendiente.`
+                    : `Quedan ${sugerenciaSiguiente.restantes} ${sugerenciaSiguiente.nivel === "persona" ? "personas" : "maquinarias"} pendientes.`}
+                  {" "}¿Quieres evaluar a la siguiente?
                 </p>
-                <ul className="space-y-1.5 overflow-y-auto flex-1 min-h-0 -mx-1 px-1">
-                  {sugerenciaSiguiente.opciones.map((op) => (
-                    <li key={op.id}>
-                      <button
-                        type="button"
-                        onClick={() => irASiguientePendiente(op.id)}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-slate-100 hover:border-primary hover:bg-primary-lighter text-left transition-colors"
-                      >
-                        <span className="min-w-0">
-                          <span className="block text-xs font-bold text-carbon-dark truncate">{op.nombre}</span>
-                          {op.subtitulo && <span className="block text-[11px] text-slate-400 truncate">{op.subtitulo}</span>}
-                        </span>
-                        <span className="shrink-0 text-primary text-xs font-bold">Continuar →</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex items-center justify-end">
-                  <ActionButton onClick={() => setSugerenciaSiguiente(null)}>Quedarme aquí</ActionButton>
+                <div className="px-3 py-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                  <p className="text-xs font-bold text-carbon-dark break-words">{sugerenciaSiguiente.siguiente.nombre}</p>
+                  {sugerenciaSiguiente.siguiente.subtitulo && (
+                    <p className="text-[11px] text-slate-400 break-words">{sugerenciaSiguiente.siguiente.subtitulo}</p>
+                  )}
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <ActionButton onClick={cerrarRequisitosTrasEvaluar}>Cerrar</ActionButton>
+                  <ActionButton variant="primary" onClick={() => irASiguientePendiente(sugerenciaSiguiente.siguiente.id)}>
+                    Seguir evaluando
+                  </ActionButton>
                 </div>
               </>
             ) : (

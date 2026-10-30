@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { expedienteService } from "../../services/expedienteService";
-import { evaluacionService } from "../../services/evaluacionService";
 import { StatusBadge, MAPA_EVALUACION } from "../shared/StatusBadge";
 import { RequerimientosLista } from "../shared/RequerimientosLista";
 import { ActionButton } from "../shared/ActionButton";
 import { PlanillaEvaluacion } from "../expedientes/PlanillaEvaluacion";
 import { BarraCumplimiento } from "./EmpresasParticipantesTable";
-import { aplicaRequerimientoASujeto } from "../../utils/aplicabilidadRequerimiento";
 
 const NIVELES = [
   { key: "empresa", label: "Empresa" },
@@ -16,13 +14,11 @@ const NIVELES = [
 
 const RESUELTOS = ["cumple", "no_aplica"];
 
-// Requerimientos aplicables de los Expedientes abiertos del Proyecto, uno por
-// Empresa. Solo lectura. Los de nivel Empresa muestran su resultado; los de
-// Persona/Maquinaria, cuántos de los asignados ya los cumplen (una Evaluación
-// ausente cuenta como pendiente, igual que
-// expedienteService._validarEvaluacionesCompletas). El % de cada Empresa viene
-// de `participantes` (endpoint de reportes, _calcularAvanceRequerimientos): acá
-// no se recalcula cumplimiento.
+// Requerimientos de los Expedientes abiertos del Proyecto, uno por Empresa, a partir de sus
+// instancias activas (expedienteRequerimientos). Solo lectura. Los de nivel Empresa muestran su
+// resultado; los de Persona/Maquinaria, cuántas de sus instancias ya están resueltas (cumple o no
+// aplica) sobre el total. El % de cada Empresa viene de `participantes` (contadores del
+// Expediente): acá no se recalcula cumplimiento.
 //
 // En modo edición (`modoEdicion`) cada Empresa suma una sección "Evaluar": la Empresa,
 // sus Personas y sus Maquinarias, cada uno con la MISMA planilla de evaluación de
@@ -38,15 +34,14 @@ export const RequerimientosProyecto = ({
 
   useEffect(() => {
     let activo = true;
-    Promise.all([
-      expedienteService.listar({}),
-      evaluacionService.listarGlobal({ proyectoId }),
-    ])
-      .then(([expedientes, evaluaciones]) => {
+    expedienteService.listar({})
+      .then(async (todos) => {
+        const expedientes = (todos || []).filter((e) => e.proyectoId === proyectoId && e.estado !== "cerrado");
+        const instancias = await Promise.all(expedientes.map((e) => expedienteService.listarRequerimientos(e.id)));
         if (!activo) return;
         setDatos({
-          expedientes: (expedientes || []).filter((e) => e.proyectoId === proyectoId && e.estado !== "cerrado"),
-          vigentes: (evaluaciones || []).filter((ev) => ev.estado === "vigente"),
+          expedientes,
+          instanciasPorExpediente: Object.fromEntries(expedientes.map((e, i) => [e.id, instancias[i] || []])),
         });
       })
       .catch(() => { if (activo) setDatos(null); });
@@ -69,8 +64,19 @@ export const RequerimientosProyecto = ({
       {datos.expedientes.map((exp) => {
         const empresa = participantes.find((p) => p.empresaId === exp.empresaId);
         const sujetosEmpresa = sujetos.filter((a) => a.participacionId === exp.participacionId);
-        const evaluacionesExp = datos.vigentes.filter((ev) => ev.expedienteId === exp.id);
-        const aplicables = exp.requerimientosAplicables || [];
+        const instancias = datos.instanciasPorExpediente[exp.id] || [];
+        // Un renglón por Requerimiento (las instancias de Persona/Maquinaria se agrupan).
+        const porRequerimiento = new Map();
+        instancias.forEach((i) => {
+          if (!porRequerimiento.has(i.requerimientoId)) {
+            porRequerimiento.set(i.requerimientoId, {
+              requerimientoId: i.requerimientoId, nombre: i.nombre, nombreCorto: i.nombreCorto,
+              tipoEntidad: i.tipoEntidad, requiereVencimiento: i.requiereVencimiento, instancias: [],
+            });
+          }
+          porRequerimiento.get(i.requerimientoId).instancias.push(i);
+        });
+        const aplicables = [...porRequerimiento.values()];
 
         return (
           <div key={exp.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
@@ -88,7 +94,6 @@ export const RequerimientosProyecto = ({
               NIVELES.map(({ key, label }) => {
                 const items = aplicables.filter((r) => r.tipoEntidad === key);
                 if (items.length === 0) return null;
-                const campo = key === "persona" ? "personaId" : "recursoId";
                 return (
                   <div key={key}>
                     <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">{label}</p>
@@ -96,24 +101,10 @@ export const RequerimientosProyecto = ({
                       items={items}
                       renderEstado={(r) => {
                         if (key === "empresa") {
-                          const ev = evaluacionesExp.find(
-                            (e) => e.requerimientoId === r.requerimientoId && !e.personaId && !e.recursoId,
-                          );
-                          return <StatusBadge value={ev?.resultado || "pendiente"} map={MAPA_EVALUACION} />;
+                          return <StatusBadge value={r.instancias[0]?.resultado || "pendiente"} map={MAPA_EVALUACION} />;
                         }
-                        const sujetos = [...new Set(
-                          sujetosEmpresa
-                            .filter((a) => a[campo] && aplicaRequerimientoASujeto(r, a))
-                            .map((a) => a[campo]),
-                        )];
-                        const cumplen = sujetos.filter((sujetoId) =>
-                          evaluacionesExp.some(
-                            (e) => e.requerimientoId === r.requerimientoId && e[campo] === sujetoId && RESUELTOS.includes(e.resultado),
-                          ),
-                        ).length;
-                        return sujetos.length === 0
-                          ? <span className="text-xs text-slate-400">Sin asignados</span>
-                          : <span className="text-xs font-bold text-carbon-dark">{cumplen}/{sujetos.length} cumplen</span>;
+                        const cumplen = r.instancias.filter((i) => RESUELTOS.includes(i.resultado)).length;
+                        return <span className="text-xs font-bold text-carbon-dark">{cumplen}/{r.instancias.length} cumplen</span>;
                       }}
                     />
                   </div>

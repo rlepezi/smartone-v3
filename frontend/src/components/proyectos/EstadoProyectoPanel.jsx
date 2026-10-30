@@ -36,9 +36,10 @@ export const EstadoProyectoPanel = ({ proyectoId }) => {
           participaciones: (participantes || []).length,
           requerimientos: delProyecto
             .filter((e) => e.estado !== "cerrado")
-            .reduce((acc, e) => acc + (e.requerimientosAplicables || []).length, 0),
+            .reduce((acc, e) => acc + (e.resumen?.activas || 0), 0),
           documentos: (evidencias || []).filter((ev) => ids.has(ev.expedienteId)).length,
-          evaluaciones: (req.cumple || 0) + (req.noCumple || 0) + (req.pendiente || 0) + (req.noAplica || 0),
+          // Requerimientos ya evaluados (cumple / no cumple / no aplica).
+          evaluaciones: (req.cumple || 0) + (req.noCumple || 0) + (req.noAplica || 0),
         });
       })
       .catch(() => { if (activo) setDatos(null); });

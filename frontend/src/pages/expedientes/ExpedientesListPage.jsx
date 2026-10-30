@@ -1,20 +1,18 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { BadgeAcreditacion } from "../../components/shared/BadgeAcreditacion";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { FileCheck2, Gauge, ClipboardList, Clock, Users, Truck } from "lucide-react";
+import { FileCheck2, Users, Truck, AlertTriangle } from "lucide-react";
+import { problemasExpediente, textoProblemas, estadoVisibleExpediente } from "../../utils/alertasExpediente";
 import { expedienteService, ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
+import { estadoVencimientosExpediente } from "../../utils/vencimientos";
 import { proyectoService } from "../../services/proyectoService";
 import { empresaService } from "../../services/empresaService";
-import { evaluacionService } from "../../services/evaluacionService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { mandanteService } from "../../services/mandanteService";
 import { MandanteChip } from "../../components/shared/MandanteChip";
-import { formatFecha } from "../../utils/fechaFormatters";
-import {
-  calcularConteosEvaluacion,
-  calcularSinEvaluar,
-  calcularConteosPorEstadoExpediente,
-} from "../../utils/cumplimientoCalculos";
+import { formatFecha } from "../../utils/fechas";
+import { porcentajeCumplimiento, resumenDeExpedientes, evaluadosDe } from "../../utils/cumplimientoCalculos";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { FilterBar } from "../../components/shared/FilterBar";
@@ -23,7 +21,6 @@ import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { EstadoExpedienteStepper } from "../../components/shared/EstadoExpedienteStepper";
 import { Pagination } from "../../components/shared/Pagination";
 import { EstadoCumplimientoPanel } from "../../components/shared/EstadoCumplimientoPanel";
-import { ExpedientesPorEstadoBars } from "../../components/shared/ExpedientesPorEstadoBars";
 
 const COLUMNS = [
   { key: "empresa", label: "Empresa" },
@@ -35,12 +32,6 @@ const COLUMNS = [
   { key: "cumplimiento", label: "Cumplimiento" },
   { key: "fechaCreacion", label: "Fecha Creación" },
 ];
-
-const createdAtMillis = (item) => {
-  if (item.createdAt?._seconds) return item.createdAt._seconds * 1000;
-  if (item.createdAt) return new Date(item.createdAt).getTime() || 0;
-  return 0;
-};
 
 // Personas y Maquinarias activas del Expediente (conteo del backend), con los mismos íconos que el
 // panel "Resumen de la Acreditación". Un 0 se muestra como 0.
@@ -62,32 +53,23 @@ const RecursosCelda = ({ personas = 0, maquinarias = 0 }) => {
   );
 };
 
-// Mismos umbrales que pidió el usuario — no hay ningún umbral de color
-// por % ya definido en otro lado de la app (se revisó ReportesPage.jsx,
-// que muestra el % en texto plano, sin semáforo) con el que ser
-// consistente.
-const claseCumplimiento = (pct) => {
-  if (pct === null || pct === undefined) return "bg-slate-100 text-slate-500 border-slate-200";
-  if (pct >= 70) return "bg-sage-lighter text-sage-darker border-sage-light";
-  if (pct >= 40) return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-red-50 text-red-700 border-red-200";
-};
-
 export const ExpedientesListPage = () => {
   const navigate = useNavigate();
-  // Filtro inicial desde la URL (ej. "?estado=con_observaciones") — se lee
-  // una sola vez al montar.
-  const [searchParams] = useSearchParams();
-
   const [expedientes, setExpedientes] = useState([]);
   const [proyectosMap, setProyectosMap] = useState({});
   const [empresasMap, setEmpresasMap] = useState({});
   const [perfilesMap, setPerfilesMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filtroEstado, setFiltroEstado] = useState(() => searchParams.get("estado") || "");
   const [filtroProyecto, setFiltroProyecto] = useState("");
   const [filtroEmpresa, setFiltroEmpresa] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("");
+  // Vencimientos: "" | "vencidos" | "proximos". Se puede abrir filtrado desde el Dashboard
+  // ("Ver todos" de Vencimientos próximos: ?vencimientos=vencidos|proximos).
+  const [searchParams] = useSearchParams();
+  const [filtroVencimientos, setFiltroVencimientos] = useState(() => (
+    ["vencidos", "proximos"].includes(searchParams.get("vencimientos")) ? searchParams.get("vencimientos") : ""
+  ));
   const [filtroMandante, setFiltroMandante] = useState("");
   // Nombre y logo de los Mandantes presentes en los Expedientes (Expediente ya guarda mandanteId).
   const [mandantesInfo, setMandantesInfo] = useState({});
@@ -95,20 +77,12 @@ export const ExpedientesListPage = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Evaluaciones vigentes en alcance del actor — mismo endpoint que ya
-  // usa el Dashboard, esta pantalla no lo llamaba antes. Necesario para
-  // los 4 paneles resumen y para la columna "Cumplimiento" por fila.
-  const [evaluacionesTodas, setEvaluacionesTodas] = useState([]);
-  const [cargandoEvaluaciones, setCargandoEvaluaciones] = useState(true);
-
-  const tablaRef = useRef(null);
-
   const cargarExpedientes = async () => {
     setLoading(true);
     setError(null);
     try {
       // incluirConteo: cantidadPersonas/cantidadMaquinarias por expediente en esta misma respuesta.
-      const data = await expedienteService.listar({ estado: filtroEstado || undefined, incluirConteo: true });
+      const data = await expedienteService.listar({ incluirConteo: true });
       setExpedientes(data || []);
     } catch (err) {
       console.error("Error al cargar expedientes:", err);
@@ -120,19 +94,11 @@ export const ExpedientesListPage = () => {
 
   useEffect(() => {
     cargarExpedientes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroEstado]);
-
-  useEffect(() => {
-    evaluacionService.listarVigentes()
-      .then((data) => setEvaluacionesTodas(data || []))
-      .catch((err) => console.error("Error al cargar evaluaciones:", err))
-      .finally(() => setCargandoEvaluaciones(false));
   }, []);
 
   useEffect(() => {
     setPage(1);
-  }, [filtroEstado, filtroProyecto, filtroEmpresa, filtroMandante, searchTerm]);
+  }, [filtroProyecto, filtroEmpresa, filtroMandante, filtroEstado, filtroVencimientos, searchTerm]);
 
   const mandanteIdsKey = [...new Set(expedientes.map((e) => e.mandanteId).filter(Boolean))].sort().join(",");
   useEffect(() => {
@@ -140,7 +106,7 @@ export const ExpedientesListPage = () => {
     Promise.all(
       mandanteIdsKey.split(",").map((id) =>
         mandanteService.obtenerPorId(id)
-          .then((m) => [id, { nombre: getMandanteDisplayName(m) || id, logoUrl: m?.logoUrl || null }])
+          .then((m) => [id, { nombre: getMandanteDisplayName(m) || id, logoUrl: m?.logoUrl || null, umbrales: m?.umbralesAcreditacion || null }])
           .catch(() => [id, { nombre: id, logoUrl: null }]),
       ),
     ).then((pares) => setMandantesInfo((prev) => ({ ...prev, ...Object.fromEntries(pares) })));
@@ -172,14 +138,8 @@ export const ExpedientesListPage = () => {
       .catch((err) => console.error("Error al cargar perfiles de participación:", err));
   }, []);
 
-  // avancePct por Expediente puntual — mismo criterio "evaluables excluye
-  // no_aplica" que ya usan reporteService.js/EvaluarExpedientePage (no es
-  // el % del donut de "Estado General", que además incluye "Sin Evaluar"
-  // en el denominador — son dos cálculos con propósitos distintos).
-  const avancePorExpediente = (expedienteId) => {
-    const propias = evaluacionesTodas.filter((ev) => ev.expedienteId === expedienteId);
-    return calcularConteosEvaluacion(propias).avancePct;
-  };
+  // % de cumplimiento por Expediente: de sus contadores (cumple / (activas − no aplica)).
+  const avancePorExpediente = (expediente) => porcentajeCumplimiento(expediente.resumen);
 
   const expedientesFiltrados = expedientes.filter((item) => {
     const term = searchTerm.toLowerCase();
@@ -191,24 +151,20 @@ export const ExpedientesListPage = () => {
     const matchProyecto = !filtroProyecto || item.proyectoId === filtroProyecto;
     const matchEmpresa = !filtroEmpresa || item.empresaId === filtroEmpresa;
     const matchMandante = !filtroMandante || item.mandanteId === filtroMandante;
-    return matchTerm && matchProyecto && matchEmpresa && matchMandante;
+    const matchEstado = !filtroEstado || item.estado === filtroEstado;
+    // Desde resumen.fechaVencimientoMasProxima contra hoy, sin consultas por fila.
+    const matchVencimientos = !filtroVencimientos || estadoVencimientosExpediente(item) === filtroVencimientos;
+    return matchTerm && matchProyecto && matchEmpresa && matchMandante && matchEstado && matchVencimientos;
   });
 
   const expedientesPaginados = expedientesFiltrados.slice((page - 1) * pageSize, page * pageSize);
 
-  // Los 4 paneles resumen reflejan el MISMO conjunto ya filtrado que se
-  // ve en la tabla de abajo (Estado + Proyecto + Empresa + buscador) —
-  // "esto es lo que estás viendo", no un resumen aparte del total global.
-  const idsFiltrados = new Set(expedientesFiltrados.map((e) => e.id));
-  const evaluacionesEnAlcance = evaluacionesTodas.filter((ev) => idsFiltrados.has(ev.expedienteId));
-  const { conteos: conteosEvaluacion } = calcularConteosEvaluacion(evaluacionesEnAlcance);
-  const sinEvaluarCount = calcularSinEvaluar(expedientesFiltrados, evaluacionesEnAlcance);
-  const conteosPorEstadoExp = calcularConteosPorEstadoExpediente(expedientesFiltrados, ESTADOS_EXPEDIENTE);
-  const recientes = [...expedientesFiltrados]
-    .sort((a, b) => createdAtMillis(b) - createdAtMillis(a))
-    .slice(0, 3);
+  // El resumen de cumplimiento del encabezado refleja el MISMO conjunto ya filtrado que se ve en la
+  // tabla de abajo (Mandante + Proyecto + Empresa + Estado + buscador) — "esto es lo
+  // que estás viendo", no un resumen aparte del total global.
+  const resumenFiltrado = resumenDeExpedientes(expedientesFiltrados);
 
-  const resumenListo = !loading && !cargandoEvaluaciones;
+  const resumenListo = !loading;
 
   return (
     <div className="space-y-6">
@@ -218,109 +174,23 @@ export const ExpedientesListPage = () => {
         subtitle="Proceso de acreditación por Empresa y Proyecto."
         loading={loading}
         onRefresh={cargarExpedientes}
+        resumen={(
+          <EstadoCumplimientoPanel
+            variante="encabezado"
+            resumen={resumenFiltrado}
+            cargando={!resumenListo}
+            vacio={expedientesFiltrados.length === 0}
+          />
+        )}
       />
 
       <ErrorBanner message={error} />
-
-      {/* Paneles resumen */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <Gauge className="w-4 h-4 text-slate-400" />
-            <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Estado General</h2>
-          </div>
-          {!resumenListo ? (
-            <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-          ) : (
-            <EstadoCumplimientoPanel conteos={conteosEvaluacion} sinEvaluar={sinEvaluarCount} size={110} strokeWidth={12} />
-          )}
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <FileCheck2 className="w-4 h-4 text-slate-400" />
-            <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Total de Expedientes</h2>
-          </div>
-          {!resumenListo ? (
-            <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-          ) : (
-            <div>
-              <p className="text-3xl font-black text-carbon-dark">{expedientesFiltrados.length}</p>
-              <div className="grid grid-cols-3 gap-2 mt-4">
-                <div className="text-center">
-                  <p className="text-base font-black text-sage-dark">{conteosEvaluacion.cumple}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Cumple</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-base font-black text-primary-dark">{conteosPorEstadoExp.en_revision || 0}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">En Revisión</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-base font-black text-amber-600">{conteosEvaluacion.pendiente}</p>
-                  <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Pendientes</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <ClipboardList className="w-4 h-4 text-slate-400" />
-            <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Expedientes por Estado</h2>
-          </div>
-          {!resumenListo ? (
-            <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-          ) : (
-            <ExpedientesPorEstadoBars conteos={conteosPorEstadoExp} />
-          )}
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-slate-400" />
-              <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Expedientes Recientes</h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => tablaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              className="text-xs font-bold text-primary hover:text-primary-dark"
-            >
-              Ver todos
-            </button>
-          </div>
-          {!resumenListo ? (
-            <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-          ) : recientes.length === 0 ? (
-            <div className="py-8 text-center text-slate-400 text-xs">Sin expedientes registrados.</div>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {recientes.map((exp) => (
-                <li key={exp.id} className="py-2.5 text-xs">
-                  <p className="font-bold text-carbon-dark truncate">{empresasMap[exp.empresaId] || exp.empresaId}</p>
-                  <p className="text-[11px] text-slate-400">{formatFecha(exp.createdAt)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
 
       <FilterBar
         searchValue={searchTerm}
         onSearchChange={setSearchTerm}
         searchPlaceholder="Buscar por proyecto o empresa..."
         filters={[
-          {
-            label: "Estado",
-            value: filtroEstado,
-            onChange: setFiltroEstado,
-            options: [
-              { value: "", label: "Todos los estados" },
-              ...ESTADOS_EXPEDIENTE.map((e) => ({ value: e.value, label: e.label })),
-            ],
-          },
           {
             label: "Mandante",
             conBusqueda: true,
@@ -351,12 +221,31 @@ export const ExpedientesListPage = () => {
               ...Object.entries(empresasMap).map(([id, label]) => ({ value: id, label })),
             ],
           },
+          {
+            label: "Estado",
+            value: filtroEstado,
+            onChange: setFiltroEstado,
+            options: [
+              { value: "", label: "Todos los estados" },
+              ...ESTADOS_EXPEDIENTE.map((e) => ({ value: e.value, label: e.label })),
+            ],
+          },
+          {
+            label: "Vencimientos",
+            value: filtroVencimientos,
+            onChange: setFiltroVencimientos,
+            options: [
+              { value: "", label: "Todos" },
+              { value: "vencidos", label: "Con vencidos" },
+              { value: "proximos", label: "Próximos a vencer" },
+            ],
+          },
         ]}
       />
 
       {/* Grilla de una columna con hijo `min-w-0`: sin esto, el ancho mínimo de la tabla empuja todo
           el layout y aparece scroll en la página en vez de dentro de la tabla (ver DataTable.jsx). */}
-      <div ref={tablaRef} className="grid grid-cols-1">
+      <div className="grid grid-cols-1">
         <div className="min-w-0">
         <DataTable
           columns={COLUMNS}
@@ -366,7 +255,7 @@ export const ExpedientesListPage = () => {
           emptyLabel="No se encontraron expedientes registrados."
           compact
           renderRow={(item) => {
-            const pct = avancePorExpediente(item.id);
+            const pct = avancePorExpediente(item);
             return (
               <tr
                 key={item.id}
@@ -400,12 +289,21 @@ export const ExpedientesListPage = () => {
                   <RecursosCelda personas={item.cantidadPersonas} maquinarias={item.cantidadMaquinarias} />
                 </td>
                 <td className="py-4 px-4">
-                  <EstadoExpedienteStepper estado={item.estado} />
+                  <div className="flex items-start gap-1.5">
+                    <EstadoExpedienteStepper estado={estadoVisibleExpediente(item)} />
+                    {problemasExpediente(item) && (
+                      <AlertTriangle
+                        className="w-4 h-4 text-amber-500 shrink-0"
+                        aria-label={`Completado con pendientes: ${textoProblemas(problemasExpediente(item))}`}
+                      >
+                        <title>{`Completado con pendientes: ${textoProblemas(problemasExpediente(item))}`}</title>
+                      </AlertTriangle>
+                    )}
+                  </div>
                 </td>
                 <td className="py-4 px-4">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${claseCumplimiento(pct)}`}>
-                    {pct === null ? "-" : `${pct}%`}
-                  </span>
+                  {/* % con su nivel según los umbrales del Mandante del Expediente. */}
+                  <BadgeAcreditacion pct={pct} umbrales={mandantesInfo[item.mandanteId]?.umbrales} sinEvaluar={evaluadosDe(item.resumen) === 0} />
                 </td>
                 <td className="py-4 px-4 text-slate-600 font-medium">
                   <p>{formatFecha(item.createdAt)}</p>

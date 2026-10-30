@@ -21,7 +21,7 @@ const Avatar = ({ opcion }) => (
 export const SelectConBusqueda = ({
   value, onChange, options = [], placeholder = "Buscar...",
   conAvatar = false, bloque = false, disabled = false, invalido = false, textoVacio = "Todos",
-  autoFocus = false,
+  autoFocus = false, anchoCompleto = false, ariaLabel,
 }) => {
   const [abierto, setAbierto] = useState(false);
   const [termino, setTermino] = useState("");
@@ -54,9 +54,10 @@ export const SelectConBusqueda = ({
         disabled={disabled}
         autoFocus={autoFocus}
         onClick={() => setAbierto((v) => !v)}
+        aria-label={ariaLabel}
         className={bloque
           ? `w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 ${invalido ? "border-red-400 bg-red-50/30" : "border-gray-200"}`
-          : "flex items-center justify-between gap-2 min-w-[9rem] max-w-[14rem] px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"}
+          : `flex items-center justify-between gap-2 ${anchoCompleto ? "w-full" : "min-w-[9rem] max-w-[14rem]"} px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all`}
       >
         <span className="flex items-center gap-2 min-w-0">
           {conAvatar && seleccionada && seleccionada.value !== "" && <Avatar opcion={seleccionada} />}
@@ -85,15 +86,20 @@ export const SelectConBusqueda = ({
             )}
             {visibles.map((o) => (
               <li key={o.value}>
+                {/* Opción con `deshabilitada: true`: visible pero no elegible, con su `nota`. */}
                 <button
                   type="button"
+                  disabled={o.deshabilitada}
                   onClick={() => elegir(o.value)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-50 flex items-center gap-2 ${
-                    o.value === value ? "font-bold text-primary-dark bg-primary-lighter" : "text-slate-700"
+                  title={o.deshabilitada ? o.nota : undefined}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 ${
+                    o.deshabilitada ? "text-slate-400 cursor-not-allowed"
+                      : o.value === value ? "font-bold text-primary-dark bg-primary-lighter hover:bg-slate-50" : "text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   {conAvatar && o.value !== "" && <Avatar opcion={o} />}
                   <span className="truncate">{o.label}</span>
+                  {o.deshabilitada && o.nota && <span className="ml-auto shrink-0 text-[10px] font-semibold text-slate-400">{o.nota}</span>}
                 </button>
               </li>
             ))}

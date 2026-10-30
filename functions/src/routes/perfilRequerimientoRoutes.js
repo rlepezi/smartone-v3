@@ -22,9 +22,8 @@ router.get(
     requireRole(ROLES_LECTURA),
     perfilRequerimientoController.matriz,
 );
-router.post(
-    "/", requireRole(ROLES_ESCRITURA), perfilRequerimientoController.create,
-);
+// Los vínculos se crean con el guardado atómico de un Requerimiento
+// (POST/PUT /requerimientos) o fijando el estado deseado de varios pares.
 router.post(
     "/sincronizar",
     requireRole(ROLES_ESCRITURA),

@@ -11,7 +11,7 @@ import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { mandanteService } from "../../services/mandanteService";
 import { MandanteChip } from "../../components/shared/MandanteChip";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { FilterBar } from "../../components/shared/FilterBar";
@@ -108,13 +108,6 @@ export const EvaluacionesListPage = () => {
       })
       .catch((err) => console.error("Error al cargar empresas:", err));
 
-    requerimientoService.listar({})
-      .then((data) => {
-        const map = {};
-        (data || []).forEach((r) => { map[r.id] = r.nombre; });
-        setRequerimientosMap(map);
-      })
-      .catch((err) => console.error("Error al cargar requerimientos:", err));
 
     personaService.listar()
       .then((data) => {
@@ -149,7 +142,11 @@ export const EvaluacionesListPage = () => {
           .catch(() => [id, { nombre: id, logoUrl: null }]),
       ),
     ).then((pares) => setMandantesInfo((prev) => ({ ...prev, ...Object.fromEntries(pares) })));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Nombres de Requerimiento: la Evaluación solo guarda el requerimientoId, así que se piden los
+    // Requerimientos de los Mandantes presentes en el listado (nunca el catálogo completo).
+    requerimientoService.nombresDeMandantes(mandanteIdsKey.split(","))
+      .then((mapa) => setRequerimientosMap((prev) => ({ ...prev, ...mapa })))
+      .catch((err) => console.error("Error al cargar requerimientos:", err));
   }, [mandanteIdsKey]);
 
   const resolverAplicaA = (item) => {

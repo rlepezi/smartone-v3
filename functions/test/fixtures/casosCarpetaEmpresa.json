@@ -1,0 +1,30 @@
+{
+  "_comentario": "Casos compartidos de validarCarpetaEmpresa (frontend y backend). Datos sintéticos.",
+  "validacion": [
+    {"caso": "Prefijo y sufijo S.A.", "carpeta": "1. TECNORED", "empresa": {"razonSocial": "TECNORED SA", "rut": "77.104.219-8"}, "valida": true, "coincidencia": "razonSocial"},
+    {"caso": "Nombre con paréntesis", "carpeta": "21. SLV (Proyectos 2024)", "empresa": {"razonSocial": "SLV", "rut": "76.111.222-3"}, "valida": true, "coincidencia": "razonSocial"},
+    {"caso": "Otra empresa", "carpeta": "2. PROYECTO B", "empresa": {"razonSocial": "ADMINISTRADORA PLAZA S.A.", "rut": "99.581.960-0"}, "valida": false, "coincidencia": null},
+    {"caso": "Carpeta de otra empresa", "carpeta": "1. TECNORED", "empresa": {"razonSocial": "SLV", "rut": "76.111.222-3"}, "valida": false, "coincidencia": null},
+    {"caso": "Por nombre de fantasía", "carpeta": "17.B-BOSCH_Proyecto_Linea_1x220_Charrua_Temuco", "empresa": {"razonSocial": "ROBERT BOSCH INGENIERIA Y SERVICIOS ELECTRICOS LIMITADA", "nombreFantasia": "BOSCH", "rut": "76.333.444-5"}, "valida": true, "coincidencia": "nombreFantasia"},
+    {"caso": "Palabra completa, no substring", "carpeta": "Silvestre Ltda", "empresa": {"razonSocial": "SLV", "rut": "76.111.222-3"}, "valida": false, "coincidencia": null},
+    {"caso": "Por RUT sin puntos", "carpeta": "77104219-8 Documentos", "empresa": {"razonSocial": "TECNORED SA", "rut": "77.104.219-8"}, "valida": true, "coincidencia": "rut"},
+    {"caso": "Por RUT con puntos", "carpeta": "Docs 77.104.219-8", "empresa": {"razonSocial": "OTRA SPA", "rut": "771042198"}, "valida": true, "coincidencia": "rut"},
+    {"caso": "RUT dentro de otro número", "carpeta": "1771042198 Docs", "empresa": {"razonSocial": "OTRA SPA", "rut": "77.104.219-8"}, "valida": false, "coincidencia": null},
+    {"caso": "Tildes y eñe", "carpeta": "3. Constructora Peñalolén", "empresa": {"razonSocial": "CONSTRUCTORA PEÑALOLEN LTDA.", "rut": "76.555.666-7"}, "valida": true, "coincidencia": "razonSocial"},
+    {"caso": "Varios sufijos (y Cía. Ltda.)", "carpeta": "Gomez Hermanos", "empresa": {"razonSocial": "GOMEZ HERMANOS Y CIA. LTDA.", "rut": "76.777.888-9"}, "valida": true, "coincidencia": "razonSocial"},
+    {"caso": "SpA y E.I.R.L.", "carpeta": "05_Transportes_Sur", "empresa": {"razonSocial": "TRANSPORTES SUR E.I.R.L.", "nombreFantasia": "TRANSUR SpA", "rut": "76.999.000-1"}, "valida": true, "coincidencia": "razonSocial"},
+    {"caso": "Nombre de varias palabras incompleto", "carpeta": "Administradora", "empresa": {"razonSocial": "ADMINISTRADORA PLAZA S.A.", "rut": "99.581.960-0"}, "valida": false, "coincidencia": null},
+    {"caso": "Sin nombre de carpeta", "carpeta": null, "empresa": {"razonSocial": "TECNORED SA", "rut": "77.104.219-8"}, "valida": false, "coincidencia": null}
+  ],
+  "terminos": [
+    {"empresa": {"razonSocial": "ADMINISTRADORA PLAZA S.A.", "rut": "99.581.960-0"}, "terminosBuscados": ["administradora plaza", "99581960-0"]},
+    {"empresa": {"razonSocial": "TECNORED SA", "nombreFantasia": "Tecnored", "rut": "77.104.219-8"}, "terminosBuscados": ["tecnored", "77104219-8"]}
+  ],
+  "sharepoint": [
+    {"url": "https://empresa.sharepoint.com/sites/Repositorio/Shared%20Documents/21.%20SLV%20(Proyectos%202024)", "carpeta": "21. SLV (Proyectos 2024)"},
+    {"url": "https://empresa.sharepoint.com/sites/Repositorio/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FRepositorio%2FShared%20Documents%2F1.%20TECNORED", "carpeta": "1. TECNORED"},
+    {"url": "https://empresa.sharepoint.com/", "carpeta": null},
+    {"url": "https://empresa.sharepoint.com/sites/Repositorio/Shared%20Documents/Forms/AllItems.aspx", "carpeta": null},
+    {"url": "no es una url", "carpeta": null}
+  ]
+}

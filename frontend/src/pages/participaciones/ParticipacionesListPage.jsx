@@ -11,7 +11,7 @@ import { proyectoService } from "../../services/proyectoService";
 import { empresaService } from "../../services/empresaService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { mandanteService } from "../../services/mandanteService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { formatFecha } from "../../utils/fechas";
 import { NuevaParticipacionModal } from "../../components/shared/NuevaParticipacionModal";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";

@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { LayoutModalDocumento } from "../expedientes/documentacion/LayoutModalDocumento";
 import { personaService } from "../../services/personaService";
 import { empresaService } from "../../services/empresaService";
 import { formatRutDisplay, validateRut, cleanRut } from "../../utils/rutFormatters";
 import { SugerenciasChips } from "./SugerenciasChips";
 import { ConfirmacionModal } from "./ConfirmacionModal";
+import { OpcionesRadio } from "./OpcionesRadio";
 import {
   SUGERENCIAS_TIPO_RELACION_PERSONA, SUGERENCIAS_TIPO_CONTRATO,
 } from "../../utils/sugerenciasRelacionLaboral";
@@ -29,7 +30,13 @@ const mensajeError = (mensaje) => (
 // identificación ya existe (409 IDENTIFICACION_EXISTENTE) se muestra esa Persona y se ofrece
 // crearle la relación con esta Empresa (pide Tipo de Relación y Tipo de Contrato, obligatorios
 // en un cambio de empresa); si ya la tiene, se usa directamente.
-export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
+// `inicial` (opcional): { nombre, apellido } para precargar (p. ej. "Crear desde carpeta"); el RUT
+// siempre se ingresa a mano. `documento` (opcional): carpeta para ver el listado o la cédula al lado
+// del formulario (ver LayoutModalDocumento); los RUT del documento solo se copian con un clic.
+export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar, inicial = null, documento = null }) => {
+  const rutRef = useRef(null);
+  const [sugerenciaRut, setSugerenciaRut] = useState(null);
+  const [rutCopiado, setRutCopiado] = useState(false);
   const [empresaNombre, setEmpresaNombre] = useState("");
   const [existente, setExistente] = useState(null); // detalle del 409 (+ asignaciones/mensaje si hay que confirmar)
   const [relacion, setRelacion] = useState({ tipoRelacion: "", tipoContrato: "" });
@@ -37,13 +44,21 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
   const [errorRelacion, setErrorRelacion] = useState(null);
   const [formData, setFormData] = useState({
     pais: "Chile", numeroIdentificacion: "", paisLibre: "",
-    nombre: "", apellido: "", cargo: "",
+    nombre: inicial?.nombre || "", apellido: inicial?.apellido || "", cargo: "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
 
   const esChile = formData.pais === "Chile";
+
+  // RUT tomado del documento (clic en un RUT o "Usar" en la sugerencia): nunca se rellena solo.
+  const usarRut = useCallback((rut) => {
+    setFormData((prev) => ({ ...prev, pais: "Chile", numeroIdentificacion: rut }));
+    setErrors((prev) => ({ ...prev, numeroIdentificacion: null }));
+    setRutCopiado(true);
+    setTimeout(() => setRutCopiado(false), 1800);
+  }, []);
 
   useEffect(() => {
     if (!empresaId) return;
@@ -79,7 +94,6 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
     if (!esChile && !formData.paisLibre.trim()) newErrors.paisLibre = "Indica el país.";
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
     if (!formData.apellido.trim()) newErrors.apellido = "El apellido es obligatorio.";
-    if (!formData.cargo.trim()) newErrors.cargo = "El cargo es obligatorio.";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -100,7 +114,7 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
         apellido: formData.apellido.trim(),
         estado: "activo",
         empresaId,
-        cargo: formData.cargo.trim(),
+        cargo: formData.cargo.trim() || null,
       });
       onCreada(creada);
     } catch (err) {
@@ -132,7 +146,7 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
       await personaService.cambiarEmpresa(existente.personaId, {
         empresaId,
         tipoRelacion: relacion.tipoRelacion.trim(),
-        cargo: formData.cargo.trim(),
+        cargo: formData.cargo.trim() || null,
         tipoContrato: relacion.tipoContrato.trim(),
         confirmado,
       });
@@ -160,17 +174,16 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
   const claseCampo = "w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCerrar}>
-      <div
-        className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
+    <>
+      <LayoutModalDocumento
+        titulo="Nueva Persona"
+        onCerrar={onCerrar}
+        documento={documento}
+        nombreBuscado={`${formData.nombre} ${formData.apellido}`.trim()}
+        onRut={usarRut}
+        onSugerenciaRut={setSugerenciaRut}
+        campoFocoRef={rutRef}
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Nueva Persona</h3>
-          <button type="button" onClick={onCerrar} className="text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {serverError && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">{serverError}</div>
@@ -186,13 +199,11 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">País *</label>
-              <select
+              <OpcionesRadio
                 name="pais" value={formData.pais} onChange={handleCambiarPais}
-                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-              >
-                <option value="Chile">Chile</option>
-                <option value="Otro">Otro</option>
-              </select>
+                opciones={[{ value: "Chile", label: "Chile" }, { value: "Otro", label: "Otro" }]}
+                ariaLabel="País"
+              />
             </div>
             {!esChile && (
               <div>
@@ -212,6 +223,7 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
                 {esChile ? "RUT *" : "Número de Pasaporte *"}
               </label>
               <input
+                ref={rutRef}
                 type="text" name="numeroIdentificacion" value={formData.numeroIdentificacion} onChange={handleChange}
                 placeholder={esChile ? "12.345.678-9" : "Ej: AB123456"} maxLength={esChile ? 12 : 20}
                 className={`w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
@@ -219,6 +231,13 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
                 }`}
               />
               {errors.numeroIdentificacion && <p className="text-xs text-red-500 mt-1">{errors.numeroIdentificacion}</p>}
+              {rutCopiado && <p className="text-[11px] text-sage-dark font-semibold mt-1">RUT copiado</p>}
+              {sugerenciaRut && esChile && formData.numeroIdentificacion !== sugerenciaRut && (
+                <p className="text-[11px] text-slate-600 mt-1">
+                  Sugerido del listado: <b>{sugerenciaRut}</b> ·{" "}
+                  <button type="button" onClick={() => usarRut(sugerenciaRut)} className="font-bold text-primary hover:underline">Usar</button>
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">Nombre *</label>
@@ -243,7 +262,7 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
               {errors.apellido && <p className="text-xs text-red-500 mt-1">{errors.apellido}</p>}
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Cargo *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Cargo (opcional)</label>
               <input
                 type="text" name="cargo" value={formData.cargo} onChange={handleChange}
                 placeholder="Ej: Operador de Camión"
@@ -267,11 +286,11 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
             </button>
           </div>
         </form>
-      </div>
+      </LayoutModalDocumento>
       {existente && !existente.asignaciones && (
         <ConfirmacionModal
           titulo="Esta Persona ya está registrada"
-          mensaje={`${nombreExistente} (${idExistente}) ya existe. Puede crearle la relación con ${empresaNombre || "esta Empresa"} (cargo: ${formData.cargo.trim()}) en vez de duplicarla. Si tiene otra relación vigente, esta se terminará y quedará en su historial.`}
+          mensaje={`${nombreExistente} (${idExistente}) ya existe. Puede crearle la relación con ${empresaNombre || "esta Empresa"}${formData.cargo.trim() ? ` (cargo: ${formData.cargo.trim()})` : ""} en vez de duplicarla. Si tiene otra relación vigente, esta se terminará y quedará en su historial.`}
           textoConfirmar="Crear relación y usarla"
           ocupado={relacionando}
           onCancelar={() => setExistente(null)}
@@ -312,6 +331,6 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar }) => {
           onConfirmar={() => relacionarExistente(true)}
         />
       )}
-    </div>
+    </>
   );
 };

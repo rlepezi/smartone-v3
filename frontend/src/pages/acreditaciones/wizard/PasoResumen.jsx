@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import {
-  CheckCircle2, Loader2, AlertCircle, Building2, FolderKanban, IdCard, Users, Truck, X, ArrowRightLeft, Info,
+  CheckCircle2, Loader2, AlertCircle, Building2, FolderKanban, IdCard, Users, Truck, X, ArrowRightLeft, Info, FolderOpen,
 } from "lucide-react";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { nombresPerfiles } from "../../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
-import { etiquetaTipoEntidad } from "../../../services/requerimientoService";
+import { CLASE_RESALTADO, REF_FECHA_INICIO } from "../asistenteNavegacion";
+import { DateInput } from "../../../components/ui/DateInput";
+import { textoRepositorio } from "../../../utils/repositorioDocumental";
 
 const ItemProgreso = ({ estado, label }) => {
   // estado: "pendiente" | "en_curso" | "hecho" | "error"
@@ -74,8 +76,8 @@ const DetalleModal = ({ titulo, onCerrar, children }) => (
 // recalcula nada por su cuenta. `onIrAPaso` recibe el id interno del paso (2 Empresa … 5 Asignaciones).
 export const PasoResumen = ({
   empresaSel, proyectoSel, perfilSel, seleccion,
-  fechaInicio, onFechaInicioChange, preview, requisitosPerfil,
-  ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, motivoBloqueo,
+  fechaInicio, onFechaInicioChange, preview,
+  ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, problemas = [], onCorregir, repositorio = null,
 }) => {
   const [detalle, setDetalle] = useState(null); // "personas" | "maquinarias" | "traslados" | "requisitos"
   const [confirmando, setConfirmando] = useState(false);
@@ -162,18 +164,19 @@ export const PasoResumen = ({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-sage-lighter text-sage-darker border border-sage-light">5 pasos completados</span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            {yaHayProgreso ? "En proceso" : "Revisión pendiente"}
-          </span>
+          {/* Solo al reintentar una creación que quedó a medias. */}
+          {yaHayProgreso && (
+            <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">En proceso</span>
+          )}
         </div>
       </div>
 
       {pendientes > 0 && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-          <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs">
+          <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-slate-400" />
           <span>
-            La acreditación se creará con {pendientes} {pendientes === 1 ? "requisito pendiente" : "requisitos pendientes"}.
-            Podrás completarlos posteriormente desde el expediente.
+            La acreditación se creará con {pendientes} {pendientes === 1 ? "requerimiento" : "requerimientos"} por evaluar.
+            Se evalúan desde el expediente.
           </span>
         </div>
       )}
@@ -185,15 +188,36 @@ export const PasoResumen = ({
           <FichaDato icon={FolderKanban} etiqueta="Proyecto" valor={proyectoSel?.nombre} secundario={proyectoSel?.codigo} onEditar={editar(3)} />
           <FichaDato icon={IdCard} etiqueta="Perfil de Participación" valor={perfilSel?.nombre} onEditar={editar(4)} />
         </div>
+        <div className="pt-3 border-t border-slate-100 flex items-start gap-3">
+          <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Documentación</p>
+            {repositorio ? (
+              <p className="text-sm font-bold text-carbon-dark truncate">
+                {textoRepositorio(repositorio)}
+                {repositorio.tipo === "sharepoint" && repositorio.url && (
+                  <a href={repositorio.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-[11px] font-bold text-primary hover:underline">Abrir</a>
+                )}
+              </p>
+            ) : (
+              <>
+                <p className="text-sm font-medium italic text-slate-400">Sin vincular</p>
+                <p className="text-[11px] text-slate-500">Podrás vincularla después desde el expediente.</p>
+              </>
+            )}
+          </div>
+          <LinkEditar onClick={editar(2)} />
+        </div>
         <div className="pt-3 border-t border-slate-100">
           <label className="block text-xs font-semibold text-gray-700 mb-1">Fecha de inicio *</label>
           <p className="text-[11px] text-slate-500 mb-2">
             Fecha desde la cual comenzarán a regir la participación y las asignaciones de esta acreditación.
           </p>
-          <input
-            type="date" value={fechaInicio} onChange={(e) => onFechaInicioChange(e.target.value)}
+          <DateInput
+            value={fechaInicio} onChange={(e) => onFechaInicioChange(e.target.value)}
             disabled={yaHayProgreso}
-            className="w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100 disabled:text-gray-500"
+            data-asistente-ref={REF_FECHA_INICIO}
+            className={`w-full max-w-xs px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100 disabled:text-gray-500 ${CLASE_RESALTADO}`}
           />
           <p className="text-[11px] text-slate-400 mt-1.5">
             La fecha debe ser válida según las reglas del proyecto y no puede contradecir las fechas de vigencia aplicables.
@@ -239,34 +263,31 @@ export const PasoResumen = ({
       {/* Bloque 3 — Estado del expediente */}
       <Tarjeta
         titulo="Estado del expediente"
-        accion={<span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">Pendiente</span>}
+        accion={<span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">Por evaluar</span>}
       >
         {totalReq === null ? (
           <p className="text-xs text-slate-400">Sin datos de requisitos todavía: vuelve al paso anterior.</p>
         ) : (
           <>
             <div className="flex items-end justify-between gap-3">
-              <p className="text-2xl font-black text-carbon-dark">
-                {cubiertos} <span className="text-sm font-semibold text-slate-400">de {totalReq} requisitos cubiertos</span>
+              <p className="text-base font-bold text-carbon-dark">
+                {totalReq} {totalReq === 1 ? "requerimiento se generará" : "requerimientos se generarán"} en este expediente
               </p>
-              <span className="text-sm font-black text-primary">{pct}%</span>
+              {cubiertos > 0 && <span className="text-xs font-bold text-sage-dark whitespace-nowrap">{pct}% se reutilizará</span>}
             </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${pct}%` }} />
-            </div>
+            <p className="text-xs text-slate-500">
+              {cubiertos} {cubiertos === 1 ? "cubierto" : "cubiertos"} por documentación vigente · {pendientes} por evaluar
+            </p>
             <div className="grid grid-cols-2 gap-3 text-center">
               <div className="p-3 rounded-xl bg-sage-lighter/60 border border-sage-light">
                 <p className="text-lg font-black text-sage-darker">{cubiertos}</p>
                 <p className="text-[11px] font-semibold text-sage-darker">Cubiertos por reutilización</p>
               </div>
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
-                <p className="text-lg font-black text-amber-700">{pendientes}</p>
-                <p className="text-[11px] font-semibold text-amber-700">Pendientes por completar</p>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <p className="text-lg font-black text-slate-600">{pendientes}</p>
+                <p className="text-[11px] font-semibold text-slate-500">Por evaluar</p>
               </div>
             </div>
-            <button type="button" onClick={() => setDetalle("requisitos")} className="text-[11px] font-bold text-primary hover:text-primary-dark">
-              Ver requisitos →
-            </button>
           </>
         )}
       </Tarjeta>
@@ -288,10 +309,29 @@ export const PasoResumen = ({
         </div>
       )}
 
-      {motivoBloqueo && !ejecutando && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>No se puede crear la acreditación: {motivoBloqueo}</span>
+      {problemas.length > 0 && !ejecutando && (
+        <div role="alert" className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs space-y-2">
+          <p className="flex items-center gap-2 font-bold">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            No se puede crear la acreditación:
+          </p>
+          <ul className="space-y-1.5 pl-6">
+            {problemas.map((p) => (
+              <li key={p.ref + p.mensaje} className="flex items-center justify-between gap-3 flex-wrap">
+                <span>{p.mensaje}</span>
+                {/* Con algo ya creado no se puede volver a pasos anteriores. */}
+                {(!yaHayProgreso || p.ref === REF_FECHA_INICIO) && (
+                  <button
+                    type="button"
+                    onClick={() => onCorregir?.(p.paso, p.ref)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-red-200 font-bold text-red-700 hover:bg-red-100 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                  >
+                    {p.etiqueta} →
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -299,7 +339,7 @@ export const PasoResumen = ({
         <button
           type="button"
           onClick={handleCrear}
-          disabled={ejecutando || Boolean(motivoBloqueo)}
+          disabled={ejecutando || problemas.length > 0}
           className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
         >
           {ejecutando ? "Procesando..." : errorEjecucion ? "Reintentar" : "Crear acreditación"}
@@ -355,43 +395,6 @@ export const PasoResumen = ({
               </li>
             ))}
           </ul>
-        </DetalleModal>
-      )}
-      {detalle === "requisitos" && (
-        <DetalleModal titulo="Requisitos del expediente" onCerrar={() => setDetalle(null)}>
-          {preview && (
-            <div className="space-y-2">
-              {[
-                { key: "empresa", label: "Empresa" },
-                { key: "personas", label: "Personas" },
-                { key: "maquinarias", label: "Maquinarias" },
-              ].map(({ key, label }) => {
-                const b = preview[key];
-                if (!b || b.total === 0) return null;
-                return (
-                  <div key={key} className="flex items-center justify-between text-xs p-3 rounded-xl border border-slate-100">
-                    <span className="font-bold text-carbon-dark">{label}</span>
-                    <span className="text-slate-500">
-                      {b.total} requisitos · <b className="text-sage-dark">{b.reutilizables} cubiertos</b> · <b className="text-amber-600">{b.total - b.reutilizables} pendientes</b>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {Array.isArray(requisitosPerfil) && requisitosPerfil.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Requisitos del Perfil {perfilSel?.nombre}</p>
-              <ul className="space-y-1">
-                {requisitosPerfil.map((r) => (
-                  <li key={r.requerimientoId} className="flex items-center justify-between gap-2 text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5">
-                    <span className="font-medium">{r.nombreCorto || r.nombre}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">{etiquetaTipoEntidad(r.tipoEntidad)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </DetalleModal>
       )}
     </div>

@@ -3,8 +3,8 @@ import { expedienteService } from "../../services/expedienteService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { formatRutDisplay } from "../../utils/rutFormatters";
-import { formatFecha } from "../../utils/fechaFormatters";
-import { evaluarSujeto } from "../../utils/evaluacionSujeto";
+import { formatFecha } from "../../utils/fechas";
+import { evaluarSujeto } from "../../utils/cumplimientoCalculos";
 import { nombresPerfiles } from "../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../hooks/usePerfilesRecurso";
 import { RecursosBloques } from "../shared/RecursosBloques";
@@ -58,6 +58,7 @@ export const RecursosProyecto = ({
               ? (sujeto ? `${sujeto.nombre} ${sujeto.apellido}` : a.personaId)
               : (sujeto?.nombre || a.recursoId),
             secundario: esPersonas ? (sujeto?.rut ? formatRutDisplay(sujeto.rut) : "") : (sujeto?.patente || ""),
+            tipoIdentificacion: esPersonas ? null : sujeto?.tipoIdentificacion || null,
             clasificacion: nombresPerfiles(a.perfilRecursoIds, perfilesPorId) || (sujeto?.tipo ? formatCatalogo(sujeto.tipo) : ""),
             evaluacion: evaluarSujeto({ expediente, vigentes: datos.vigentes, campo, sujetoId: a[campo], perfilRecursoIds: a.perfilRecursoIds }),
           };

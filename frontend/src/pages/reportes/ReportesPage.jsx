@@ -1,420 +1,272 @@
-import React, { useEffect, useState } from "react";
-import {
-  BarChart3,
-  Building2,
-  ClipboardCheck,
-  CalendarClock,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { BarChart3, FileSpreadsheet, Printer } from "lucide-react";
 import { reporteService } from "../../services/reporteService";
-import { proyectoService } from "../../services/proyectoService";
-import { ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
-import { formatFecha } from "../../utils/fechaFormatters";
+import { useMandanteContexto } from "../../hooks/useMandanteContexto";
+import { CampoMandante } from "../../components/shared/CampoMandante";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
-import { StatusBadge, MAPA_EVALUACION } from "../../components/shared/StatusBadge";
+import { DateInput } from "../../components/ui/DateInput";
+import {
+  Indicadores, PorProyecto, PorTipoEntidad, Evolucion, Rechazos, PanelRechazos,
+} from "../../components/reportes/SeccionesReporte";
+import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
+import { formatFechaHora, hoyISO } from "../../utils/fechas";
+import { ATAJOS_PERIODO, PERIODO_POR_DEFECTO, rangoDeAtajo, textoPeriodo } from "../../utils/reportePanel";
+import { exportarPanelExcel } from "../../utils/reporteExcel";
 
-const RANGOS_VENCIMIENTO = [15, 30, 60, 90];
+const CLASE_SELECT = "w-full min-w-0 truncate px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
+const CLASE_ETIQUETA = "text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none";
 
-const ESTADO_EXPEDIENTE_MAP = ESTADOS_EXPEDIENTE.reduce((acc, e) => {
-  acc[e.value] = { label: e.label, className: e.color };
-  return acc;
-}, {});
+// Filtros que dependen del Mandante (se limpian al cambiarlo).
+const FILTROS_DEPENDIENTES = ["proyecto", "perfil", "empresa"];
 
-const TITULOS_DETALLE = {
-  vencidos: "Evidencias Vencidas",
-  por_vencer: "Evidencias por Vencer",
-  no_cumple: "Requerimientos No Cumple",
-  pendientes: "Requerimientos Pendientes",
-};
-
-// avancePct puede venir null (nada evaluable todavía) — nunca se muestra
-// como "0%", que induciría a pensar "no cumple nada" en vez de "sin datos".
-const formatAvancePct = (avancePct) => (avancePct === null || avancePct === undefined ? "—" : `${avancePct}%`);
-
-const KpiCard = ({ icon: Icon, title, value, color, bg }) => (
-  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card flex flex-col justify-between">
-    <div className={`w-11 h-11 rounded-xl ${bg} ${color} flex items-center justify-center font-bold mb-4`}>
-      <Icon className="w-5 h-5" />
-    </div>
-    <div>
-      <h3 className="text-2xl font-black text-carbon-dark tracking-tight">{value}</h3>
-      <p className="text-xs font-semibold text-slate-500 mt-0.5">{title}</p>
-    </div>
+const Filtro = ({ etiqueta, children, className = "w-full sm:w-44" }) => (
+  <div className={`flex flex-col gap-1 ${className}`}>
+    <span className={CLASE_ETIQUETA}>{etiqueta}</span>
+    {children}
   </div>
 );
 
-const NumeroClickeable = ({ value, label, className, onClick, clickeable }) => {
-  const contenido = (
-    <>
-      <p className="text-xl font-black">{value}</p>
-      <p className="text-[11px] font-semibold mt-0.5">{label}</p>
-    </>
-  );
-  const base = `p-3 rounded-xl border text-center ${className}`;
-
-  if (!clickeable) {
-    return <div className={base}>{contenido}</div>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`${base} hover:opacity-80 transition-opacity cursor-pointer`}
-    >
-      {contenido}
-    </button>
-  );
-};
-
+// Página de Reportes: de lo general a lo específico (indicadores, por proyecto, por tipo de entidad,
+// evolución e ítems con más rechazos), todo desde GET /reportes/panel. Los filtros viven en la URL;
+// cambiar uno recalcula toda la página.
 export const ReportesPage = () => {
-  const [proyectos, setProyectos] = useState([]);
-  const [proyectoId, setProyectoId] = useState("");
-  const [diasVencimiento, setDiasVencimiento] = useState(30);
+  const [params, setParams] = useSearchParams();
+  const contexto = useMandanteContexto({ mandanteId: params.get("mandante") });
+  const { mandanteId, mandante, modo } = contexto;
 
-  const [reporte, setReporte] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const periodo = params.get("periodo") || PERIODO_POR_DEFECTO;
+  const hoy = hoyISO();
+  const { desde, hasta } = periodo === "personalizado"
+    ? { desde: params.get("desde") || "", hasta: params.get("hasta") || hoy }
+    : rangoDeAtajo(periodo, hoy);
+  const proyectoId = params.get("proyecto") || "";
+  const perfilParticipacionId = params.get("perfil") || "";
+  const empresaId = params.get("empresa") || "";
 
-  const [detalleTipo, setDetalleTipo] = useState(null);
-  const [detalleItems, setDetalleItems] = useState(null);
-  const [detalleLoading, setDetalleLoading] = useState(false);
-  const [detalleError, setDetalleError] = useState(null);
+  // Respuesta de la última carga, con la clave (filtros + recargas) que la pidió: mientras la clave
+  // actual no coincide, la página está cargando.
+  const [resultado, setResultado] = useState({ clave: null, panel: null, error: null });
+  const [recargas, setRecargas] = useState(0);
+  const [errorExportar, setErrorExportar] = useState(null);
+  const [perfilRanking, setPerfilRanking] = useState("todos");
+  const [rechazoAbierto, setRechazoAbierto] = useState(null);
+  const [exportando, setExportando] = useState(false);
+
+  const actualizar = useCallback((cambios) => {
+    const siguiente = new URLSearchParams(params);
+    Object.entries(cambios).forEach(([clave, valor]) => {
+      if (valor) siguiente.set(clave, valor);
+      else siguiente.delete(clave);
+    });
+    setParams(siguiente, { replace: true });
+  }, [params, setParams]);
+
+  const listoParaCargar = modo === "fijo" || modo === "unico" || (modo === "seleccionable" && Boolean(mandanteId));
+
+  const clave = JSON.stringify([mandanteId, desde, hasta, proyectoId, perfilParticipacionId, empresaId, recargas]);
 
   useEffect(() => {
-    proyectoService
-      .listar({})
-      .then((data) => setProyectos(data || []))
-      .catch((err) => console.error("Error al cargar proyectos:", err));
-  }, []);
-
-  const cargarReporte = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await reporteService.obtenerResumen({
-        proyectoId: proyectoId || undefined,
-        diasVencimiento,
+    if (!listoParaCargar) return undefined;
+    let vigente = true;
+    reporteService.obtenerPanel({ mandanteId, desde, hasta, proyectoId, perfilParticipacionId, empresaId })
+      .then((datos) => { if (vigente) setResultado({ clave, panel: datos, error: null }); })
+      .catch((err) => {
+        if (vigente) {
+          setResultado((previo) => ({ clave, panel: previo.panel, error: err.message || "No se pudo cargar el reporte." }));
+        }
       });
-      setReporte(data);
+    return () => { vigente = false; };
+  }, [clave, listoParaCargar, mandanteId, desde, hasta, proyectoId, perfilParticipacionId, empresaId]);
+
+  const { panel } = resultado;
+  const cargando = listoParaCargar && resultado.clave !== clave;
+  const error = resultado.clave === clave ? resultado.error || errorExportar : errorExportar;
+
+  const opciones = panel?.opciones;
+  const perfilesActivos = useMemo(() => opciones?.perfilesActivos || [], [opciones]);
+  const perfilRankingVigente = perfilRanking === "todos" || perfilesActivos.some((p) => p.id === perfilRanking)
+    ? perfilRanking : "todos";
+  const nombreDe = (lista, id) => (lista || []).find((x) => x.id === id)?.nombre;
+  const nombreMandante = getMandanteDisplayName(mandante) || mandanteId || "—";
+  const textoFiltros = [
+    `Mandante: ${nombreMandante}`,
+    `Período: ${textoPeriodo(desde, hasta)}`,
+    `Proyecto: ${nombreDe(opciones?.proyectos, proyectoId) || "Todos"}`,
+    `Perfil: ${nombreDe(opciones?.perfiles, perfilParticipacionId) || "Todos"}`,
+    `Empresa: ${nombreDe(opciones?.empresas, empresaId) || "Todas"}`,
+  ].join(" · ");
+
+  const exportarExcel = async () => {
+    if (!panel) return;
+    setExportando(true);
+    setErrorExportar(null);
+    try {
+      await exportarPanelExcel({
+        panel, textoFiltros, perfilId: perfilRankingVigente,
+        perfilNombre: nombreDe(perfilesActivos, perfilRankingVigente) || "Todos los perfiles",
+      });
     } catch (err) {
-      console.error("Error al cargar el reporte:", err);
-      setError(err.message || "No se pudo cargar el reporte.");
+      setErrorExportar(err.message || "No se pudo generar el Excel.");
     } finally {
-      setLoading(false);
+      setExportando(false);
     }
   };
 
-  useEffect(() => {
-    cargarReporte();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proyectoId, diasVencimiento]);
+  const rechazosAbiertos = rechazoAbierto && panel
+    ? (panel.rechazos.detalle[rechazoAbierto.requerimientoId] || []).filter((r) =>
+      perfilRankingVigente === "todos" || r.perfilParticipacionId === perfilRankingVigente)
+    : [];
 
-  const abrirDetalle = async (tipo) => {
-    setDetalleTipo(tipo);
-    setDetalleItems(null);
-    setDetalleError(null);
-    setDetalleLoading(true);
-    try {
-      const data = await reporteService.obtenerDetalle({
-        tipo,
-        proyectoId: proyectoId || undefined,
-        diasVencimiento,
-      });
-      setDetalleItems(data || []);
-    } catch (err) {
-      console.error("Error al cargar el detalle:", err);
-      setDetalleError(err.message || "No se pudo cargar el detalle.");
-    } finally {
-      setDetalleLoading(false);
-    }
-  };
-
-  const cerrarDetalle = () => {
-    setDetalleTipo(null);
-    setDetalleItems(null);
-    setDetalleError(null);
-  };
-
-  const esDetalleEvidencia = detalleTipo === "vencidos" || detalleTipo === "por_vencer";
+  // Sin datos todavía (o recargando): cada sección muestra su placeholder.
+  const enCarga = cargando || !panel;
+  // Falló la carga y no hay datos previos: solo el mensaje de error, sin placeholders.
+  const sinDatos = !cargando && !panel && Boolean(resultado.error);
+  const acciones = (
+    <div className="flex items-center gap-2 print:hidden">
+      <button
+        type="button"
+        onClick={exportarExcel}
+        disabled={!panel || cargando || exportando}
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-carbon-dark hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <FileSpreadsheet className="w-4 h-4" /> {exportando ? "Generando..." : "Exportar Excel"}
+      </button>
+      <button
+        type="button"
+        onClick={() => window.print()}
+        disabled={!panel || cargando}
+        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-carbon-dark hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Printer className="w-4 h-4" /> Exportar PDF
+      </button>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Reportes"
-        icon={BarChart3}
-        subtitle="Reporte de cumplimiento on-demand, calculado en vivo."
-        loading={loading}
-        onRefresh={cargarReporte}
-      />
+    <div className="space-y-6 max-w-[1400px] mx-auto">
+      <div className="print:hidden">
+        <PageHeader
+          title="Reportes"
+          subtitle={modo === "fijo" || modo === "unico" ? `Estado de acreditación · ${nombreMandante}` : "Estado de acreditación"}
+          icon={BarChart3}
+          loading={cargando}
+          onRefresh={() => setRecargas((n) => n + 1)}
+          resumen={acciones}
+        />
+      </div>
+
+      {/* Encabezado de impresión (PDF). */}
+      <div className="hidden print:block border-b border-slate-200 pb-3">
+        <h1 className="text-xl font-bold text-carbon-dark">Reporte de acreditación</h1>
+        <p className="text-xs text-slate-600 mt-1">Mandante: {nombreMandante}</p>
+        <p className="text-xs text-slate-600">Período: {textoPeriodo(desde, hasta)}</p>
+        <p className="text-xs text-slate-600">{textoFiltros.split(" · ").slice(2).join(" · ")}</p>
+        <p className="text-xs text-slate-400">Emitido el {formatFechaHora(new Date())}</p>
+      </div>
+
+      <div className="bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-card flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-x-3 gap-y-3 print:hidden">
+        {modo === "seleccionable" && (
+          <div className="w-full sm:w-56">
+            <CampoMandante
+              contexto={contexto}
+              conFoco={false}
+              onChange={(id) => actualizar({ mandante: id, ...Object.fromEntries(FILTROS_DEPENDIENTES.map((f) => [f, ""])) })}
+            />
+          </div>
+        )}
+        <Filtro etiqueta="Período">
+          <select
+            aria-label="Período"
+            value={periodo}
+            onChange={(e) => actualizar({
+              periodo: e.target.value === PERIODO_POR_DEFECTO ? "" : e.target.value,
+              desde: e.target.value === "personalizado" ? desde : "",
+              hasta: e.target.value === "personalizado" ? hasta : "",
+            })}
+            className={CLASE_SELECT}
+          >
+            {ATAJOS_PERIODO.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+            <option value="personalizado">Personalizado</option>
+          </select>
+        </Filtro>
+        <Filtro etiqueta="Desde" className="w-full sm:w-40">
+          <DateInput
+            aria-label="Desde"
+            value={desde}
+            max={hasta}
+            onChange={(e) => actualizar({ periodo: "personalizado", desde: e.target.value, hasta })}
+            className="w-full px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs"
+          />
+        </Filtro>
+        <Filtro etiqueta="Hasta" className="w-full sm:w-40">
+          <DateInput
+            aria-label="Hasta"
+            value={hasta}
+            min={desde || undefined}
+            max={hoy}
+            onChange={(e) => actualizar({ periodo: "personalizado", desde, hasta: e.target.value || hoy })}
+            className="w-full px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs"
+          />
+        </Filtro>
+        <Filtro etiqueta="Proyecto">
+          <select aria-label="Proyecto" value={proyectoId} onChange={(e) => actualizar({ proyecto: e.target.value })} className={CLASE_SELECT} disabled={!opciones}>
+            <option value="">Todos</option>
+            {(opciones?.proyectos || []).map((p) => (
+              <option key={p.id} value={p.id}>{p.codigo ? `${p.codigo} · ${p.nombre}` : p.nombre}</option>
+            ))}
+          </select>
+        </Filtro>
+        <Filtro etiqueta="Perfil de Participación">
+          <select aria-label="Perfil de Participación" value={perfilParticipacionId} onChange={(e) => actualizar({ perfil: e.target.value })} className={CLASE_SELECT} disabled={!opciones}>
+            <option value="">Todos</option>
+            {(opciones?.perfiles || []).map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </Filtro>
+        <Filtro etiqueta="Empresa">
+          <select aria-label="Empresa" value={empresaId} onChange={(e) => actualizar({ empresa: e.target.value })} className={CLASE_SELECT} disabled={!opciones}>
+            <option value="">Todas</option>
+            {(opciones?.empresas || []).map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+          </select>
+        </Filtro>
+      </div>
 
       <ErrorBanner message={error} />
 
-      {/* Filtros */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-card flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">Proyecto:</span>
-          <select
-            value={proyectoId}
-            onChange={(e) => setProyectoId(e.target.value)}
-            className="px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            <option value="">Todos los proyectos</option>
-            {proyectos.map((p) => (
-              <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">Ventana de vencimiento:</span>
-          <select
-            value={diasVencimiento}
-            onChange={(e) => setDiasVencimiento(Number(e.target.value))}
-            className="px-3 py-2 bg-slate-50/50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            {RANGOS_VENCIMIENTO.map((dias) => (
-              <option key={dias} value={dias}>{dias} días</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="py-16 text-center text-slate-400 text-xs">Calculando reporte...</div>
-      ) : !reporte ? null : (
+      {modo === "ninguno" ? (
+        <CampoMandante contexto={contexto} />
+      ) : sinDatos ? null : modo === "seleccionable" && !mandanteId ? (
+        <p className="py-10 text-center text-xs text-slate-400">Seleccione un Mandante para ver el reporte.</p>
+      ) : (
         <>
-          {/* KPIs de Empresas */}
-          <div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              <KpiCard icon={Building2} title="Empresas Acreditadas" value={reporte.empresas.acreditadas} color="text-sage-dark" bg="bg-sage-lighter" />
-              <KpiCard icon={Building2} title="Empresas En Proceso" value={reporte.empresas.enProceso} color="text-primary-dark" bg="bg-primary-lighter" />
-              <KpiCard icon={Building2} title="Empresas Observadas" value={reporte.empresas.observadas} color="text-red-600" bg="bg-red-50" />
-              <KpiCard
-                icon={BarChart3}
-                title="% Avance Requerimientos"
-                value={formatAvancePct(reporte.requerimientos.avancePct)}
-                color={reporte.requerimientos.avancePct === null ? "text-slate-400" : "text-primary-dark"}
-                bg={reporte.requerimientos.avancePct === null ? "bg-slate-100" : "bg-primary-lighter"}
-              />
-            </div>
-            {!proyectoId && (
-              <p className="text-[11px] text-slate-400 mt-2">
-                Las tarjetas de Empresas cuentan por proceso de acreditación (Expediente) — una Empresa que participa en
-                varios Proyectos puede aportar más de un proceso. La tabla "Cumplimiento por Empresa" de abajo sí está
-                deduplicada por Empresa.
-              </p>
-            )}
-          </div>
+          <Indicadores datos={panel?.indicadores} cargando={enCarga} />
 
-          {/* Detalle de Cumplimiento */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <ClipboardCheck className="w-4 h-4 text-slate-400" />
-              <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Detalle de Cumplimiento</h2>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <NumeroClickeable
-                value={reporte.requerimientos.cumple}
-                label="Cumple"
-                className="bg-sage-lighter text-sage-darker border-sage-light"
-              />
-              <NumeroClickeable
-                value={reporte.requerimientos.noCumple}
-                label="No Cumple"
-                className="bg-red-50 text-red-700 border-red-200"
-                clickeable
-                onClick={() => abrirDetalle("no_cumple")}
-              />
-              <NumeroClickeable
-                value={reporte.requerimientos.pendiente}
-                label="Pendiente"
-                className="bg-amber-50 text-amber-700 border-amber-200"
-                clickeable
-                onClick={() => abrirDetalle("pendientes")}
-              />
-              <NumeroClickeable
-                value={reporte.requerimientos.noAplica}
-                label="No Aplica"
-                className="bg-slate-100 text-slate-600 border-slate-200"
-              />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 print:block print:space-y-6 print:break-before-page">
+            <PorProyecto filas={panel?.porProyecto} cargando={enCarga} />
+            <div className="print:break-before-page">
+              <PorTipoEntidad datos={panel?.porTipoEntidad} cargando={enCarga} />
             </div>
           </div>
 
-          {/* Vencimientos */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <CalendarClock className="w-4 h-4 text-slate-400" />
-              <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">
-                Vencimientos ({diasVencimiento} días)
-              </h2>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <NumeroClickeable
-                value={reporte.vencimientos.vigente}
-                label="Vigente"
-                className="bg-sage-lighter text-sage-darker border-sage-light"
-              />
-              <NumeroClickeable
-                value={reporte.vencimientos.porVencer}
-                label="Por Vencer"
-                className="bg-amber-50 text-amber-700 border-amber-200"
-                clickeable
-                onClick={() => abrirDetalle("por_vencer")}
-              />
-              <NumeroClickeable
-                value={reporte.vencimientos.vencido}
-                label="Vencido"
-                className="bg-red-50 text-red-700 border-red-200"
-                clickeable
-                onClick={() => abrirDetalle("vencidos")}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:block print:space-y-6 print:break-before-page">
+            <Evolucion datos={panel?.evolucion} cargando={enCarga} />
+            <div className="print:break-before-page">
+              <Rechazos
+                datos={panel?.rechazos}
+                perfiles={perfilesActivos}
+                cargando={enCarga}
+                perfilId={perfilRankingVigente}
+                onPerfil={setPerfilRanking}
+                onAbrir={setRechazoAbierto}
               />
             </div>
           </div>
-
-          {/* Cumplimiento por Empresa */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-card overflow-hidden">
-            <div className="p-6 pb-0">
-              <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Cumplimiento por Empresa</h2>
-            </div>
-            <div className="overflow-x-auto p-6">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                    <th className="py-3">Empresa</th>
-                    <th className="py-3">% Avance</th>
-                    <th className="py-3">Estado del Expediente</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {reporte.porEmpresa.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="py-8 text-center text-slate-400">Sin datos en este alcance.</td>
-                    </tr>
-                  ) : (
-                    reporte.porEmpresa.map((row) => (
-                      <tr key={row.empresaId}>
-                        <td className="py-3 font-semibold text-carbon-dark">{row.empresaNombre}</td>
-                        <td className={`py-3 font-bold ${row.avancePct === null ? "text-slate-400" : "text-carbon-dark"}`}>
-                          {formatAvancePct(row.avancePct)}
-                        </td>
-                        <td className="py-3">
-                          <StatusBadge value={row.expedienteEstado} map={ESTADO_EXPEDIENTE_MAP} />
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Cumplimiento por Proyecto */}
-          {reporte.porProyecto && (
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-card overflow-hidden">
-              <div className="p-6 pb-0">
-                <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Cumplimiento por Proyecto</h2>
-              </div>
-              <div className="overflow-x-auto p-6">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                      <th className="py-3">Proyecto</th>
-                      <th className="py-3">Acreditadas</th>
-                      <th className="py-3">En Proceso</th>
-                      <th className="py-3">Observadas</th>
-                      <th className="py-3">% Avance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {reporte.porProyecto.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400">Sin datos en este alcance.</td>
-                      </tr>
-                    ) : (
-                      reporte.porProyecto.map((row) => (
-                        <tr key={row.proyectoId}>
-                          <td className="py-3 font-semibold text-carbon-dark">{row.proyectoNombre}</td>
-                          <td className="py-3 text-slate-600 font-medium">{row.empresas.acreditadas}</td>
-                          <td className="py-3 text-slate-600 font-medium">{row.empresas.enProceso}</td>
-                          <td className="py-3 text-slate-600 font-medium">{row.empresas.observadas}</td>
-                          <td className={`py-3 font-bold ${row.requerimientos.avancePct === null ? "text-slate-400" : "text-carbon-dark"}`}>
-                            {formatAvancePct(row.requerimientos.avancePct)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </>
       )}
 
-      {/* Modal de detalle */}
-      {detalleTipo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={cerrarDetalle}>
-          <div
-            className="bg-white rounded-2xl shadow-dropdown w-full max-w-2xl max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-5 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">
-                {TITULOS_DETALLE[detalleTipo]}
-              </h3>
-              <button
-                type="button"
-                onClick={cerrarDetalle}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-5">
-              {detalleLoading ? (
-                <p className="text-xs text-slate-400 text-center py-8">Cargando...</p>
-              ) : detalleError ? (
-                <ErrorBanner message={detalleError} />
-              ) : !detalleItems || detalleItems.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">Sin registros para este filtro.</p>
-              ) : esDetalleEvidencia ? (
-                <ul className="divide-y divide-slate-100">
-                  {detalleItems.map((item) => (
-                    <li key={item.id} className="py-3 flex items-center justify-between gap-3 text-xs">
-                      <div>
-                        <p className="font-semibold text-carbon-dark">{item.archivoNombre}</p>
-                        <p className="text-[11px] text-slate-400">{item.empresaNombre || "-"}</p>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-[11px] text-slate-500">{formatFecha(item.fechaVencimiento)}</p>
-                        <p className={`text-[11px] font-bold ${item.diasRestantes < 0 ? "text-red-600" : "text-amber-600"}`}>
-                          {item.diasRestantes < 0
-                            ? `Vencido hace ${Math.abs(item.diasRestantes)} día${Math.abs(item.diasRestantes) === 1 ? "" : "s"}`
-                            : `Vence en ${item.diasRestantes} día${item.diasRestantes === 1 ? "" : "s"}`}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {detalleItems.map((item) => (
-                    <li key={item.id} className="py-3 space-y-1 text-xs">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-semibold text-carbon-dark">{item.requerimientoNombre}</p>
-                        <StatusBadge value={item.resultado} map={MAPA_EVALUACION} />
-                      </div>
-                      <p className="text-[11px] text-slate-400">{item.empresaNombre || "-"}</p>
-                      {item.observaciones && (
-                        <p className="text-[11px] text-slate-600">{item.observaciones}</p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
+      {rechazoAbierto && (
+        <PanelRechazos fila={rechazoAbierto} rechazos={rechazosAbiertos} onCerrar={() => setRechazoAbierto(null)} />
       )}
     </div>
   );

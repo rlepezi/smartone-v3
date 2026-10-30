@@ -120,15 +120,20 @@ class EvidenciaService {
    * la Persona o el Recurso al que aplica.
    * @param {Object} payload Datos de la nueva evidencia.
    * @param {Object} actor Usuario autenticado que ejecuta la acción.
+   * @param {Object} [referenciaLocal] Solo Revisiones IA (nunca del
+   *     cliente): {rutaRelativa, hashSha256, sesionId} de un archivo que se
+   *     revisó desde una carpeta local y NO se almacena; la Evidencia queda
+   *     con origen "carpeta_local" y sin archivoUrl.
    * @return {Promise<Object>} La evidencia creada.
    */
-  async crearEvidencia(payload, actor) {
+  async crearEvidencia(payload, actor, referenciaLocal = null) {
     const {
       expedienteId, personaId, recursoId,
       archivoUrl, archivoNombre, archivoTipo, fechaVencimiento,
     } = payload;
 
-    if (!expedienteId || !archivoUrl || !archivoNombre) {
+    if (!expedienteId || (!archivoUrl && !referenciaLocal) ||
+        !archivoNombre) {
       throw new AppError(
           400,
           "Faltan campos obligatorios: 'expedienteId', 'archivoUrl' y " +
@@ -151,6 +156,13 @@ class EvidenciaService {
       throw new AppError(
           409,
           "El Expediente está cerrado y no admite nuevas evidencias.",
+      );
+    }
+    if (expediente.estadoGeneracion === "en_proceso") {
+      throw new AppError(
+          409,
+          "El Expediente aún está generando sus Requerimientos: reintente la " +
+          "generación antes de adjuntar evidencias.",
       );
     }
 
@@ -212,13 +224,25 @@ class EvidenciaService {
       mandanteId,
       personaId: personaId || null,
       recursoId: recursoId || null,
-      archivoUrl,
+      archivoUrl: archivoUrl || null,
       archivoNombre,
       archivoTipo: archivoTipo || null,
       fechaVencimiento: fechaVencimiento ?
           this._parseFecha(fechaVencimiento, "fechaVencimiento") :
           null,
       estado: "activo",
+      // "adjunto": archivo en Storage. "referencia": queda en la carpeta
+      // original (Revisiones IA); no se sube. Sin el campo (evidencias
+      // anteriores) cuenta como adjunto.
+      archivoEstado: referenciaLocal ? "referencia" : "adjunto",
+      ...(referenciaLocal ? {
+        origen: "carpeta_local",
+        referenciaArchivo: {
+          rutaRelativa: referenciaLocal.rutaRelativa,
+          hashSha256: referenciaLocal.hashSha256,
+          sesionId: referenciaLocal.sesionId,
+        },
+      } : {}),
     };
 
     return await evidenciaRepository.create(nuevaEvidencia);

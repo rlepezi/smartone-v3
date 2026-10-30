@@ -46,8 +46,8 @@ const millis = (v) => {
 };
 
 // Agrupa documentos en "sujetos": uno por Persona/Maquinaria dentro de cada
-// Participación y estado, con el conjunto de sus perfilRecursoId (forma que
-// espera utils/aplicabilidadRequerimiento.js). `documentos` conserva los
+// Participación y estado, con el conjunto de sus perfilRecursoId (los Perfiles
+// de Recurso que muestra la interfaz). `documentos` conserva los
 // documentos originales (para finalizarlos uno a uno).
 export const agruparSujetos = (docsPersonas = [], docsRecursos = []) => {
   const porClave = new Map();
@@ -70,9 +70,12 @@ export const agruparSujetos = (docsPersonas = [], docsRecursos = []) => {
         createdAt: doc.createdAt || null,
         perfilRecursoIds: [],
         documentos: [],
+        // Carpeta de esta persona/recurso en el repositorio documental del expediente.
+        carpetaRelativa: null,
       });
     }
     const s = porClave.get(clave);
+    if (!s.carpetaRelativa && doc.carpetaRelativa) s.carpetaRelativa = doc.carpetaRelativa;
     if (doc.perfilRecursoId && !s.perfilRecursoIds.includes(doc.perfilRecursoId)) {
       s.perfilRecursoIds.push(doc.perfilRecursoId);
     }

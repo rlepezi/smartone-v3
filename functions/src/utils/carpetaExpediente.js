@@ -1,0 +1,201 @@
+// Carpeta documental de un Expediente: UN SOLO resolvedor para todos los
+// consumidores (acreditación, Documentación, Revisiones IA, panel de
+// documentos). Funciones PURAS: quien llama lee los documentos.
+// La MISMA lógica vive en frontend/src/utils/carpetaExpediente.js; ambas se
+// prueban con test/fixtures/casosCarpetaExpediente.json.
+//
+// Precedencia: 1° la Carpeta de empresa del expediente
+// (expediente.repositorioDocumental.carpetaEmpresaId); 2° solo si el
+// expediente no tiene carpetaEmpresaId, el formato legado
+// (configRevisionExpediente.repositorioDocumental: {tipo, etiqueta, url,
+// mapeo}); 3° ninguna.
+
+const mapeoVacio = () => ({carpetaPersonas: null, carpetaRecursos: null,
+  requerimientos: {}});
+
+/**
+ * Entradas del mapeo de un requerimiento en el formato nuevo (arreglo). El
+ * legado guarda un texto (la ruta de una carpeta).
+ * @param {*} valor Arreglo de entradas o texto (legado).
+ * @return {Array<{ruta: string, tipo: string, origen: string,
+ *     confirmadoPor: ?string, confirmadoAt: *}>} Entradas.
+ */
+function entradasMapeo(valor) {
+  if (typeof valor === "string") {
+    return valor ? [{ruta: valor, tipo: "carpeta", origen: "manual",
+      confirmadoPor: null, confirmadoAt: null}] : [];
+  }
+  if (!Array.isArray(valor)) return [];
+  return valor.filter((e) => e && typeof e.ruta === "string" && e.ruta)
+      .map((e) => ({ruta: e.ruta, tipo: e.tipo === "archivo" ? "archivo" :
+        "carpeta", origen: e.origen === "sugerencia" ? "sugerencia" :
+        "manual", confirmadoPor: e.confirmadoPor || null,
+      confirmadoAt: e.confirmadoAt || null}));
+}
+
+/**
+ * Mapeo normalizado: requerimientos siempre en el formato nuevo.
+ * @param {?Object} mapeo Mapeo (nuevo o legado).
+ * @return {{carpetaPersonas: ?string, carpetaRecursos: ?string,
+ *     requerimientos: Object}} Mapeo.
+ */
+function normalizarMapeo(mapeo) {
+  const salida = mapeoVacio();
+  if (!mapeo || typeof mapeo !== "object") return salida;
+  salida.carpetaPersonas = mapeo.carpetaPersonas || null;
+  salida.carpetaRecursos = mapeo.carpetaRecursos || null;
+  // Carpeta de empresa: {requerimientoId: [...]} en "mapeo"; legado:
+  // mapeo.requerimientos.
+  const reqs = mapeo.requerimientos && typeof mapeo.requerimientos ===
+    "object" ? mapeo.requerimientos : {};
+  Object.entries(reqs).forEach(([id, v]) => {
+    const e = entradasMapeo(v);
+    if (e.length) salida.requerimientos[id] = e;
+  });
+  return salida;
+}
+
+/**
+ * Resuelve la carpeta de un Expediente.
+ * @param {Object} entrada Datos ya leídos.
+ * @param {?Object} entrada.expediente Expediente
+ *     ({repositorioDocumental: {carpetaEmpresaId}}).
+ * @param {?Object} entrada.carpetaEmpresa Carpeta de empresa de ese id
+ *     ({id, fuenteId, ruta, url, empresaId, proyectoId, carpetaPersonas,
+ *     carpetaRecursos, mapeo, estadoMapeo, estado}).
+ * @param {?Object} entrada.fuente Fuente de la carpeta ({id, tipo,
+ *     etiqueta}).
+ * @param {?Object} entrada.legado configRevisionExpediente
+ *     .repositorioDocumental ({tipo, etiqueta, url, mapeo}).
+ * @return {{origen: string, carpeta: ?Object}} origen: "carpetaEmpresa" |
+ *     "legado" | "ninguna". carpeta: {carpetaEmpresaId, fuenteId,
+ *     fuenteEtiqueta, tipo, etiqueta, ruta, url, empresaId, proyectoId,
+ *     estadoMapeo, mapeo: {carpetaPersonas, carpetaRecursos,
+ *     requerimientos: {id: [entradas]}}}.
+ */
+function resolverCarpetaExpediente({expediente = null, carpetaEmpresa = null,
+  fuente = null, legado = null} = {}) {
+  const carpetaEmpresaId =
+      expediente?.repositorioDocumental?.carpetaEmpresaId || null;
+  if (carpetaEmpresaId) {
+    // Con carpetaEmpresaId el legado NO se usa, aunque la carpeta no se
+    // encuentre (queda "ninguna": hay que volver a vincular).
+    if (!carpetaEmpresa || carpetaEmpresa.id !== carpetaEmpresaId) {
+      return {origen: "ninguna", carpeta: null};
+    }
+    const tipo = fuente?.tipo === "sharepoint" ? "sharepoint" : "local";
+    return {
+      origen: "carpetaEmpresa",
+      carpeta: {
+        carpetaEmpresaId,
+        fuenteId: carpetaEmpresa.fuenteId || null,
+        fuenteEtiqueta: fuente?.etiqueta || null,
+        tipo,
+        etiqueta: carpetaEmpresa.ruta,
+        ruta: carpetaEmpresa.ruta,
+        url: tipo === "sharepoint" ? carpetaEmpresa.url || null : null,
+        empresaId: carpetaEmpresa.empresaId || null,
+        proyectoId: carpetaEmpresa.proyectoId || null,
+        estadoMapeo: carpetaEmpresa.estadoMapeo || "sin_mapear",
+        mapeo: normalizarMapeo({
+          carpetaPersonas: carpetaEmpresa.carpetaPersonas,
+          carpetaRecursos: carpetaEmpresa.carpetaRecursos,
+          requerimientos: carpetaEmpresa.mapeo,
+        }),
+      },
+    };
+  }
+  if (legado && (legado.tipo === "local" || legado.tipo === "sharepoint")) {
+    return {
+      origen: "legado",
+      carpeta: {
+        carpetaEmpresaId: null, fuenteId: null, fuenteEtiqueta: null,
+        tipo: legado.tipo,
+        etiqueta: legado.etiqueta || null,
+        ruta: legado.tipo === "local" ? legado.etiqueta || null : null,
+        url: legado.tipo === "sharepoint" ? legado.url || null : null,
+        empresaId: null, proyectoId: null, estadoMapeo: null,
+        mapeo: normalizarMapeo(legado.mapeo),
+      },
+    };
+  }
+  return {origen: "ninguna", carpeta: null};
+}
+
+/**
+ * Rutas asignadas a un requerimiento en la carpeta resuelta.
+ * @param {?Object} carpeta Carpeta (resolverCarpetaExpediente).
+ * @param {string} requerimientoId Requerimiento.
+ * @return {string[]} Rutas (relativas a la carpeta).
+ */
+function rutasDeRequerimiento(carpeta, requerimientoId) {
+  return (carpeta?.mapeo?.requerimientos?.[requerimientoId] || [])
+      .map((e) => e.ruta);
+}
+
+/**
+ * Avance del mapeo: de los requerimientos que la carpeta debe cubrir (Y),
+ * cuántos tienen al menos una ubicación (X). Las entradas de requerimientos
+ * fuera de la lista no cuentan.
+ * @param {?Object} mapeo {requerimientoId: [entradas]}.
+ * @param {string[]} requerimientoIds Requerimientos que debe cubrir.
+ * @return {{ubicados: number, total: number}} X e Y.
+ */
+function avanceMapeo(mapeo, requerimientoIds) {
+  const ids = [...new Set(requerimientoIds || [])];
+  const ubicados = ids.filter((id) =>
+    entradasMapeo((mapeo || {})[id]).length).length;
+  return {ubicados, total: ids.length};
+}
+
+/**
+ * Estado del mapeo: sin_mapear (X = 0), completo (X = Y) o parcial
+ * (0 < X < Y), con X e Y de avanceMapeo.
+ * @param {?Object} mapeo {requerimientoId: [entradas]}.
+ * @param {string[]} requerimientoIds Requerimientos que debe cubrir.
+ * @return {string} Estado.
+ */
+function calcularEstadoMapeo(mapeo, requerimientoIds) {
+  const {ubicados, total} = avanceMapeo(mapeo, requerimientoIds);
+  if (!ubicados) return "sin_mapear";
+  return ubicados === total ? "completo" : "parcial";
+}
+
+/**
+ * Cobertura del mapeo por requerimiento en las Carpetas de empresa de un
+ * Mandante: en cuántas de las carpetas mapeadas (con al menos una ubicación)
+ * está ubicado cada requerimiento, y en qué ruta de cada una.
+ * @param {Array<Object>} carpetas Carpetas ({id, ruta, mapeo, empresaNombre,
+ *     proyectoNombre, estadoMapeo}).
+ * @return {{carpetasMapeadas: number, porRequerimiento: Object<string,
+ *     Array<Object>>}} porRequerimiento: reqId → [{carpetaEmpresaId, ruta,
+ *     empresaNombre, proyectoNombre, estadoMapeo, ubicaciones: [{ruta,
+ *     tipo}]}], ordenadas por ruta.
+ */
+function coberturaMapeo(carpetas) {
+  const porRequerimiento = {};
+  let carpetasMapeadas = 0;
+  (carpetas || []).forEach((c) => {
+    const pares = Object.entries(c.mapeo || {})
+        .map(([id, v]) => [id, entradasMapeo(v)]).filter(([, e]) => e.length);
+    if (!pares.length) return;
+    carpetasMapeadas++;
+    pares.forEach(([id, entradas]) => {
+      (porRequerimiento[id] = porRequerimiento[id] || []).push({
+        carpetaEmpresaId: c.id, ruta: c.ruta,
+        empresaNombre: c.empresaNombre || null,
+        proyectoNombre: c.proyectoNombre || null,
+        estadoMapeo: c.estadoMapeo || "sin_mapear",
+        ubicaciones: entradas.map((e) => ({ruta: e.ruta, tipo: e.tipo})),
+      });
+    });
+  });
+  Object.values(porRequerimiento).forEach((l) => l.sort((a, b) =>
+    a.ruta.localeCompare(b.ruta, "es", {numeric: true})));
+  return {carpetasMapeadas, porRequerimiento};
+}
+
+module.exports = {
+  resolverCarpetaExpediente, rutasDeRequerimiento, calcularEstadoMapeo,
+  avanceMapeo, normalizarMapeo, entradasMapeo, coberturaMapeo,
+};

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { PatenteChip } from "./PatenteChip";
 import { Search } from "lucide-react";
 import { EvaluacionCelda } from "./EvaluacionCelda";
 import { Tabs } from "./Tabs";
@@ -132,7 +133,8 @@ export const RecursosBloques = ({ cabecera, estado, construirBloques, mensajeSin
                       <tr key={f.key} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-3 px-6 font-bold text-carbon-dark">{f.nombre}</td>
                         <td className="py-3 px-6 font-mono font-semibold text-slate-700 whitespace-nowrap">
-                          {f.secundario || <span className="text-slate-400 italic font-sans">-</span>}
+                          {!f.secundario ? <span className="text-slate-400 italic font-sans">-</span>
+                            : esPersonas ? f.secundario : <PatenteChip valor={f.secundario} tipo={f.tipoIdentificacion} />}
                         </td>
                         <td className="py-3 px-6">
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold border bg-primary-lighter text-primary border-primary/20 whitespace-nowrap">

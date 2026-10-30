@@ -568,3 +568,153 @@ Cumple" el Expediente está en `con_observaciones` y sale solo al corregir el
   un rol de Mandante no puede hacerlo si alguna es de otro Mandante (403 `FUERA_DE_ALCANCE`, sin
   revelar datos).
 - Patente de Maquinaria obligatoria y no única (aviso `PATENTE_DUPLICADA` con confirmación).
+
+## Bloque 4 — expedienteRequerimientos, evidencias y evaluaciones
+
+- **expedienteRequerimientos**: cada Requerimiento concreto (este Requerimiento, para este sujeto,
+  en este Expediente) es un documento con ID determinístico `expedienteId_requerimientoId_sujetoId`.
+  Lleva la copia congelada del Requerimiento (nombre, nombreCorto, requiereVencimiento,
+  esDocumentoIdentidad, orden), `origen` ("configuracion" | "agregado_manual"), `estado`
+  ("activo" | "retirado", nunca se borra) y la copia de la evaluación vigente (resultado,
+  evaluacionVigenteId, fechaVencimiento), escrita en la misma transacción que la evaluación.
+- **expedientes**: sin array de requerimientos. Cabecera con `estadoGeneracion`
+  ("en_proceso" | "completa"), `creadoPorId`, `requerimientosManuales` (reglas
+  {requerimientoId, tipoEntidad}) y contadores `resumen` / `resumenSujetos`
+  ({activas, cumple, noCumple, noAplica, pendiente}; una instancia sin evaluar cuenta como
+  pendiente), actualizados con incrementos en cada evaluación y en cada lote de generación o
+  sincronización; `recalcularResumen` los rehace desde cero (al terminar la generación y para
+  reparar).
+- **Generación y sincronización** (`expedienteRequerimientoService`, único usuario de la regla de
+  aplicabilidad junto con las vistas previas): lotes de hasta 400 operaciones, idempotente,
+  reintentable. Crea las que faltan (con reutilización documental), reactiva las retiradas que
+  vuelven a aplicar y retira las que dejan de aplicar. Corre al crear el Expediente, al asignar o
+  finalizar sujetos o perfiles, al cambiar vínculos del Perfil y al agregar o quitar reglas
+  manuales. Los Expedientes cerrados no se tocan.
+- **% de cumplimiento** = cumple / (activas − noAplica); "—" si el denominador es 0. El estado
+  derivado conserva sus reglas sobre las instancias activas.
+- **evaluaciones**: `expedienteRequerimientoId` obligatorio; estados "vigente" | "reemplazada" |
+  "anulada". Las reutilizadas llevan `evaluacionOrigenId`.
+- **Evidencia opcional**: "cumple" sin evidencia exige método (presencial/otro) y justificación;
+  "no_cumple" / "no_aplica" sin evidencia no los exigen. "cumple" de un requisito con vencimiento
+  exige fecha. `evidenciaRequerimientos` enlaza la evidencia a la instancia (y por lo tanto al
+  sujeto).
+
+## Bloque 5 — Tareas y pendientes de UI (planilla del 06.10.2026)
+
+- **Código de Proyecto automático**: `PRJ-AAAA-NNN` (año de creación en hora de Chile; el
+  correlativo crece a 4 dígitos si hace falta), correlativo **por Mandante y año**. Lo asigna
+  `proyectoRepository.createConCodigo` en la misma transacción que crea el Proyecto, con el
+  contador `contadoresProyecto/{mandanteId}_{anio}` ({mandanteId, anio, ultimo}). El contador se
+  crea con el primer Proyecto de ese par y parte del mayor correlativo ya usado por ese Mandante
+  en ese año (los Proyectos existentes conservan su código). Si dos altas crean el contador a la
+  vez, una falla con ALREADY_EXISTS y el servicio reintenta. El backend ignora un `codigo` enviado
+  por el cliente, al crear y al editar. `GET /proyectos/siguiente-codigo` queda sin uso (se
+  conserva hasta decidir si se elimina).
+- **Persona.profesion**: texto opcional (máx. 80); no se muestra en el listado; se borra al
+  anonimizar.
+- **`GET /empresas/:id/recursos`**: Personas y Maquinarias con relación (vigente o histórica) con
+  la Empresa, una fila por sujeto (su relación más reciente) con sus Proyectos de asignación
+  activa por esa Empresa; lecturas por lote (`getByIds` con `db.getAll`), sin consulta por fila.
+  Un rol de Mandante solo ve Proyectos de su Mandante. Sin admin_comercial (403).
+- **Bitácora — Mandante de contexto** (`alcanceMandante.mandanteDeContexto`): para acciones sobre
+  entidades sin `mandanteId` (alta y edición de Persona/Maquinaria, cambio de empresa, término de
+  relación) se registra el del actor; si no tiene, el de las asignaciones afectadas (si son de un
+  solo Mandante) o el único Mandante asociado a la Empresa. Queda null solo si no se puede derivar
+  sin ambigüedad (acción global de un rol transversal) y en la anonimización (acción global).
+- **UI**: menú lateral retráctil con secciones Inicio / Operación / Maestros / Configuración /
+  Administración (preferencia por usuario en localStorage); campos de formulario de 2 opciones
+  como radio (`OpcionesRadio`); listados sin paneles laterales.
+
+## Requerimientos por Mandante (catálogo con modal de ingreso continuo)
+
+- **Modelo**: `requerimientos` agrega `mandanteId` (obligatorio e inmutable, igual que
+  `tipoEntidad`). Deja de ser un catálogo global. `perfilRequerimientos` no cambia de estructura;
+  el Requerimiento, el Perfil de Participación y el Perfil de Recurso deben ser del mismo Mandante
+  y el tipo del Perfil de Recurso debe coincidir con el `tipoEntidad`.
+- **Aplicabilidad**: `{ perfilParticipacionIds: [...], perfilRecursoIds: null | [...] }` (null =
+  "Todos"; para Empresa siempre null). Es del Requerimiento: un vínculo por cada combinación.
+  No se guarda en el documento del Requerimiento: son sus vínculos activos.
+- **Guardado atómico**: `POST /requerimientos` y `PUT /requerimientos/:id` escriben el
+  Requerimiento, su índice de nombre y sus vínculos en UNA transacción
+  (`requerimientoRepository.guardarAtomico`). Un Requerimiento nunca queda sin vínculos. Editar
+  ajusta los vínculos por diferencia (crea, desactiva, no toca los que se mantienen; sin borrado).
+  Después se sincronizan los Expedientes abiertos (regla del bloque 4). Sin `DELETE`: el estado se
+  cambia editando. Eliminados `DELETE /requerimientos/:id`, `GET /requerimientos/uso` y
+  `POST /perfil-requerimientos`.
+- **Unicidad**: índice `requerimientosNombre`, ID `<mandanteId>|<tipoEntidad>|<nombre
+  normalizado>` (minúsculas, sin tildes, trim, espacios colapsados; "/" se guarda como "%2F"
+  porque no puede ir en un ID). La clave se ocupa solo mientras el Requerimiento está activo:
+  renombrar libera la anterior y toma la nueva; desactivar la libera; reactivar la vuelve a tomar
+  o responde 409.
+- **Alcance**: `GET /requerimientos` exige `mandanteId` para superadmin y evaluador; los roles de
+  Mandante quedan fijos en el suyo (404 para Requerimientos de otro). La matriz del Perfil, las
+  reglas manuales de Expediente y los cálculos de aplicables solo consideran los Requerimientos
+  del Mandante.
+- **Reutilización documental**: nunca entre Mandantes. `buscarReutilizables*` recibe el
+  `mandanteId` del Expediente destino y filtra las Evaluaciones por él.
+- **Bitácora**: crear, editar y cambiar el estado de un Requerimiento quedan registrados con
+  `mandanteId` (entidad "requerimiento").
+- **Migración**: `scripts/migrarRequerimientosAMandante.js` (dry-run por defecto).
+
+## Fechas: dd/mm/aaaa en toda la aplicación
+
+- Un solo módulo por app: `frontend/src/utils/fechas.js` y `mobile/src/utils/fechas.js`
+  (`formatFecha`, `formatFechaHora`; en web además `parseFechaDMA`, `aFechaISO`, `hoyISO`,
+  `sumarDiasISO`, `formatTiempoRelativo`). Sin librerías. No se usa `toLocaleDateString` ni
+  `<input type="date">` en ninguna pantalla.
+- Fechas sin hora (inicio, término, vencimiento): viajan como "aaaa-mm-dd" y el backend las guarda
+  como medianoche UTC. Se muestran con sus componentes UTC, así el día no cambia en Chile. Un
+  Timestamp exactamente en medianoche UTC se trata como fecha sin hora.
+- Instantes (createdAt, bitácora): se muestran en America/Santiago, en 24 horas. "Hoy" también se
+  calcula en America/Santiago.
+- Ingreso: `components/ui/DateInput.jsx` (texto con máscara dd/mm/aaaa + calendario propio en
+  español). `value` / `onChange` siguen en "aaaa-mm-dd": los payloads no cambiaron.
+
+## Perfil de Recurso: nombre único y reactivación
+
+- El nombre es único por Mandante y tipo, comparado normalizado (minúsculas, sin tildes, trim,
+  espacios colapsados) y entre perfiles activos e inactivos. Al crear con un nombre que ya existe,
+  `POST /perfiles-recurso` responde 409 con `codigo: "PERFIL_EXISTENTE"` y
+  `detalle: { perfil: { id, nombre, tipo, estado }, cantidadRequerimientos }`.
+- Un perfil inactivo se reactiva con `PUT /perfiles-recurso/:id` (`{ estado: "activo" }`); sus
+  vínculos de perfilRequerimientos no se tocan y vuelven a aplicar. El estado de un Perfil de
+  Recurso no entra en el cálculo de requerimientos aplicables, así que ni desactivar ni reactivar
+  sincroniza Expedientes.
+- El formulario (modal y página) avisa el nombre repetido mientras se escribe y ofrece usar el
+  perfil existente, reactivarlo o elegir otro nombre.
+
+## Ejecución y cierre de Expedientes, alertas e historial de estados
+
+- Fase de evaluación (automática, como antes): creado / en_revision / con_observaciones /
+  aprobado se recalculan desde los contadores al cambiar evaluaciones o instancias.
+- `aprobado → en_ejecucion` es manual ("Iniciar ejecución", `POST /expedientes/:id/iniciar-ejecucion`):
+  exige estado aprobado y un Proyecto que no esté finalizado, archivado ni suspendido; fija
+  `fechaInicioEjecucion`. En ejecución el estado ya no se recalcula: los vencidos, pendientes o
+  "no cumple" se muestran como alerta (banner en el detalle e ícono en el listado, desde `resumen`).
+- Cierre (`POST /expedientes/:id/cerrar { motivo, detalle }`), desde cualquier estado salvo
+  cerrado. Motivos: fin_proyecto, salida_empresa, cierre_administrativo, otro (exige detalle). En
+  una transacción fija `fechaCierre`, `motivoCierre` y `detalleCierre`, finaliza la Participación y
+  sus participacionPersonas / participacionRecursos activos (fechaTermino hoy). No borra nada.
+- RN-014: al pasar un Proyecto a finalizado o archivado se cierran sus Expedientes abiertos
+  (motivo fin_proyecto, origen automático), uno por transacción; los ya cerrados se saltan, así
+  que reintentar no duplica (`POST /proyectos/:id/cerrar-expedientes`).
+- Reemplazar Acreditación / Cambiar Proyecto cierran el Expediente anterior con motivo
+  cierre_administrativo y su registro de historial.
+- Correcciones, solo superadmin y con motivo: `volver-a-aprobado` (en_ejecucion → aprobado, borra
+  `fechaInicioEjecucion` y retoma el recálculo) y `reabrir` (al estado previo al último cierre
+  según el historial; sin historial, el que dan las evaluaciones). Reabrir NO reactiva la
+  Participación ni las asignaciones finalizadas.
+- Permisos: iniciar y cerrar, superadmin y mandante_admin (este acotado a su Mandante). Se quitó
+  a evaluador de las transiciones (sigue pudiendo agregar o quitar requerimientos). El antiguo
+  `PUT /expedientes/:id/transicionar` se eliminó.
+- Historial: colección `expedienteEstados` ({expedienteId, mandanteId, estadoAnterior,
+  estadoNuevo, origen, motivo, detalle, actorUid, actorNombre, createdAt}), escrita en la misma
+  transacción que cada cambio de estado (también los automáticos); además cada cambio va a
+  Bitácora. Lectura por mandanteId; nadie escribe desde el cliente.
+- Vencidos: `resumen.vencidos` (instancias activas "cumple" con fechaVencimiento anterior a hoy en
+  America/Santiago) y `resumen.fechaVencimientoMasProxima` se recalculan en la transacción de cada
+  evaluación, tras cada sincronización y en el recálculo completo. Como un requisito vence con el
+  paso del tiempo, la función programada diaria `actualizarVencimientosExpedientes` (00:30
+  Santiago) recalcula los Expedientes cuya fecha más próxima ya pasó.
+- Expediente cerrado: rechaza con 409 evaluar, subir o enlazar evidencia, agregar o quitar
+  requerimientos y asignar personas o maquinarias.

@@ -8,10 +8,9 @@ import { ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
 // su variante sólida.
 const BARRA_COLOR_POR_ESTADO = {
   creado: "bg-primary-light",
-  en_revision: "bg-amber-400",
-  con_observaciones: "bg-amber-400",
-  aprobado: "bg-sage-dark",
-  en_ejecucion: "bg-sage-dark",
+  en_ejecucion: "bg-blue-400",
+  completado: "bg-sage-dark",
+  completado_pendientes: "bg-amber-400",
   cerrado: "bg-slate-400",
 };
 

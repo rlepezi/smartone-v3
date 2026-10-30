@@ -6,14 +6,12 @@ import {
   ArrowUpRight,
   ClipboardList,
   ClipboardCheck,
-  AlertTriangle,
   AlertCircle,
   XCircle,
   CheckCircle2,
   Clock,
   Gauge,
   Activity,
-  CalendarClock,
   Building2,
   UserCog,
   Sparkles,
@@ -25,7 +23,6 @@ import { empresaService } from "../../services/empresaService";
 import { personaService } from "../../services/personaService";
 import { recursoService } from "../../services/recursoService";
 import { expedienteService, ESTADOS_EXPEDIENTE } from "../../services/expedienteService";
-import { evidenciaService } from "../../services/evidenciaService";
 import { evaluacionService } from "../../services/evaluacionService";
 import { requerimientoService } from "../../services/requerimientoService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
@@ -33,28 +30,22 @@ import { bitacoraService } from "../../services/bitacoraService";
 import { mandanteService } from "../../services/mandanteService";
 import { usuarioService } from "../../services/usuarioService";
 import { describirEvento } from "../../utils/bitacoraFormatters";
-import { formatTiempoRelativo } from "../../utils/fechaFormatters";
+import { contextoEvento } from "../../utils/bitacoraContexto";
+import { VencimientosDashboard } from "../../components/dashboard/VencimientosDashboard";
+import { formatTiempoRelativo } from "../../utils/fechas";
 import { StatusBadge, MAPA_EVALUACION } from "../../components/shared/StatusBadge";
 import { EstadoCumplimientoPanel } from "../../components/shared/EstadoCumplimientoPanel";
 import { ExpedientesPorEstadoBars } from "../../components/shared/ExpedientesPorEstadoBars";
 import {
-  calcularConteosEvaluacion,
-  calcularSinEvaluar,
-  calcularConteosPorEstadoExpediente,
+  calcularConteosPorEstadoExpediente, resumenDeExpedientes, evaluadosDe,
 } from "../../utils/cumplimientoCalculos";
 import { createdAtMillis, calcularDeltaPeriodo } from "../../utils/deltaCalculos";
 
 const ESTADO_INICIAL = { loading: true, error: null, value: null };
-const DIAS_VENTANA_VIGENCIA = 30;
 const ESTADO_MAP = ESTADOS_EXPEDIENTE.reduce((acc, e) => {
   acc[e.value] = { label: e.label, className: e.color };
   return acc;
 }, {});
-const aFecha = (valor) => {
-  if (!valor) return null;
-  const date = valor._seconds ? new Date(valor._seconds * 1000) : new Date(valor);
-  return isNaN(date.getTime()) ? null : date;
-};
 // Delta semanal (ventana de 7 días) — helper genérico compartido en
 // utils/deltaCalculos.js, reutilizado también por ProyectosListPage con
 // una ventana distinta (mensual).
@@ -117,7 +108,7 @@ const iconoEvento = (evento) => {
     return { Icon: Clock, className: "bg-amber-50 text-amber-600" };
   }
   if (entidad === "expediente") {
-    if (accion === "transicion_estado" && detalle?.estadoNuevo === "aprobado") {
+    if (accion === "transicion_estado" && ["aprobado", "completado"].includes(detalle?.estadoNuevo)) {
       return { Icon: CheckCircle2, className: "bg-sage-lighter text-sage-dark" };
     }
     return { Icon: FileCheck2, className: "bg-primary-lighter text-primary-dark" };
@@ -187,7 +178,6 @@ export const DashboardPage = () => {
   const [expedientesTodos, setExpedientesTodos] = useState(ESTADO_INICIAL);
   const [empresas, setEmpresas] = useState(ESTADO_INICIAL);
   const [empresasTodas, setEmpresasTodas] = useState(ESTADO_INICIAL);
-  const [vigencias, setVigencias] = useState(ESTADO_INICIAL);
   const [estadoAcreditacion, setEstadoAcreditacion] = useState(ESTADO_INICIAL);
   const [evaluacionesTodas, setEvaluacionesTodas] = useState(ESTADO_INICIAL);
   const [actividadReciente, setActividadReciente] = useState(ESTADO_INICIAL);
@@ -206,7 +196,6 @@ export const DashboardPage = () => {
     const tareas = [
       { key: "expedientes", promise: expedienteService.listar({}) },
       { key: "empresas", promise: empresaService.listar("activo") },
-      { key: "evidencias", promise: evidenciaService.listar({}) },
       { key: "evaluacionesVigentes", promise: evaluacionService.listarVigentes() },
       // limit 30: el panel solo muestra 6 por defecto, el resto alimenta
       // "Ver toda la actividad" sin pedir una página aparte al backend.
@@ -217,21 +206,6 @@ export const DashboardPage = () => {
       if (cancelado) return;
       try {
 
-      // "Vigencias Próximas" combina dos fuentes (Evidencia.fechaVencimiento
-      // + Evaluacion.fechaVencimiento) — se capturan acá y se combinan
-      // DESPUÉS del forEach, no dentro de la rama de una sola tarea. Sin
-      // deduplicar: son documentos distintos con semántica distinta (un
-      // archivo que expira vs. un Requerimiento a re-verificar).
-      let evidenciasData = null;
-      let evidenciasFallo = false;
-      let evaluacionesData = null;
-      let evaluacionesFallo = false;
-      // Capturado en la rama "expedientes" (procesada primero, índice 0)
-      // para poder calcular "Sin Evaluar" al llegar a la rama
-      // "evaluacionesVigentes" — mismos datos ya traídos, sin llamada
-      // nueva.
-      let expedientesDataCapturada = null;
-
       resultados.forEach((res, i) => {
         const key = tareas[i].key;
 
@@ -241,14 +215,10 @@ export const DashboardPage = () => {
           if (key === "expedientes") {
             setExpedientesPorEstado(errorState);
             setExpedientesTodos(errorState);
+            setEstadoAcreditacion(errorState);
           }
           if (key === "empresas") setEmpresas(errorState);
-          if (key === "evidencias") evidenciasFallo = true;
-          if (key === "evaluacionesVigentes") {
-            setEstadoAcreditacion(errorState);
-            setEvaluacionesTodas(errorState);
-            evaluacionesFallo = true;
-          }
+          if (key === "evaluacionesVigentes") setEvaluacionesTodas(errorState);
           if (key === "actividadReciente") setActividadReciente(errorState);
           return;
         }
@@ -256,7 +226,8 @@ export const DashboardPage = () => {
         const data = res.value || [];
 
         if (key === "expedientes") {
-          expedientesDataCapturada = data;
+          // Estado de cumplimiento y tarjetas superiores: contadores de cada Expediente.
+          setEstadoAcreditacion({ loading: false, error: null, value: { resumen: resumenDeExpedientes(data) } });
 
           // Aislado en su propio try/catch: si algo acá lanzara una
           // excepción inesperada, antes se perdía como un unhandled
@@ -277,44 +248,13 @@ export const DashboardPage = () => {
         } else if (key === "empresas") {
           setEmpresas({ loading: false, error: null, value: data.length });
           setEmpresasTodas({ loading: false, error: null, value: data });
-        } else if (key === "evidencias") {
-          evidenciasData = data;
         } else if (key === "evaluacionesVigentes") {
-          evaluacionesData = data;
           setEvaluacionesTodas({ loading: false, error: null, value: data });
-          const { conteos, total } = calcularConteosEvaluacion(data);
-          const sinEvaluar = expedientesDataCapturada ? calcularSinEvaluar(expedientesDataCapturada, data) : 0;
-          setEstadoAcreditacion({ loading: false, error: null, value: { total, conteos, sinEvaluar } });
         } else if (key === "actividadReciente") {
           setActividadReciente({ loading: false, error: null, value: data });
         }
       });
 
-      if (evidenciasFallo && evaluacionesFallo) {
-        setVigencias({ loading: false, error: "No se pudo cargar.", value: null });
-      } else {
-        const hoy = new Date();
-        hoy.setHours(0, 0, 0, 0);
-        const fuentes = [
-          ...(evidenciasData || []).filter((ev) => ev.estado === "activo" && ev.fechaVencimiento),
-          ...(evaluacionesData || []).filter((ev) => ev.fechaVencimiento),
-        ];
-        const proximas = fuentes
-          .map((ev) => {
-            const fecha = aFecha(ev.fechaVencimiento);
-            if (!fecha) return null;
-            const diasRestantes = Math.ceil((fecha - hoy) / (1000 * 60 * 60 * 24));
-            return { ...ev, fecha, diasRestantes };
-          })
-          // Sin piso en diasRestantes: incluye los YA vencidos (antes el
-          // filtro `>= 0` los excluía por completo, así que hoy no existe
-          // ningún conteo real de "vencidos" en el Dashboard). El orden
-          // ascendente por fecha ya deja los vencidos primero (su fecha
-          // quedó en el pasado), sin necesidad de un sort adicional.
-          .filter((ev) => ev && ev.diasRestantes <= DIAS_VENTANA_VIGENCIA)
-          .sort((a, b) => a.fecha - b.fecha);
-        setVigencias({ loading: false, error: null, value: proximas });
-      }
       } catch (err) {
         // Red de seguridad final: cualquier excepción no anticipada acá
         // (fuera del try/catch puntual de "expedientes") ya no se pierde
@@ -328,7 +268,6 @@ export const DashboardPage = () => {
         setEmpresasTodas(errorState);
         setEstadoAcreditacion(errorState);
         setEvaluacionesTodas(errorState);
-        setVigencias(errorState);
         setActividadReciente(errorState);
       }
     }).catch((err) => {
@@ -341,6 +280,19 @@ export const DashboardPage = () => {
 
     return () => { cancelado = true; };
   }, [esAdminComercial]);
+
+  // Nombres de Requerimiento para "Vigencias Próximas" y la actividad de evaluaciones (esos datos
+  // solo traen el requerimientoId): se piden los de los Mandantes de los Expedientes ya cargados,
+  // nunca el catálogo completo.
+  const mandantesExpedientesKey = [...new Set(
+    (expedientesTodos.value || []).map((e) => e.mandanteId).filter(Boolean),
+  )].sort().join(",");
+  useEffect(() => {
+    if (!mandantesExpedientesKey) return;
+    requerimientoService.nombresDeMandantes(mandantesExpedientesKey.split(","))
+      .then((mapa) => setRequerimientosMap(mapa))
+      .catch((err) => console.error("Error al cargar requerimientos:", err));
+  }, [mandantesExpedientesKey]);
 
   useEffect(() => {
     if (esAdminComercial) return;
@@ -360,16 +312,6 @@ export const DashboardPage = () => {
       })
       .catch((err) => console.error("Error al cargar empresas:", err));
 
-    // Para etiquetar las "Vigencias Próximas" que vienen de una
-    // Evaluación (no de una Evidencia): esas no traen un nombre de
-    // archivo, solo requerimientoId.
-    requerimientoService.listar({})
-      .then((data) => {
-        const map = {};
-        (data || []).forEach((r) => { map[r.id] = r.nombre; });
-        setRequerimientosMap(map);
-      })
-      .catch((err) => console.error("Error al cargar requerimientos:", err));
 
     perfilParticipacionService.listar({})
       .then((data) => {
@@ -407,6 +349,16 @@ export const DashboardPage = () => {
   // por los mapas ya cargados — sin ningún endpoint nuevo. Devuelve null
   // para cualquier otro tipo de evento (esos ya son suficientemente
   // claros con describirEvento()).
+  // Nombres para describir la Actividad Reciente (persona, empresa, proyecto, expediente...).
+  const nombresActividad = {
+    personas: personasMap,
+    recursos: recursosMap,
+    empresas: empresasMap,
+    proyectos: proyectosMap,
+    expedientes: Object.fromEntries((expedientesTodos.value || [])
+      .map((e) => [e.id, { empresaId: e.empresaId, proyectoId: e.proyectoId }])),
+  };
+
   const detalleEvaluacion = (evento) => {
     if (evento?.entidad !== "evaluacion" || evento?.accion !== "creado") return null;
     const { detalle } = evento;
@@ -423,25 +375,6 @@ export const DashboardPage = () => {
     const proyectoNombre = expediente ? proyectosMap[expediente.proyectoId] : null;
     const resultadoLabel = RESULTADO_EVALUACION_LABELS[detalle?.resultado] || detalle?.resultado;
     return { requerimientoNombre, objetivo, proyectoNombre, resultadoLabel };
-  };
-
-  // Mismo criterio que detalleEvaluacion() de arriba, pero para un ítem de
-  // "Vencimientos Próximos" (Evidencia o Evaluación, ambas traen
-  // personaId/recursoId/expedienteId directo, sin envoltorio `.detalle`).
-  // Antes el ítem solo mostraba el nombre del archivo o del Requerimiento,
-  // sin decir a quién pertenecía.
-  const resolverSujetoVigencia = (item) => {
-    const expediente = (expedientesTodos.value || []).find((e) => e.id === item.expedienteId);
-    let sujeto = null;
-    if (item.personaId) {
-      sujeto = personasMap[item.personaId] || null;
-    } else if (item.recursoId) {
-      sujeto = recursosMap[item.recursoId] || null;
-    } else if (expediente) {
-      sujeto = empresasMap[expediente.empresaId] || null;
-    }
-    const proyectoNombre = expediente ? proyectosMap[expediente.proyectoId] : null;
-    return { sujeto, proyectoNombre };
   };
 
   const renderValor = (card) => {
@@ -461,24 +394,23 @@ export const DashboardPage = () => {
     error: expedientesTodos.error,
     value: expedientesTodos.value ? expedientesTodos.value.filter((e) => e.estado !== "cerrado").length : null,
   };
-  // Evaluaciones Realizadas / Pendientes por Evaluar / No Cumplen: los
-  // tres ya se calculan en estadoAcreditacion.value (conteos por
-  // resultado + total) para el panel "Estado de Cumplimiento" — se
-  // reusa acá tal cual.
+  // Evaluaciones Realizadas / Pendientes por Evaluar / No Cumplen: salen de los mismos contadores
+  // del panel "Estado de Cumplimiento" (instancias activas de todos los Expedientes en alcance).
+  const resumenGeneral = estadoAcreditacion.value?.resumen || null;
   const cardEvaluacionesRealizadas = {
     loading: estadoAcreditacion.loading,
     error: estadoAcreditacion.error,
-    value: estadoAcreditacion.value ? estadoAcreditacion.value.total : null,
+    value: resumenGeneral ? evaluadosDe(resumenGeneral) : null,
   };
   const cardPendientesPorEvaluar = {
     loading: estadoAcreditacion.loading,
     error: estadoAcreditacion.error,
-    value: estadoAcreditacion.value ? estadoAcreditacion.value.conteos.pendiente : null,
+    value: resumenGeneral ? resumenGeneral.pendiente : null,
   };
   const cardNoCumplen = {
     loading: estadoAcreditacion.loading,
     error: estadoAcreditacion.error,
-    value: estadoAcreditacion.value ? estadoAcreditacion.value.conteos.no_cumple : null,
+    value: resumenGeneral ? resumenGeneral.noCumple : null,
   };
 
   // Empresas Activas usa violeta — tono ya existente en la app
@@ -494,9 +426,9 @@ export const DashboardPage = () => {
   const kpiCards = [
     { key: "expedientesActivos", title: "Expedientes Activos", icon: ClipboardList, color: "text-sage-dark", bg: "bg-sage-lighter", card: cardExpedientesActivos, delta: calcularDelta(expedientesTodos.value), to: "/expedientes" },
     { key: "evaluacionesRealizadas", title: "Evaluaciones Realizadas", icon: CheckCircle2, color: "text-primary-dark", bg: "bg-primary-lighter", card: cardEvaluacionesRealizadas, delta: calcularDelta(evaluacionesTodas.value), to: "/evaluaciones" },
-    { key: "pendientesPorEvaluar", title: "Pendientes por Evaluar", icon: AlertCircle, color: "text-amber-600", bg: "bg-amber-100", card: cardPendientesPorEvaluar, delta: calcularDelta(evaluacionesTodas.value?.filter((e) => e.resultado === "pendiente")), to: "/evaluaciones?resultado=pendiente", tooltip: "Evaluación ya creada, con evidencia cargada, esperando revisión (distinto de \"Sin evidencia\", donde ni siquiera existe la Evaluación)." },
+    { key: "pendientesPorEvaluar", title: "Pendientes por Evaluar", icon: AlertCircle, color: "text-amber-600", bg: "bg-amber-100", card: cardPendientesPorEvaluar, delta: calcularDelta(evaluacionesTodas.value?.filter((e) => e.resultado === "pendiente")), to: "/evaluaciones?resultado=pendiente", tooltip: "Requerimientos sin evaluar o evaluados como pendientes." },
     { key: "noCumplen", title: "No Cumplen", icon: XCircle, color: "text-red-600", bg: "bg-red-100", card: cardNoCumplen, delta: calcularDelta(evaluacionesTodas.value?.filter((e) => e.resultado === "no_cumple")), to: "/evaluaciones?resultado=no_cumple" },
-    { key: "empresas", title: "Empresas Activas", icon: HardHat, color: "text-violet-600", bg: "bg-violet-100", card: empresas, delta: calcularDelta(empresasTodas.value), to: "/empresas?estado=activo" },
+    { key: "empresas", title: "Empresas Activas", icon: HardHat, color: "text-violet-600", bg: "bg-violet-100", card: empresas, delta: calcularDelta(empresasTodas.value), to: "/empresas" },
   ];
 
   if (esAdminComercial) {
@@ -567,8 +499,6 @@ export const DashboardPage = () => {
     );
   }
 
-  const vencidos = (vigencias.value || []).filter((v) => v.diasRestantes < 0);
-  const proximosNoVencidos = (vigencias.value || []).filter((v) => v.diasRestantes >= 0);
   const actividadVisible = actividadExpandida
     ? (actividadReciente.value || [])
     : (actividadReciente.value || []).slice(0, 6);
@@ -654,8 +584,7 @@ export const DashboardPage = () => {
               </div>
             ) : (
               <EstadoCumplimientoPanel
-                conteos={estadoAcreditacion.value.conteos}
-                sinEvaluar={estadoAcreditacion.value.sinEvaluar}
+                resumen={estadoAcreditacion.value.resumen}
                 size={130}
                 strokeWidth={15}
               />
@@ -689,73 +618,8 @@ export const DashboardPage = () => {
           </Link>
         </div>
 
-        {/* Vencimientos Próximos — reemplaza "Vigencias Próximas" + "Requiere
-            Atención" (esos 3 números duplicaban KPIs/esta misma lista). */}
-        <div className="md:col-span-2 xl:col-span-1 bg-white p-6 rounded-2xl border border-slate-100 shadow-card flex flex-col h-full">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="w-4 h-4 text-slate-400" />
-              <h2 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Vencimientos Próximos</h2>
-            </div>
-            <Link to="/reportes" className="text-xs font-bold text-primary hover:text-primary-dark">
-              Ver todo
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-2 mb-4">
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-full px-2.5 py-1">
-              <AlertTriangle className="w-3 h-3" /> Vencidos {vigencias.loading ? "…" : vencidos.length}
-            </span>
-            <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
-              ≤30 días {vigencias.loading ? "…" : proximosNoVencidos.length}
-            </span>
-          </div>
-
-          <div className="flex-1">
-            {vigencias.loading ? (
-              <div className="py-8 text-center text-slate-400 text-xs">Cargando...</div>
-            ) : vigencias.error ? (
-              <div className="py-8 text-center text-red-400 text-xs">{vigencias.error}</div>
-            ) : !vigencias.value || vigencias.value.length === 0 ? (
-              <div className="py-8 text-center text-slate-400 text-xs">
-                Sin vencimientos en los próximos 30 días.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {vigencias.value.slice(0, 5).map((ev) => {
-                  const { sujeto, proyectoNombre } = resolverSujetoVigencia(ev);
-                  const esVencido = ev.diasRestantes < 0;
-                  const nombre = ev.archivoNombre ||
-                    `Requerimiento: ${requerimientosMap[ev.requerimientoId] || ev.requerimientoId}`;
-                  return (
-                    <div key={ev.id} className="py-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-carbon-dark truncate">{nombre}</p>
-                        <p className="text-[11px] text-slate-400 truncate">
-                          {sujeto || "—"}
-                          {proyectoNombre ? ` — ${proyectoNombre}` : ""}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-[11px] font-bold rounded-full px-2.5 py-1 flex-shrink-0 ${
-                          esVencido
-                            ? "text-red-700 bg-red-50 border border-red-200"
-                            : "text-amber-700 bg-amber-50 border border-amber-200"
-                        }`}
-                      >
-                        {esVencido
-                          ? `Vencido hace ${Math.abs(ev.diasRestantes)} día${Math.abs(ev.diasRestantes) === 1 ? "" : "s"}`
-                          : ev.diasRestantes === 0
-                            ? "Vence hoy"
-                            : `Vence en ${ev.diasRestantes} día${ev.diasRestantes === 1 ? "" : "s"}`}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Vencimientos Próximos: vencidos y próximos de los expedientes abiertos, clickeables. */}
+        <VencimientosDashboard />
       </div>
 
       {/* Fila 3: Expedientes recientes (8 col) + Actividad reciente (4 col) —
@@ -783,15 +647,15 @@ export const DashboardPage = () => {
             </div>
           ) : (
             <div className="overflow-x-auto -mx-2">
-              <table className="w-full text-left border-collapse text-[11px]">
+              <table className="w-full table-fixed text-left border-collapse text-[11px]">
                 <thead>
                   <tr className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    <th className="py-2 px-2 font-bold">Empresa</th>
-                    <th className="py-2 px-2 font-bold">Proyecto</th>
-                    <th className="py-2 px-2 font-bold">Perfil</th>
-                    <th className="py-2 px-2 font-bold">Estado</th>
-                    <th className="py-2 px-2 font-bold">Última Evaluación</th>
-                    <th className="py-2 px-2 font-bold text-right">Acciones</th>
+                    <th className="py-2 px-2 font-bold w-[30%]">Empresa</th>
+                    <th className="py-2 px-2 font-bold w-[25%]">Proyecto</th>
+                    <th className="py-2 px-2 font-bold w-[13%]">Perfil</th>
+                    <th className="py-2 px-2 font-bold w-[13%]">Estado</th>
+                    <th className="py-2 px-2 font-bold w-[13%]">Última Evaluación</th>
+                    <th className="py-2 px-2 font-bold text-right w-[6%]"><span className="sr-only">Acciones</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -806,16 +670,22 @@ export const DashboardPage = () => {
                       const proyectoNombre = proyectosMap[exp.proyectoId] || exp.proyectoId;
                       return (
                         <tr key={exp.id} className="hover:bg-slate-50/60 transition-colors">
-                          <td className="py-2.5 px-2 font-bold text-carbon-dark truncate max-w-[120px]">
+                          <td
+                            className="py-2.5 px-2 font-bold text-carbon-dark truncate"
+                            title={empresasMap[exp.empresaId] || undefined}
+                          >
                             {empresasMap[exp.empresaId] || exp.empresaId}
                           </td>
                           <td
-                            className="py-2.5 px-2 text-slate-500 font-medium truncate max-w-[120px]"
+                            className="py-2.5 px-2 text-slate-500 font-medium truncate"
                             title={proyectoNombre}
                           >
                             {proyectoNombre}
                           </td>
-                          <td className="py-2.5 px-2 text-slate-500 font-medium truncate max-w-[100px]">
+                          <td
+                            className="py-2.5 px-2 text-slate-500 font-medium truncate"
+                            title={perfilesMap[exp.perfilParticipacionId] || undefined}
+                          >
                             {perfilesMap[exp.perfilParticipacionId] || "-"}
                           </td>
                           <td className="py-2.5 px-2">
@@ -868,13 +738,18 @@ export const DashboardPage = () => {
                 {actividadVisible.map((evento) => {
                   const { Icon, className } = iconoEvento(evento);
                   const detalle = detalleEvaluacion(evento);
-                  return (
-                    <div key={evento.id} className="py-3 flex items-center gap-3">
+                  // A quién se refiere (nombre + ficha a la que lleva) y el detalle del cambio.
+                  const contexto = contextoEvento(evento, nombresActividad);
+                  const nombre = detalle ? null : contexto.sujeto?.nombre;
+                  const ruta = contexto.sujeto?.ruta;
+                  const contenido = (
+                    <>
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${className}`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-carbon-dark truncate">
+                          {nombre && <span className="font-bold">{nombre} · </span>}
                           {detalle?.requerimientoNombre || describirEvento(evento)}
                         </p>
                         {detalle ? (
@@ -883,10 +758,27 @@ export const DashboardPage = () => {
                             {detalle.objetivo ? ` · ${detalle.objetivo}` : ""}
                             {detalle.proyectoNombre ? ` — ${detalle.proyectoNombre}` : ""}
                           </p>
+                        ) : contexto.detalle ? (
+                          <p className="text-[11px] text-slate-500 truncate">{contexto.detalle}</p>
                         ) : null}
-                        <p className="text-[11px] text-slate-400">{formatTiempoRelativo(evento.createdAt)}</p>
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {formatTiempoRelativo(evento.createdAt)}
+                          {evento.actorNombre ? ` · por ${evento.actorNombre}` : ""}
+                        </p>
                       </div>
-                    </div>
+                    </>
+                  );
+                  return ruta ? (
+                    <Link
+                      key={evento.id}
+                      to={ruta}
+                      title={nombre ? `Ver el historial de ${nombre}` : "Ver el detalle"}
+                      className="py-3 px-2 -mx-2 flex items-center gap-3 rounded-xl hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-colors"
+                    >
+                      {contenido}
+                    </Link>
+                  ) : (
+                    <div key={evento.id} className="py-3 flex items-center gap-3">{contenido}</div>
                   );
                 })}
               </div>

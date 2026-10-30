@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  HardHat, Power, Pencil, Eye, Users, Truck, FolderKanban,
-  CheckCircle2, Clock, AlertTriangle, Repeat, IdCard,
+  HardHat, Power, Pencil, Eye, Users,
+  CheckCircle2, Clock, AlertTriangle, Repeat,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
@@ -18,28 +18,16 @@ import { ErrorBanner } from "../../components/shared/ErrorBanner";
 import { FilterBar } from "../../components/shared/FilterBar";
 import { DataTable } from "../../components/shared/DataTable";
 import { EntityIconTile } from "../../components/shared/EntityIconTile";
-import { StatusBadge, MAPA_ACTIVO_INACTIVO } from "../../components/shared/StatusBadge";
+import { StatusBadge } from "../../components/shared/StatusBadge";
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { Pagination } from "../../components/shared/Pagination";
-import { QuickViewPanel } from "../../components/shared/QuickViewPanel";
 import { EmpresaChip } from "../../components/shared/EmpresaChip";
 import { MandanteChip } from "../../components/shared/MandanteChip";
 import { ParticipantesCell } from "../../components/shared/ParticipantesCell";
 import { CLASE_LINEA } from "../../utils/lineasAlineadas";
+import { categoriaAcreditacionExpediente } from "../../utils/cumplimientoCalculos";
 
-// Espejo manual de MAPEO_ESTADO_KPI_EMPRESA en
-// functions/src/services/reporteService.js (fuente única de verdad) —
-// "rechazada"/"no acreditada" NO existe: la máquina de estados de
-// Expediente no tiene un estado terminal de rechazo, brecha conocida y
-// aceptada también ahí.
-const CATEGORIA_ACREDITACION = {
-  aprobado: "acreditada",
-  en_ejecucion: "acreditada",
-  cerrado: "acreditada",
-  creado: "en_proceso",
-  en_revision: "en_proceso",
-  con_observaciones: "con_observaciones",
-};
+// Categoría de acreditación: categoriaAcreditacionExpediente (utils/cumplimientoCalculos).
 
 const ACREDITACION_MAP = {
   acreditada: { label: "Acreditada", className: "bg-sage-lighter text-sage-darker border-sage-light" },
@@ -71,6 +59,7 @@ export const EmpresasListPage = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const puedeEscribir = ["superadmin", "mandante_admin", "admin_comercial"].includes(profile?.rol);
+  const veRecursos = profile?.rol !== "admin_comercial";
 
   // Filtro inicial desde la URL (ej. desde la KPI "Empresas Activas" del
   // Dashboard, "?estado=activo") — se lee una sola vez al montar.
@@ -78,7 +67,6 @@ export const EmpresasListPage = () => {
   const [empresas, setEmpresas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filtroEstado, setFiltroEstado] = useState(() => searchParams.get("estado") || "");
   const [filtroAcreditacion, setFiltroAcreditacion] = useState(() => searchParams.get("acreditacion") || "");
   const [filtroMandante, setFiltroMandante] = useState("");
   const [filtroProyecto, setFiltroProyecto] = useState("");
@@ -93,7 +81,6 @@ export const EmpresasListPage = () => {
   const [toggleandoId, setToggleandoId] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [empresaSeleccionada, setEmpresaSeleccionada] = useState(null);
 
   const [resumenesMap, setResumenesMap] = useState({});
   const resumenesEnCursoRef = useRef(new Set());
@@ -120,7 +107,7 @@ export const EmpresasListPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await empresaService.listar(filtroEstado || undefined);
+      const data = await empresaService.listar();
       setEmpresas(data || []);
     } catch (err) {
       console.error("Error al cargar empresas:", err);
@@ -132,8 +119,7 @@ export const EmpresasListPage = () => {
 
   useEffect(() => {
     cargarEmpresas();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroEstado]);
+  }, []);
 
   useEffect(() => {
     empresaService.listar()
@@ -160,7 +146,11 @@ export const EmpresasListPage = () => {
   }, []);
 
   // Mandantes de los Proyectos (nombre + logo), uno por id distinto.
-  const idsMandanteKey = [...new Set(Object.values(proyectosMap).map((p) => p.mandanteId).filter(Boolean))].join(",");
+  // Mandantes a resolver: los de los Proyectos y los asociados a cada Empresa (empresaMandantes).
+  const idsMandanteKey = [...new Set([
+    ...Object.values(proyectosMap).map((p) => p.mandanteId),
+    ...empresas.flatMap((e) => e.mandanteIds || []),
+  ].filter(Boolean))].join(",");
   useEffect(() => {
     if (!idsMandanteKey) return;
     const faltantes = idsMandanteKey.split(",").filter(
@@ -172,7 +162,7 @@ export const EmpresasListPage = () => {
       faltantes.map((mid) =>
         mandanteService
           .obtenerPorId(mid)
-          .then((data) => [mid, { nombre: getMandanteDisplayName(data) || mid }])
+          .then((data) => [mid, { nombre: getMandanteDisplayName(data) || mid, logoUrl: data?.logoUrl || null }])
           .catch(() => [mid, { nombre: mid }]),
       ),
     ).then((pares) => {
@@ -205,7 +195,7 @@ export const EmpresasListPage = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [filtroEstado, filtroAcreditacion, filtroMandante, filtroProyecto, searchTerm]);
+  }, [filtroAcreditacion, filtroMandante, filtroProyecto, searchTerm]);
 
   // Estado de Acreditación por Empresa: viene de porEmpresa (Expediente
   // más reciente de cada una) — mismo dato que ya calcula reporteService,
@@ -213,20 +203,7 @@ export const EmpresasListPage = () => {
   const categoriaAcreditacionDe = (empresaId) => {
     const row = (resumenGeneral?.porEmpresa || []).find((r) => r.empresaId === empresaId);
     if (!row?.expedienteEstado) return null;
-    return CATEGORIA_ACREDITACION[row.expedienteEstado] || null;
-  };
-
-  // % de avance + cantidad de Requerimientos evaluados por Empresa —
-  // mismo dato que ya trae porEmpresa para categoriaAcreditacionDe, sin
-  // llamada adicional.
-  const avanceDe = (empresaId) => {
-    const row = (resumenGeneral?.porEmpresa || []).find((r) => r.empresaId === empresaId);
-    return row?.avancePct ?? null;
-  };
-
-  const evaluadosDe = (empresaId) => {
-    const row = (resumenGeneral?.porEmpresa || []).find((r) => r.empresaId === empresaId);
-    return row?.evaluados ?? 0;
+    return categoriaAcreditacionExpediente(row.expedienteEstado, row.noCumple);
   };
 
   const empresasFiltradas = empresas.filter((e) => {
@@ -244,6 +221,9 @@ export const EmpresasListPage = () => {
       p.empresaId === e.id &&
       (!filtroProyecto || p.proyectoId === filtroProyecto) &&
       (!filtroMandante || proyectosMap[p.proyectoId]?.mandanteId === filtroMandante),
+    ) || (
+      // Sin filtro de Proyecto, una Empresa asociada al Mandante también cuenta aunque aún no participe.
+      !filtroProyecto && Boolean(filtroMandante) && (e.mandanteIds || []).includes(filtroMandante)
     );
     return matchTerm && matchAcreditacion && matchParticipacion;
   });
@@ -344,28 +324,6 @@ export const EmpresasListPage = () => {
         searchPlaceholder="Buscar por razón social, fantasía o RUT..."
         filters={[
           {
-            label: "Estado",
-            value: filtroEstado,
-            onChange: setFiltroEstado,
-            options: [
-              { value: "", label: "Todos los estados" },
-              { value: "activo", label: "Activas" },
-              { value: "inactivo", label: "Inactivas" },
-            ],
-          },
-          {
-            label: "Estado de Acreditación",
-            value: filtroAcreditacion,
-            onChange: setFiltroAcreditacion,
-            options: [
-              { value: "", label: "Todos" },
-              { value: "acreditada", label: "Acreditada" },
-              { value: "en_proceso", label: "En Proceso" },
-              { value: "con_observaciones", label: "Con Observaciones" },
-              { value: "sin_expediente", label: "Sin Expediente" },
-            ],
-          },
-          {
             label: "Mandante",
             value: filtroMandante,
             onChange: setFiltroMandante,
@@ -386,6 +344,18 @@ export const EmpresasListPage = () => {
                 .map((p) => ({ value: p.id, label: p.nombre })),
             ],
           },
+          {
+            label: "Estado de Acreditación",
+            value: filtroAcreditacion,
+            onChange: setFiltroAcreditacion,
+            options: [
+              { value: "", label: "Todos" },
+              { value: "acreditada", label: "Acreditada" },
+              { value: "en_proceso", label: "En Proceso" },
+              { value: "con_observaciones", label: "Con Observaciones" },
+              { value: "sin_expediente", label: "Sin Expediente" },
+            ],
+          },
         ]}
       />
 
@@ -401,7 +371,7 @@ export const EmpresasListPage = () => {
           return (
             <tr
               key={item.id}
-              onClick={() => setEmpresaSeleccionada(item)}
+              onClick={() => navigate(`/empresas/${item.id}`)}
               className="hover:bg-slate-50/60 transition-colors cursor-pointer"
             >
               <td className="py-4 px-6">
@@ -423,7 +393,16 @@ export const EmpresasListPage = () => {
                 {resumen === undefined ? (
                   <span className="text-[11px] text-slate-400">…</span>
                 ) : participaciones.length === 0 ? (
-                  <span className="text-[11px] text-slate-300 italic">-</span>
+                  // Sin Proyecto activo: los Mandantes a los que está asociada (empresaMandantes).
+                  (item.mandanteIds || []).length === 0 ? (
+                    <span className="text-[11px] text-slate-300 italic">-</span>
+                  ) : (
+                    item.mandanteIds.map((mid) => (
+                      <div key={mid} className={CLASE_LINEA}>
+                        <MandanteChip nombre={mandantesCache[mid]?.nombre || "…"} logoUrl={mandantesCache[mid]?.logoUrl} />
+                      </div>
+                    ))
+                  )
                 ) : (
                   participaciones.map((p) => (
                     <div key={p.participacionId} className={CLASE_LINEA}>
@@ -472,7 +451,7 @@ export const EmpresasListPage = () => {
                 ) : (
                   participaciones.map((p) => {
                     const avance = p.evaluacion?.avancePct ?? null;
-                    const categoria = CATEGORIA_ACREDITACION[p.evaluacion?.expedienteEstado] || null;
+                    const categoria = categoriaAcreditacionExpediente(p.evaluacion?.expedienteEstado, p.evaluacion?.noCumple);
                     return (
                       <div key={p.participacionId} className={CLASE_LINEA}>
                         {avance === null ? (
@@ -503,6 +482,12 @@ export const EmpresasListPage = () => {
                       label: "Ver",
                       icon: Eye,
                       onClick: () => navigate(`/empresas/${item.id}`),
+                    },
+                    // Personas y Maquinarias de la Empresa: no existe para admin_comercial.
+                    veRecursos && {
+                      label: "Recursos",
+                      icon: Users,
+                      onClick: () => navigate(`/empresas/${item.id}/recursos`),
                     },
                     puedeEscribir && {
                       label: "Editar",
@@ -536,90 +521,6 @@ export const EmpresasListPage = () => {
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
       />
 
-      <QuickViewPanel
-        open={!!empresaSeleccionada}
-        onClose={() => setEmpresaSeleccionada(null)}
-        icon={HardHat}
-        logoUrl={empresaSeleccionada?.logoUrl}
-        eyebrow={(() => {
-          if (!empresaSeleccionada) return null;
-          const participaciones = resumenesMap[empresaSeleccionada.id]?.participacionesActivas;
-          if (!participaciones || participaciones.length === 0) return null;
-          // Mandantes DISTINTOS de sus Participaciones activas, todos a la vista
-          // (sin "+N"): la misma información que la lista de Proyectos de abajo.
-          const mandantes = [...new Map(
-            participaciones.filter((p) => p.mandanteId).map((p) => [p.mandanteId, p]),
-          ).values()];
-          if (mandantes.length === 0) return null;
-          return (
-            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-500">
-              {mandantes.map((m) => (
-                <MandanteChip key={m.mandanteId} nombre={m.mandanteNombre || "Sin mandante"} logoUrl={m.mandanteLogoUrl} />
-              ))}
-            </span>
-          );
-        })()}
-        title={empresaSeleccionada?.razonSocial}
-        badge={empresaSeleccionada ? { value: empresaSeleccionada.estado, map: MAPA_ACTIVO_INACTIVO } : null}
-        infoGeneral={empresaSeleccionada ? [
-          { label: "Razón Social", value: empresaSeleccionada.razonSocial },
-          { label: "Nombre Fantasía", value: empresaSeleccionada.nombreFantasia },
-          { label: "RUT", value: formatRutDisplay(empresaSeleccionada.rut) },
-          { label: "Giro", value: empresaSeleccionada.giro },
-          {
-            label: "Estado de Acreditación",
-            value: cargandoResumenGeneral
-              ? "…"
-              : categoriaAcreditacionDe(empresaSeleccionada.id)
-                ? ACREDITACION_MAP[categoriaAcreditacionDe(empresaSeleccionada.id)].label
-                : "Sin Expediente",
-          },
-          {
-            label: "Evaluación",
-            value: cargandoResumenGeneral
-              ? "…"
-              : avanceDe(empresaSeleccionada.id) === null
-                ? "Sin evaluar"
-                : `${avanceDe(empresaSeleccionada.id)}% (${evaluadosDe(empresaSeleccionada.id)} evaluados)`,
-          },
-          ...(empresaSeleccionada.contacto?.nombre ? [{ label: "Contacto", value: empresaSeleccionada.contacto.nombre }] : []),
-          ...(empresaSeleccionada.contacto?.email ? [{ label: "Email de Contacto", value: empresaSeleccionada.contacto.email }] : []),
-          ...(empresaSeleccionada.contacto?.telefono ? [{ label: "Teléfono de Contacto", value: empresaSeleccionada.contacto.telefono }] : []),
-        ] : []}
-        metricas={empresaSeleccionada ? [
-          { icon: FolderKanban, label: "Proyectos", value: resumenesMap[empresaSeleccionada.id]?.proyectosCount ?? "…" },
-          { icon: Users, label: "Personas", value: resumenesMap[empresaSeleccionada.id]?.personasCount ?? "…" },
-          { icon: Truck, label: "Maquinarias", value: resumenesMap[empresaSeleccionada.id]?.recursosCount ?? "…" },
-        ] : []}
-        extra={
-          empresaSeleccionada && (resumenesMap[empresaSeleccionada.id]?.participacionesActivas?.length > 0) ? (
-            <div className="space-y-3">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Proyectos y Perfil de Acreditación
-              </p>
-              <div className="space-y-2">
-                {resumenesMap[empresaSeleccionada.id].participacionesActivas.map((p) => (
-                  <div key={p.proyectoId} className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center gap-2.5">
-                    <IdCard className="w-4 h-4 text-primary flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-carbon-dark truncate">{p.proyectoNombre || "-"}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1.5">Perfil de Participación</p>
-                      <span className="inline-flex items-center px-2.5 py-1 mt-1 rounded-full text-xs font-bold border bg-violet-50 text-violet-700 border-violet-200">
-                        {p.perfilNombre || "Sin perfil"}
-                      </span>
-                      <div className="mt-2">
-                        <MandanteChip nombre={p.mandanteNombre || "Sin mandante"} logoUrl={p.mandanteLogoUrl} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null
-        }
-        accionLabel="Ver Detalle Completo"
-        accionTo={empresaSeleccionada ? `/empresas/${empresaSeleccionada.id}` : undefined}
-      />
     </div>
   );
 };

@@ -1,47 +1,36 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Search, Plus, AlertCircle, Wand2, Calendar, Building2, IdCard } from "lucide-react";
+import { Search, Plus, AlertCircle, Calendar, Building2, IdCard } from "lucide-react";
 import { proyectoService } from "../../../services/proyectoService";
-import { reporteService } from "../../../services/reporteService";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { estadoTarjetaProyecto, MENSAJE_NO_APLICA } from "./estadoTarjetaProyecto";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
-import { EmpresaChip } from "../../../components/shared/EmpresaChip";
 import { EntityIconTile } from "../../../components/shared/EntityIconTile";
-import { formatFecha } from "../../../utils/fechaFormatters";
+import { formatFecha } from "../../../utils/fechas";
+import { DateInput } from "../../../components/ui/DateInput";
+import { aMayusculas } from "../../../utils/texto";
 
 // Mismo criterio de exclusión que ParticipacionFormPage.jsx: un Proyecto
 // finalizado/archivado no admite nuevas Participaciones.
 const ESTADOS_PROYECTO_NO_ELEGIBLES = ["finalizado", "archivado", "suspendido"];
 
-// Mismos campos que ProyectoFormPage.jsx (modo creación, mandanteId fijo
-// del contexto del wizard) — reutiliza proyectoService.crear tal cual.
+// Mismos campos obligatorios que ProyectoFormPage.jsx (modo creación, mandanteId fijo del
+// contexto del wizard) — reutiliza proyectoService.crear tal cual. El código lo asigna el backend.
 const CrearProyectoInline = ({ mandanteId, onCreado, onCancelar }) => {
-  const [formData, setFormData] = useState({ nombre: "", codigo: "", fechaInicio: "" });
-  const [codigoSugerido, setCodigoSugerido] = useState(null);
+  const [formData, setFormData] = useState({ nombre: "", fechaInicio: "" });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
 
-  useEffect(() => {
-    if (!mandanteId) return;
-    proyectoService
-      .obtenerSiguienteCodigo(mandanteId)
-      .then((data) => setCodigoSugerido(data?.codigoSugerido || null))
-      .catch(() => setCodigoSugerido(null));
-  }, [mandanteId]);
-
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: name === "nombre" ? aMayusculas(value) : value }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
   };
 
   const validateForm = () => {
     const newErrors = {};
     if (!formData.nombre.trim()) newErrors.nombre = "El nombre es obligatorio.";
-    if (!formData.codigo.trim()) newErrors.codigo = "El código es obligatorio.";
     if (!formData.fechaInicio) newErrors.fechaInicio = "La fecha de inicio es obligatoria.";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -55,7 +44,6 @@ const CrearProyectoInline = ({ mandanteId, onCreado, onCancelar }) => {
     try {
       const creado = await proyectoService.crear({
         nombre: formData.nombre.trim(),
-        codigo: formData.codigo.trim(),
         mandanteId,
         fechaInicio: formData.fechaInicio,
       });
@@ -88,30 +76,9 @@ const CrearProyectoInline = ({ mandanteId, onCreado, onCancelar }) => {
           {errors.nombre && <p className="text-[11px] text-red-500 mt-1">{errors.nombre}</p>}
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-gray-700 mb-1">Código *</label>
-          <input
-            type="text" name="codigo" value={formData.codigo} onChange={handleChange}
-            placeholder="Ej: PRJ-2026-001"
-            className={`w-full px-3 py-2 bg-white border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary ${
-              errors.codigo ? "border-red-400" : "border-gray-200"
-            }`}
-          />
-          {errors.codigo && <p className="text-[11px] text-red-500 mt-1">{errors.codigo}</p>}
-          {codigoSugerido && (
-            <button
-              type="button"
-              onClick={() => setFormData((prev) => ({ ...prev, codigo: codigoSugerido }))}
-              className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary-lighter text-primary text-[11px] font-semibold hover:bg-primary/20 transition-colors"
-            >
-              <Wand2 className="w-3 h-3" />
-              Sugerencia: {codigoSugerido}
-            </button>
-          )}
-        </div>
-        <div>
           <label className="block text-[11px] font-semibold text-gray-700 mb-1">Fecha de Inicio *</label>
-          <input
-            type="date" name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
+          <DateInput
+            name="fechaInicio" value={formData.fechaInicio} onChange={handleChange}
             className={`w-full px-3 py-2 bg-white border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary ${
               errors.fechaInicio ? "border-red-400" : "border-gray-200"
             }`}
@@ -143,37 +110,16 @@ const ESTADO_TARJETA = {
   no_aplica: { label: "No aplica", className: "bg-slate-100 text-slate-500 border-slate-200" },
 };
 
-const MAX_CHIPS_EMPRESAS = 4;
-
 // `mandanteId`: el Mandante elegido en el Paso 1 (o el fijo del actor) — única fuente; acá ya no
 // se elige ni se deduce.
 export const PasoProyecto = ({
   mandanteId, proyectoId, onSeleccionar, empresaId, empresaSel, onCambiarEmpresa, avisoPerfil,
 }) => {
-  const navigate = useNavigate();
-
   const [proyectos, setProyectos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [mostrarCrear, setMostrarCrear] = useState(false);
-
-  // Empresas participantes del Proyecto ya seleccionado: mismo endpoint que la pestaña
-  // "Empresas Participantes" del Detalle del Proyecto.
-  const [empresasParticipantes, setEmpresasParticipantes] = useState([]);
-  const [cargandoParticipantes, setCargandoParticipantes] = useState(false);
-
-  useEffect(() => {
-    if (!proyectoId) {
-      setEmpresasParticipantes([]);
-      return;
-    }
-    setCargandoParticipantes(true);
-    reporteService.obtenerParticipantesPorProyecto(proyectoId)
-      .then((data) => setEmpresasParticipantes(data || []))
-      .catch(() => setEmpresasParticipantes([]))
-      .finally(() => setCargandoParticipantes(false));
-  }, [proyectoId]);
 
   const cargar = () => {
     if (!mandanteId) return;
@@ -200,8 +146,6 @@ export const PasoProyecto = ({
 
   const proyectoSeleccionado = proyectos.find((p) => p.id === proyectoId) || null;
   const esPendiente = proyectoSeleccionado && estadoTarjetaProyecto(proyectoSeleccionado) === "pendiente";
-  const chipsVisibles = empresasParticipantes.slice(0, MAX_CHIPS_EMPRESAS);
-  const chipsOcultos = empresasParticipantes.length - chipsVisibles.length;
 
   return (
     <div className="space-y-4">
@@ -312,51 +256,6 @@ export const PasoProyecto = ({
         </div>
       )}
 
-      {proyectoId && (
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-2.5">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5" /> Empresas participantes en este Proyecto
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate(`/proyectos/${proyectoId}?tab=empresas`)}
-              className="text-[11px] font-bold text-primary hover:text-primary-dark"
-            >
-              Ver todas las empresas participantes →
-            </button>
-          </div>
-          {cargandoParticipantes ? (
-            <p className="text-xs text-slate-400">Cargando...</p>
-          ) : empresasParticipantes.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">Todavía no hay Empresas con Participación activa en este Proyecto.</p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              {chipsVisibles.map((e) => {
-                const esLaSeleccionada = e.empresaId === empresaId;
-                return (
-                  <span
-                    key={e.empresaId}
-                    className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full border text-xs font-semibold ${
-                      esLaSeleccionada ? "bg-primary-lighter border-primary/30 text-primary-dark" : "bg-white border-slate-200 text-slate-700"
-                    }`}
-                  >
-                    <EmpresaChip nombre={e.empresaNombre} logoUrl={e.empresaLogoUrl} conIniciales />
-                    {esLaSeleccionada && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider">Seleccionada</span>
-                    )}
-                  </span>
-                );
-              })}
-              {chipsOcultos > 0 && (
-                <span className="px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-500 text-xs font-bold">
-                  +{chipsOcultos} {chipsOcultos === 1 ? "empresa" : "empresas"}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };

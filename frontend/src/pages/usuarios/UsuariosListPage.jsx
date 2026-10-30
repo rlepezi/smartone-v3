@@ -8,7 +8,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { usuarioService, ROLES_USUARIO } from "../../services/usuarioService";
 import { mandanteService } from "../../services/mandanteService";
 import { calcularDeltaPeriodo } from "../../utils/deltaCalculos";
-import { formatTiempoRelativo, formatFechaHora } from "../../utils/fechaFormatters";
+import { formatTiempoRelativo, formatFechaHora } from "../../utils/fechas";
 import { can, esUnoMismo } from "../../utils/permissions";
 import { PageHeader } from "../../components/shared/PageHeader";
 import { ErrorBanner } from "../../components/shared/ErrorBanner";
@@ -19,7 +19,6 @@ import { StatusBadge, MAPA_ACTIVO_DESACTIVADO } from "../../components/shared/St
 import { RowActionsMenu } from "../../components/shared/RowActionsMenu";
 import { Pagination } from "../../components/shared/Pagination";
 import { MandanteChip } from "../../components/shared/MandanteChip";
-import { ProgressRing } from "../../components/shared/ProgressRing";
 
 const COLUMNS = [
   { key: "usuario", label: "Usuario" },
@@ -34,17 +33,6 @@ const COLUMNS = [
 // Roles que operan sobre todos los Mandantes a la vez — su columna
 // Mandante no es "-" (sin mandante), es "Todos" (alcance transversal).
 const ROLES_TRANSVERSALES = ["superadmin", "evaluador", "admin_comercial"];
-
-// Colores por rol para el panel "Por Rol" — no hay un mapa de estado
-// establecido para roles (StatusBadge solo mapea estados), así que se
-// define acá, acotado a este resumen.
-const ROL_COLOR = {
-  superadmin: { ring: "text-primary-dark", bg: "bg-primary-lighter" },
-  evaluador: { ring: "text-amber-600", bg: "bg-amber-50" },
-  admin_comercial: { ring: "text-violet-600", bg: "bg-violet-50" },
-  mandante_admin: { ring: "text-sage-dark", bg: "bg-sage-lighter" },
-  mandante_lector: { ring: "text-slate-400", bg: "bg-slate-100" },
-};
 
 export const UsuariosListPage = () => {
   const navigate = useNavigate();
@@ -102,17 +90,6 @@ export const UsuariosListPage = () => {
   }, [filtroEstado, filtroRol, searchTerm]);
 
   const rolLabel = (rol) => ROLES_USUARIO.find((r) => r.value === rol)?.label || rol;
-
-  // Sobre el total ya cargado (`usuarios`, alcance del actor) — no sobre
-  // `usuariosFiltrados`, que además aplica Rol/Estado/búsqueda de la tabla
-  // (filtrar por Rol acá sería circular para una tarjeta que lo desglosa).
-  const resumenPorRol = ROLES_USUARIO
-    .map((r) => ({ ...r, cantidad: usuarios.filter((u) => u.rol === r.value).length }))
-    .filter((r) => r.cantidad > 0)
-    .map((r) => ({
-      ...r,
-      pct: usuarios.length > 0 ? Math.round((r.cantidad / usuarios.length) * 100) : 0,
-    }));
 
   // "Desactivado" es el único estado no-activo real — el filtro de Estado
   // de la tabla solo tiene dos opciones (a diferencia del viejo select con
@@ -299,8 +276,6 @@ export const UsuariosListPage = () => {
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        <div className="lg:col-span-2 min-w-0 space-y-6">
       <FilterBar
         searchValue={searchTerm}
         onSearchChange={setSearchTerm}
@@ -389,70 +364,6 @@ export const UsuariosListPage = () => {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
       />
-        </div>
-
-        {/* Sidebar derecho */}
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <Zap className="w-4 h-4 text-slate-400" />
-              <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Actividad Hoy</h3>
-            </div>
-            {actividadHoy === undefined ? (
-              <p className="text-xs text-slate-400">Cargando...</p>
-            ) : actividadHoy === null ? (
-              <p className="text-xs text-red-600">No se pudo cargar la actividad de hoy.</p>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-600">Conectados ahora</span>
-                  <span className="font-black text-carbon-dark">{actividadHoy.conectadosAhora}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-600">Accesos hoy</span>
-                  <span className="font-black text-carbon-dark">{actividadHoy.activosHoy}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-600">Duración promedio</span>
-                  <span className="font-black text-carbon-dark">
-                    {actividadHoy.promedioDuracionSesionSeg !== null
-                      ? `${Math.round(actividadHoy.promedioDuracionSesionSeg / 60)} min`
-                      : "-"}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {!loading && resumenPorRol.length > 0 && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-card space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-                <UserCog className="w-4 h-4 text-slate-400" />
-                <h3 className="text-sm font-bold text-carbon-dark uppercase tracking-wider">Por Rol</h3>
-              </div>
-              <div className="space-y-3">
-                {resumenPorRol.map((r) => {
-                  const colores = ROL_COLOR[r.value] || ROL_COLOR.mandante_lector;
-                  return (
-                    <div key={r.value} className="flex items-center gap-3">
-                      <div className={`relative shrink-0 rounded-full ${colores.bg}`}>
-                        <ProgressRing value={r.pct} size={40} strokeWidth={4} progressClassName={colores.ring} />
-                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-carbon-dark">
-                          {r.pct}%
-                        </span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-black text-carbon-dark">{r.cantidad}</p>
-                        <p className="text-[11px] font-semibold text-slate-500">{r.label}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };
