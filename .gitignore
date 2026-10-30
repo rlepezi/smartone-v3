@@ -69,6 +69,8 @@ node_modules/
 !**/.env.example
 # Ambientes del frontend (configuración web de Firebase, pública por diseño)
 !frontend/.env.production
+!frontend/.env.pruebas
+!frontend/.env
 !frontend/.env.qa
 !frontend/.env.emuladores
 

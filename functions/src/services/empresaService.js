@@ -341,6 +341,13 @@ class EmpresaService {
       };
     }
 
+    // Nueva Empresa desde carpeta (solo superadmin): la Carpeta de empresa
+    // se valida antes y se crea en el MISMO lote que la Empresa.
+    const carpeta = payload.carpeta ? await this._carpetaNueva(payload, {
+      mandanteId, rut: rutNormalizado, razonSocial, nombreFantasia}, actor) :
+      null;
+    const origenes = this._origenes(payload.origenes);
+
     const nuevaEmpresa = {
       rut: rutNormalizado,
       razonSocial: aMayusculas(razonSocial),
@@ -371,10 +378,26 @@ class EmpresaService {
         empresaMandanteRepository.datosActivo(
             refEmpresa.id, mandanteId, false,
         ));
+    if (carpeta) {
+      lote.create(db.collection(carpeta.coleccion).doc(carpeta.id), {
+        ...carpeta.datos, empresaId: refEmpresa.id,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
     try {
       await lote.commit();
     } catch (err) {
       if (err.code !== ALREADY_EXISTS) throw err;
+      // Con carpeta, el create que falló puede ser el de la carpeta
+      // (registrada entre la validación y el lote).
+      const tomado = carpeta ?
+        (await db.collection(RUT_COLLECTION).doc(rutNormalizado).get())
+            .exists : true;
+      if (!tomado) {
+        throw new AppError(409, `La carpeta «${carpeta.datos.ruta}» se ` +
+            "registró a otra empresa mientras se creaba esta. Elija otra.");
+      }
       throw await this._errorRutExistente(rutNormalizado, mandanteId);
     }
 
@@ -384,9 +407,61 @@ class EmpresaService {
       entidadId: refEmpresa.id,
       accion: "creado",
       actor,
-      detalle: {razonSocial: nuevaEmpresa.razonSocial, mandanteId},
+      detalle: {razonSocial: nuevaEmpresa.razonSocial, mandanteId,
+        ...(origenes ? {origenes} : {}),
+        ...(carpeta ? {carpetaEmpresaId: carpeta.id,
+          carpeta: carpeta.datos.ruta} : {})},
     });
-    return {id: refEmpresa.id, ...nuevaEmpresa};
+    if (carpeta) {
+      await bitacoraLogger.registrarEvento({
+        mandanteId, entidad: "carpetasEmpresa", entidadId: carpeta.id,
+        accion: "registrada", actor,
+        detalle: {ruta: carpeta.datos.ruta, fuenteId: carpeta.datos.fuenteId,
+          empresaId: refEmpresa.id, alCrearEmpresa: true},
+      });
+    }
+    return {id: refEmpresa.id, ...nuevaEmpresa,
+      ...(carpeta ? {carpetaEmpresaId: carpeta.id} : {})};
+  }
+
+  /**
+   * Carpeta de empresa a registrar junto con la Empresa nueva (solo
+   * superadmin), validada contra los datos de la empresa.
+   * @param {Object} payload Datos del alta ({carpeta: {ruta}}).
+   * @param {Object} empresa {mandanteId, rut, razonSocial, nombreFantasia}.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} Carpeta a crear (prepararParaNuevaEmpresa).
+   */
+  async _carpetaNueva(payload, empresa, actor) {
+    if (actor?.rol !== "superadmin") {
+      throw new AppError(403, "Solo un superadmin registra la carpeta al " +
+          "crear la empresa.");
+    }
+    // Diferido: carpetaEmpresaService depende de servicios que usan éste.
+    // eslint-disable-next-line global-require
+    const carpetaEmpresaService = require("./carpetaEmpresaService");
+    return carpetaEmpresaService.prepararParaNuevaEmpresa({
+      mandanteId: empresa.mandanteId, ruta: payload.carpeta?.ruta,
+      empresa: {rut: empresa.rut, razonSocial: aMayusculas(empresa.razonSocial),
+        nombreFantasia: aMayusculas(empresa.nombreFantasia ||
+          empresa.razonSocial)}, actor});
+  }
+
+  /**
+   * Origen de cada dato propuesto al crear desde carpeta, para la Bitácora
+   * ({campo: texto}); solo campos conocidos y textos cortos.
+   * @param {*} origenes Recibido.
+   * @return {?Object} Orígenes, o null.
+   */
+  _origenes(origenes) {
+    if (!origenes || typeof origenes !== "object") return null;
+    const salida = {};
+    ["rut", "razonSocial", "nombreFantasia", "giro"].forEach((k) => {
+      if (typeof origenes[k] === "string" && origenes[k].trim()) {
+        salida[k] = origenes[k].trim().slice(0, 160);
+      }
+    });
+    return Object.keys(salida).length ? salida : null;
   }
 
   /**

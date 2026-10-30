@@ -1,4 +1,4 @@
-import { validateRut, formatRutDisplay } from "./rutFormatters";
+import { validateRut, formatRutDisplay } from "./rutFormatters.js";
 
 // RUT dentro de un texto libre (listados de trabajadores): misma forma que RE_RUT_CARPETA del
 // backend (reglasService): con puntos o sin ellos, guion opcional, y SOLO si el dígito verificador

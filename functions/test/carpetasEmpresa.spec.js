@@ -25,9 +25,10 @@ jest.mock("../src/repositories/fuenteDocumentalRepository", () => ({
 }));
 jest.mock("../src/repositories/carpetaEmpresaRepository", () => ({
   getById: jest.fn(async (id) => mockDb.carpetas.get(id) || null),
-  list: jest.fn(async ({mandanteId, fuenteId}) => [...mockDb.carpetas
-      .values()].filter((c) => (!mandanteId || c.mandanteId === mandanteId) &&
-    (!fuenteId || c.fuenteId === fuenteId))),
+  list: jest.fn(async ({mandanteId, fuenteId, empresaId}) => [...mockDb
+      .carpetas.values()].filter((c) => (!mandanteId ||
+      c.mandanteId === mandanteId) && (!fuenteId || c.fuenteId === fuenteId) &&
+    (!empresaId || c.empresaId === empresaId))),
   contarActivasDeFuente: jest.fn(async (fid) => [...mockDb.carpetas.values()]
       .filter((c) => c.fuenteId === fid && c.estado === "activa").length),
   update: jest.fn(async (id, d) => {
@@ -754,5 +755,59 @@ describe("Entrega 3: patrones aprendidos", () => {
         "ci.pdf", nombreSujeto: "Ana"}]}, ADMIN_M2))
         .rejects.toMatchObject({status: 403});
     expect(await patronesSrv.listar({mandanteId: "m2"}, SUPER)).toEqual([]);
+  });
+});
+
+describe("Nueva Empresa desde carpeta: preparar la carpeta", () => {
+  const EMPRESA = {razonSocial: "TECNORED S.A.", nombreFantasia: "TECNORED",
+    rut: "771042198"};
+  beforeEach(async () => {
+    await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
+        SUPER);
+  });
+  const preparar = (ruta, empresa = EMPRESA) =>
+    carpetas.prepararParaNuevaEmpresa({mandanteId: "m1", ruta, empresa,
+      actor: SUPER});
+
+  test("valida sin escribir: carpeta libre, sin proyecto ni expediente",
+      async () => {
+        const antes = mockDb.carpetas.size;
+        const r = await preparar("1. TECNORED");
+        expect(r.datos).toMatchObject({mandanteId: "m1", ruta: "1. TECNORED",
+          proyectoId: null, expedienteId: null, estado: "activa"});
+        expect(r.id).toBe(idCarpeta(r.datos.fuenteId, "1. TECNORED"));
+        expect(mockDb.carpetas.size).toBe(antes);
+      });
+
+  test("validación estricta, ruta inválida y carpeta ya registrada",
+      async () => {
+        await expect(preparar("9. OTRA")).rejects.toMatchObject({status: 400});
+        await expect(preparar("Repositorio/Tecnored"))
+            .rejects.toMatchObject({status: 400});
+        await carpetas.registrar({mandanteId: "m1", ruta: "1. TECNORED",
+          empresaId: "emp1"}, SUPER);
+        await expect(preparar("1. TECNORED")).rejects.toMatchObject({
+          status: 409, message: expect.stringContaining("TECNORED S.A.")});
+      });
+});
+
+describe("listar por empresa", () => {
+  beforeEach(async () => {
+    await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
+        SUPER);
+    await carpetas.registrar({mandanteId: "m1", ruta: "1. TECNORED",
+      empresaId: "emp1"}, SUPER);
+  });
+
+  test("sin Mandante, las de la empresa en todos (superadmin); los roles " +
+      "de Mandante, solo en el suyo", async () => {
+    const todas = await carpetas.listar({empresaId: "emp1"}, SUPER);
+    expect(todas.map((c) => c.ruta)).toEqual(["1. TECNORED"]);
+    expect(todas.every((c) => c.empresaId === "emp1")).toBe(true);
+    expect(await carpetas.listar({empresaId: "emp2"}, SUPER)).toEqual([]);
+    const propias = await carpetas.listar({empresaId: "emp1"}, ADMIN_M2);
+    expect(propias).toEqual([]);
+    await expect(carpetas.listar({}, SUPER))
+        .rejects.toMatchObject({status: 400});
   });
 });

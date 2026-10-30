@@ -12,7 +12,10 @@ const TEXTO_TIPO = { persona: "la carpeta del personal", recurso: "la carpeta de
 // derecha la vista previa de la carpeta en la que se hizo clic (sus subcarpetas = elementos
 // detectados, y sus archivos sueltos). Resalta, sin elegir, las carpetas cuyo nombre sugiere el tipo
 // buscado. "Usar esta carpeta" devuelve la ruta relativa.
-export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo, onElegir, onCerrar }) => {
+// Opcionales (Nueva Empresa desde carpeta): `soloPrimerNivel` no deja entrar a las subcarpetas;
+// `estadoCarpeta(c)` → { texto, destacada, deshabilitada } marca cada carpeta del nivel (p. ej.
+// "Sin registrar" destacada, o "Registrada a X" deshabilitada).
+export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo, onElegir, onCerrar, soloPrimerNivel = false, estadoCarpeta = null }) => {
   const [actual, setActual] = useState(rutaInicial || "");
   const [listado, setListado] = useState(null);
   const [elegida, setElegida] = useState(rutaInicial || null);
@@ -61,15 +64,19 @@ export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo,
               {!listado && <li className="p-2 text-xs text-slate-400">Leyendo...</li>}
               {listado && listado.carpetas.length === 0 && <li className="p-2 text-xs text-slate-400">Sin subcarpetas.</li>}
               {listado?.carpetas.map((c) => {
-                const destacada = tipo && esCarpetaDestacada(c.nombre, tipo);
+                const estado = estadoCarpeta?.(c) || null;
+                const destacada = estado ? estado.destacada : tipo && esCarpetaDestacada(c.nombre, tipo);
                 return (
-                  <li key={c.ruta} className={`flex items-center gap-1 rounded-lg ${elegida === c.ruta ? "bg-primary-lighter" : "hover:bg-slate-50"}`}>
-                    <button type="button" onClick={() => setElegida(c.ruta)} className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left text-xs">
+                  <li key={c.ruta} className={`flex items-center gap-1 rounded-lg ${elegida === c.ruta ? "bg-primary-lighter" : estado?.deshabilitada ? "opacity-60" : "hover:bg-slate-50"}`}>
+                    <button type="button" disabled={Boolean(estado?.deshabilitada)} onClick={() => setElegida(c.ruta)} className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left text-xs disabled:cursor-not-allowed">
                       <Folder className={`w-4 h-4 shrink-0 ${destacada ? "text-amber-500" : "text-primary"}`} />
                       <span className={`truncate ${destacada ? "font-bold text-carbon-dark" : "text-slate-700"}`}>{c.nombre}</span>
-                      {destacada && <Star className="w-3 h-3 shrink-0 text-amber-500" aria-label="Sugerida" />}
+                      {destacada && !estado && <Star className="w-3 h-3 shrink-0 text-amber-500" aria-label="Sugerida" />}
+                      {estado?.texto && (
+                        <span className={`ml-auto shrink-0 px-1.5 rounded-full border text-[10px] font-bold ${estado.deshabilitada ? "bg-slate-50 border-slate-200 text-slate-500" : "bg-amber-50 border-amber-200 text-amber-700"}`}>{estado.texto}</span>
+                      )}
                     </button>
-                    <button type="button" onClick={() => entrar(c.ruta)} aria-label={`Entrar a ${c.nombre}`} className="p-1.5 rounded text-slate-400 hover:text-carbon-dark"><ChevronRight className="w-4 h-4" /></button>
+                    {!soloPrimerNivel && <button type="button" onClick={() => entrar(c.ruta)} aria-label={`Entrar a ${c.nombre}`} className="p-1.5 rounded text-slate-400 hover:text-carbon-dark"><ChevronRight className="w-4 h-4" /></button>}
                   </li>
                 );
               })}

@@ -6,9 +6,11 @@ import { apiClient } from "../api/apiClient";
 export const carpetaEmpresaService = {
   // Carpetas del Mandante (o de una fuente), con empresa, proyecto, expediente y avance
   // { ubicados, total } del mapeo.
-  async listar({ mandanteId, fuenteId } = {}) {
+  // Con `empresaId` (sin Mandante): las de esa empresa en todos los Mandantes visibles.
+  async listar({ mandanteId, fuenteId, empresaId } = {}) {
     const params = new URLSearchParams();
     if (mandanteId) params.set("mandanteId", mandanteId);
+    if (empresaId) params.set("empresaId", empresaId);
     if (fuenteId) params.set("fuenteId", fuenteId);
     const q = params.toString();
     return (await apiClient(`/carpetas-empresa${q ? `?${q}` : ""}`)).data;

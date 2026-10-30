@@ -42,6 +42,16 @@ export const empresaService = {
     return res.data;
   },
 
+  // Nueva Empresa desde carpeta (solo superadmin): costo estimado y extracción con IA de los datos de
+  // un documento. datos: { mandanteId, archivos } (estimar: [{ mime, paginas? }]; extraer: piezas).
+  async estimarExtraccionIA(datos) {
+    return (await apiClient("/empresas/extraccion-ia/estimar", { method: "POST", body: datos })).data;
+  },
+
+  async extraerDatosIA(datos) {
+    return (await apiClient("/empresas/extraccion-ia", { method: "POST", body: datos })).data;
+  },
+
   async actualizar(id, payload) {
     const res = await apiClient(`/empresas/${id}`, {
       method: "PUT",

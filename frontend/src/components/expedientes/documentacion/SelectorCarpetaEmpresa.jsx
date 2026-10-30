@@ -21,10 +21,13 @@ const CLASE_BUSCAR = "w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rou
 //  - onManual: elegir con el selector del navegador (otra ubicación).
 //  - puedeConfigurarBase: muestra el enlace a Fuentes documentales.
 //  - autoElegir: en false no vincula sola la única coincidencia (lo hace quien la usa).
-//  - onAutoElegida(nombre): avisa que se vinculó sola (para el toast).
+//  - onAutoElegida(nombre, motivo): avisa que se vinculó sola (para el toast); motivo "registrada"
+//    si es la Carpeta de empresa ya registrada a la empresa, "coincide" si es la única que coincide.
+//  - registradas: rutas de las Carpetas de empresa LIBRES ya registradas a esta empresa (p. ej. al
+//    crearla). Con UNA, se elige sola; con varias, van primero y no se elige ninguna.
 export const SelectorCarpetaEmpresa = ({
   base, empresa, seleccionada, onElegir, onManual, puedeConfigurarBase = false, autoElegir = true, onAutoElegida,
-  fuente, onElegirUrl, errorSeleccion = null,
+  fuente, onElegirUrl, errorSeleccion = null, registradas = [],
 }) => {
   const modoFuente = fuente !== undefined;
   const [url, setUrl] = useState("");
@@ -33,9 +36,12 @@ export const SelectorCarpetaEmpresa = ({
   const [eligiendo, setEligiendo] = useState(null);
   const autoelegida = useRef(false);
 
+  const registradasMin = registradas.map((r) => r.toLowerCase());
   const subcarpetas = (base.subcarpetas || []).map((c) => ({
     ...c, coincide: validarCarpetaEmpresa(c.nombre, empresa).valida,
+    registrada: registradasMin.includes(c.nombre.toLowerCase()),
   }));
+  const registradasPresentes = subcarpetas.filter((c) => c.registrada);
   const coincidentes = subcarpetas.filter((c) => c.coincide);
 
   const elegir = async (nombre) => {
@@ -47,15 +53,19 @@ export const SelectorCarpetaEmpresa = ({
     }
   };
 
-  // UNA sola subcarpeta que pasa la validación estricta y nada elegido: se vincula sola (una vez por
-  // Empresa). Con 0 o 2+ coincidencias queda la lista para elegir.
-  const unica = autoElegir && !seleccionada && coincidentes.length === 1 && (!modoFuente || fuente?.tipo === "local")
-    ? coincidentes[0].nombre : null;
+  // Nada elegido: la ÚNICA Carpeta de empresa libre ya registrada a la empresa se vincula sola; si
+  // no hay registradas, la ÚNICA subcarpeta que pasa la validación estricta (una vez por Empresa).
+  // Con varias registradas, o 0 o 2+ coincidencias, queda la lista para elegir.
+  const local = !modoFuente || fuente?.tipo === "local";
+  const unicaRegistrada = registradasPresentes.length === 1 ? registradasPresentes[0].nombre : null;
+  const unica = !autoElegir || seleccionada || !local ? null
+    : unicaRegistrada || (!registradas.length && coincidentes.length === 1 ? coincidentes[0].nombre : null);
   useEffect(() => {
     if (!unica || autoelegida.current) return;
     autoelegida.current = true;
-    Promise.resolve(onElegir(unica)).then(() => onAutoElegida?.(unica)).catch(() => {});
-  }, [unica, onElegir, onAutoElegida]);
+    const motivo = unica === unicaRegistrada ? "registrada" : "coincide";
+    Promise.resolve(onElegir(unica)).then(() => onAutoElegida?.(unica, motivo)).catch(() => {});
+  }, [unica, unicaRegistrada, onElegir, onAutoElegida]);
 
   const enlaceConfigurar = puedeConfigurarBase && (
     <Link to="/configuracion/ia?tab=fuentes" className="font-bold text-primary hover:underline">Configurar en Fuentes documentales</Link>
@@ -135,7 +145,7 @@ export const SelectorCarpetaEmpresa = ({
   const termino = busqueda.trim().toLowerCase();
   const visibles = (verTodas || coincidentes.length === 0 ? subcarpetas : coincidentes)
     .filter((c) => !termino || c.nombre.toLowerCase().includes(termino))
-    .sort((a, b) => Number(b.coincide) - Number(a.coincide));
+    .sort((a, b) => Number(b.registrada) - Number(a.registrada) || Number(b.coincide) - Number(a.coincide));
 
   return (
     <div className="space-y-2">
@@ -170,7 +180,8 @@ export const SelectorCarpetaEmpresa = ({
                 >
                   {activa ? <CheckCircle2 className="w-4 h-4 text-primary shrink-0" /> : <Folder className="w-4 h-4 text-slate-400 shrink-0" />}
                   <span className="truncate">{c.nombre}</span>
-                  {c.coincide && <span className="ml-auto shrink-0 px-2 py-0.5 rounded-full bg-sage-lighter text-sage-darker text-[10px] font-bold">Coincide con la empresa</span>}
+                  {c.registrada ? <span className="ml-auto shrink-0 px-2 py-0.5 rounded-full bg-primary-lighter text-primary text-[10px] font-bold">Registrada a la empresa</span>
+                    : c.coincide && <span className="ml-auto shrink-0 px-2 py-0.5 rounded-full bg-sage-lighter text-sage-darker text-[10px] font-bold">Coincide con la empresa</span>}
                   {eligiendo === c.nombre && <span className="ml-auto text-[10px] text-slate-400">Vinculando...</span>}
                 </button>
               </li>

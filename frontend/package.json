@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --mode qa",
+    "dev": "vite --mode pruebas",
+    "dev:qa": "vite --mode qa",
     "dev:emuladores": "vite --mode emuladores",
     "build": "vite build",
     "build:qa": "vite build --mode qa",
@@ -17,10 +18,12 @@
     "exceljs": "^4.4.0",
     "firebase": "^12.18.0",
     "lucide-react": "^1.33.0",
+    "pdfjs-dist": "6.4.299",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
