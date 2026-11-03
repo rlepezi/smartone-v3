@@ -89,6 +89,19 @@ export const describirEvento = (registro) => {
     if (accion === "carpeta_empresa_desvinculada") return "Carpeta de empresa desvinculada";
     if (accion === "revision_ia_configurada") return "Revisiones IA configuradas";
     if (accion === "revision_ia_aceptar_lote") return "Propuestas IA aceptadas en lote";
+    if (accion === "ubicacion_documental_confirmada") return `Ubicación confirmada en el expediente: «${detalle?.nodo || detalle?.nodoClave || ""}» → «${detalle?.rutaReal || ""}»`;
+    if (accion === "ubicacion_documental_quitada") return "Excepción de ubicación quitada";
+    if (accion === "alias_sugerido") return `Alias sugerido para «${detalle?.nodo || detalle?.nodoClave || ""}»: «${detalle?.alias || ""}»`;
+  }
+
+  if (entidad === "plantillasEstructura") {
+    if (accion === "requerimiento_vinculado") return `Mapeo documental: «${detalle?.requerimiento || ""}» vinculado a «${detalle?.nodo || ""}»`;
+    if (accion === "requerimiento_desvinculado") return `Mapeo documental: «${detalle?.requerimiento || ""}» desvinculado de «${detalle?.nodo || ""}»`;
+    if (accion === "alias_agregado") return `Alias «${detalle?.alias || ""}» agregado (versión ${detalle?.version || ""})`;
+    if (accion === "alias_aprobado") return `Alias sugerido aprobado: «${detalle?.alias || ""}»`;
+    if (accion === "alias_rechazado") return `Alias sugerido rechazado: «${detalle?.alias || ""}»`;
+    if (accion === "duplicada") return "Plantilla duplicada hacia otro Mandante";
+    if (accion === "migracion_mapeo_plantilla") return `Migración al Mapeo documental: ${detalle?.vinculos || 0} vínculos`;
   }
 
   if (entidad === "carpetasEmpresa") {

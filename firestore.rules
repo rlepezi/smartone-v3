@@ -219,6 +219,18 @@ service cloud.firestore {
     match /patronesRequerimiento/{docId} {
       allow read, write: if false;
     }
+    // Mapeo documental (nodo de la plantilla ↔ requerimiento), excepciones por
+    // expediente y alias sugeridos: solo vía API (rol y mandanteId validados
+    // en los servicios).
+    match /mapeoRequerimientos/{docId} {
+      allow read, write: if false;
+    }
+    match /ubicacionesExpediente/{docId} {
+      allow read, write: if false;
+    }
+    match /aliasSugeridos/{docId} {
+      allow read, write: if false;
+    }
 
     // Configuración de IA (API key cifrada): nunca desde el cliente.
     match /configuracionIA/{docId} {

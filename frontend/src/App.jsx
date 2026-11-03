@@ -148,7 +148,7 @@ function App() {
                     <Route
                       path="/configuracion/ia"
                       element={
-                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "evaluador"]}>
+                        <ProtectedRoute allowedRoles={["superadmin", "mandante_admin", "evaluador", "mandante_lector"]}>
                           <ConfiguracionIAPage />
                         </ProtectedRoute>
                       }

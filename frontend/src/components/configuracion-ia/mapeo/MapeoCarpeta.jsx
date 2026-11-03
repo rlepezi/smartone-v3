@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle, Truck, Users, ChevronDown, ChevronRight, Eye, File, FileImage, FileSpreadsheet, FileText, Folder, Loader2,
   Copy, MousePointerClick, Plus, Search, Sparkles, X,
@@ -72,6 +73,10 @@ const ultimo = (ruta) => String(ruta || "").split("/").pop();
 // "No encontrada" (Cambiar / Quitar): nunca se borran solas.
 //  - carpeta: Carpeta de empresa (pública, con avance). base: useCarpetaBase (raíz autorizada).
 //  - onActualizada(carpeta): tras cada guardado (con el avance recalculado).
+// Solo lectura: la ubicación documental se define en la plantilla (Mapeo documental). Este mapeo por
+// carpeta real queda para consulta y se retira en E7.
+const SOLO_LECTURA = true;
+
 export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) => {
   const [raiz, setRaiz] = useState({ handle: null, error: null, listo: false });
   const [niveles, setNiveles] = useState(() => new Map()); // ruta → { estado, carpetas, archivos }
@@ -200,6 +205,7 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
   };
 
   const guardar = async (cambios) => {
+    if (SOLO_LECTURA) return false;
     setGuardando(true);
     setError(null);
     try {
@@ -300,7 +306,7 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
             {estado.clase === "sujeto" && <span className={`${ETIQUETA} bg-slate-100 text-slate-600 border-slate-200`}>{estado.etiqueta}</span>}
             {estado.clase === "asignado" && <span className={`${ETIQUETA} bg-sage-lighter text-sage-darker border-sage-light`}>{nombreReq(porId.get(estado.requerimientoId))}</span>}
             {estado.clase === "incluido" && <span className="text-[10px] text-slate-400">Incluido en {nombreReq(porId.get(estado.requerimientoId))}</span>}
-            {estado.clase === "libre" && sugerenciasArbol.has(nodo.ruta) && !modo && (() => {
+            {!SOLO_LECTURA && estado.clase === "libre" && sugerenciasArbol.has(nodo.ruta) && !modo && (() => {
               const sg = sugerenciasArbol.get(nodo.ruta);
               return (
                 <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -395,15 +401,15 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
                     <div className="flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => mostrar([valor])} className="min-w-0 text-left text-slate-700 hover:text-primary hover:underline break-all">{valor}</button>
                       {faltantes.has(valor) && <span className="inline-flex items-center gap-1 text-[10px] text-amber-700"><AlertTriangle className="w-3 h-3" /> No encontrada</span>}
-                      <span className="ml-auto flex gap-2">
+                      {!SOLO_LECTURA && <span className="ml-auto flex gap-2">
                         <button type="button" onClick={() => setModo({ tipo: "especial", campo })} className={ENLACE}>Cambiar</button>
                         <button type="button" disabled={guardando} onClick={() => guardar({ [campo]: null })} className={`${ENLACE} text-slate-500`}>Quitar</button>
-                      </span>
+                      </span>}
                     </div>
                   ) : (
                     <>
                       <p className="text-[11px] text-slate-500">{ayuda}</p>
-                      <div className="flex flex-wrap items-center gap-2">
+                      {!SOLO_LECTURA && <div className="flex flex-wrap items-center gap-2">
                         {sugerida && (
                           <button type="button" disabled={guardando} onClick={() => guardar({ [campo]: sugerida.ruta })} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
                             Usar «{sugerida.nombre}»{especial.porPatron ? " (aprendida)" : ""}
@@ -411,7 +417,7 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
                         )}
                         <button type="button" onClick={() => setModo({ tipo: "especial", campo })} className={ENLACE}>Elegir en el árbol</button>
                         <span className="text-[10px] text-slate-400">o déjala vacía si no aplica.</span>
-                      </div>
+                      </div>}
                     </>
                   )}
                 </div>
@@ -420,7 +426,15 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
         </div>
       </div>
       {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-      {!bannerCerrado && similares?.[0] && similares[0].similitud >= UMBRAL_OFRECER &&
+      <div className="flex flex-wrap items-center gap-2 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+        <Eye className="w-4 h-4" />
+        <span className="mr-auto">
+          Solo lectura: la ubicación de cada requerimiento ahora se define en la plantilla (Mapeo documental), vinculando el
+          requerimiento a sus nodos; las carpetas reales se reconocen por los alias de cada nodo.
+        </span>
+        <Link to="/configuracion/ia?tab=mapeo" className={`${CLASE_SECUNDARIO} px-2.5 py-1 text-[11px]`}>Ir al Mapeo documental</Link>
+      </div>
+      {!SOLO_LECTURA && !bannerCerrado && similares?.[0] && similares[0].similitud >= UMBRAL_OFRECER &&
         (carpeta.estadoMapeo === "sin_mapear" || (avance.total && avance.ubicados / avance.total < 0.2)) && (
         <div className="flex flex-wrap items-center gap-2 p-3 rounded-2xl bg-primary-lighter/60 border border-primary/20 text-xs text-primary-dark">
           <Copy className="w-4 h-4" />
@@ -472,23 +486,25 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
                               {e.tipo === "archivo" ? <FileText className="w-3 h-3 shrink-0 text-slate-400" /> : <Folder className="w-3 h-3 shrink-0 text-primary" />}
                               <button type="button" onClick={() => mostrar([e.ruta])} title={e.ruta} className="min-w-0 truncate text-left text-slate-700 hover:text-primary hover:underline">{ultimo(e.ruta)}</button>
                               {faltantes.has(e.ruta) && <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-700"><AlertTriangle className="w-3 h-3" /> No encontrada</span>}
-                              <span className="ml-auto shrink-0 flex gap-2">
+                              {!SOLO_LECTURA && <span className="ml-auto shrink-0 flex gap-2">
                                 <button type="button" onClick={() => setModo({ tipo: "requerimiento", requerimientoId: r.id, reemplazar: e.ruta })} className={ENLACE}>Cambiar</button>
                                 <button type="button" disabled={guardando} onClick={() => guardar({ mapeo: cambiosQuitar(carpeta.mapeo, r.id, e.ruta) })} className={`${ENLACE} text-slate-500`}>Quitar</button>
-                              </span>
+                              </span>}
                             </div>
                           ))}
-                          {sg && (
+                          {!SOLO_LECTURA && sg && (
                             <div className="flex items-center gap-1.5 text-[11px]">
                               <span className={`${ETIQUETA} ${CONFIANZA[sg.nivel].clase}`}>Sugerida · {CONFIANZA[sg.nivel].label}</span>
                               <button type="button" onClick={() => mostrar([sg.nodo.ruta])} title={sg.nodo.ruta} className="min-w-0 truncate text-left text-slate-700 hover:text-primary hover:underline">{sg.nodo.nombre}</button>
                               <button type="button" disabled={guardando} onClick={() => aceptar([sg])} className={`${CLASE_PRIMARIO} ml-auto shrink-0 px-2.5 py-0.5 text-[11px]`}>Usar</button>
                             </div>
                           )}
-                          <button type="button" onClick={() => setModo(activo ? null : { tipo: "requerimiento", requerimientoId: r.id, reemplazar: null })}
-                            className={`${ENLACE} inline-flex items-center gap-1`}>
-                            {activo ? "Cancelar" : lista.length ? <><Plus className="w-3 h-3" /> Agregar otra ubicación</> : <><MousePointerClick className="w-3 h-3" /> Elegir en el árbol</>}
-                          </button>
+                          {!SOLO_LECTURA && (
+                            <button type="button" onClick={() => setModo(activo ? null : { tipo: "requerimiento", requerimientoId: r.id, reemplazar: null })}
+                              className={`${ENLACE} inline-flex items-center gap-1`}>
+                              {activo ? "Cancelar" : lista.length ? <><Plus className="w-3 h-3" /> Agregar otra ubicación</> : <><MousePointerClick className="w-3 h-3" /> Elegir en el árbol</>}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -529,12 +545,12 @@ export const MapeoCarpeta = ({ carpeta, carpetas = [], base, onActualizada }) =>
             <span className="text-slate-500 mr-auto">
               Sugerencias: <b className="text-sage-darker">{conteo.alta} altas</b> · <b className="text-amber-700">{conteo.media} medias</b> · <b className="text-slate-600">{conteo.baja} bajas</b>
             </span>
-            {altas.length > 0 && (
+            {!SOLO_LECTURA && altas.length > 0 && (
               <button type="button" disabled={guardando || Boolean(modo)} onClick={() => aceptar(altas)} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
                 Confirmar todas las altas ({altas.length})
               </button>
             )}
-            {similares?.length > 0 && (
+            {!SOLO_LECTURA && similares?.length > 0 && (
               <button type="button" disabled={Boolean(modo)} onClick={() => setCopiar({ inicial: similares[0].carpeta.id })} className={`${CLASE_SECUNDARIO} px-2.5 py-1 text-[11px]`}>
                 <Copy className="w-3 h-3" /> Copiar mapeo de…
               </button>

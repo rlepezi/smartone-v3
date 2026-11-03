@@ -14,6 +14,7 @@ import { CopiarReglasModal } from "./CopiarReglasModal";
 import { ProbarReglasModal } from "./ProbarReglasModal";
 import { ResultadoPrueba } from "./ResultadoPrueba";
 import { CamposAdicionales } from "./CamposAdicionales";
+import { SinMapeo, UbicacionNodos } from "./UbicacionMapeo";
 import { configuracionIAService } from "../../../services/configuracionIAService";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap";
@@ -104,11 +105,11 @@ const FilaRegla = ({ vinculo, indice, total, esquema, ocupado, onMover, onCambia
 // leerá (sale de las reglas; si el requerimiento está vinculado a un documento de la estructura de
 // carpetas, se suman los campos del tipo de ese documento), el modelo, "Probar reglas" y las últimas
 // pruebas. El tipo documental no se elige aquí: sale del vínculo en la plantilla. Cada cambio se guarda al momento y queda en la Bitácora.
-// `ubicacion`: dónde está ubicado el requerimiento, según desde dónde se abre (la cobertura global
-// del mapeo documental en el formulario; la carpeta del expediente en el expediente). La plantilla
-// de estructura ya no se muestra (en desuso).
+// Arriba, en solo lectura, su ubicación en el Mapeo documental (nodos de la plantilla). Las reglas
+// DEPENDEN del mapeo: sin nodo vinculado no se pueden definir (aviso con enlace al mapeo). "La IA
+// leerá" suma, de los nodos, sus alias (unión), si es múltiple y si es sensible.
 // `onCambio(config)`: avisa a quien lo contiene cuando cambia la configuración (estado IA, reglas).
-export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCambio = null }) => {
+export const ReglasIARequerimiento = ({ requerimientoId, onCambio = null }) => {
   const [config, setConfig] = useState(null);
   const [verificaciones, setVerificaciones] = useState([]);
   const [error, setError] = useState(null);
@@ -173,6 +174,8 @@ export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCam
   // Reglas sugeridas para la entidad que el requerimiento aún no usa (se agregan con un clic).
   const sugeridas = reglasSugeridasPara(requerimiento.tipoEntidad).filter((r) => !verificacionesUsadas.includes(r.verificacion));
   const camposIA = config.camposIA || [];
+  const mapeo = config.mapeo || { nodos: [], alias: [], multiple: false, sensible: false };
+  const sinMapeo = Boolean(config.requiereMapeo);
 
   const mover = (indice, delta) => {
     const ids = vinculos.map((v) => v.id);
@@ -191,7 +194,8 @@ export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCam
         <span className={`${CLASE_BADGE} ${estado.clase}`}>{estado.label}</span>
         <div className="ml-auto flex flex-wrap gap-2">
           {TRANSICIONES[requerimiento.estadoIA].map((t) => (
-            <button key={t.destino} type="button" disabled={ocupado || Boolean(transiciones[t.destino])} title={transiciones[t.destino] || ""}
+            <button key={t.destino} type="button" disabled={ocupado || Boolean(transiciones[t.destino]) || (sinMapeo && t.destino !== "en_definicion")}
+              title={sinMapeo && t.destino !== "en_definicion" ? "Primero ubica este requerimiento en el Mapeo documental." : transiciones[t.destino] || ""}
               onClick={() => silencioso(() => reglaIAService.cambiarEstadoIA(id, t.destino), `Estado IA: ${ESTADOS_IA_REQ[t.destino].label}.`)}
               className={t.destino === "en_definicion" ? CLASE_SECUNDARIO : CLASE_PRIMARIO}>
               {t.label}
@@ -203,8 +207,10 @@ export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCam
         ))}
       </div>
 
-      {ubicacion}
+      <UbicacionNodos nodos={mapeo.nodos} />
 
+      {sinMapeo ? <SinMapeo /> : (
+      <>
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <span className="text-xs font-bold text-carbon-dark mr-auto">Reglas ({vinculos.length})</span>
@@ -246,6 +252,12 @@ export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCam
         <p className="text-[11px] text-slate-600">
           <span className="font-bold text-carbon-dark">La IA leerá:</span>{" "}
           {camposIA.map((c) => <span key={c.clave} className="inline-block mr-1 mb-0.5 px-1.5 py-px rounded bg-white border border-slate-200 text-slate-600">{c.etiqueta}</span>)}
+        </p>
+        <p className="text-[11px] text-slate-600">
+          <span className="font-bold text-carbon-dark">Del mapeo:</span>{" "}
+          {mapeo.alias.length ? <>reconoce {mapeo.alias.map((a) => <span key={a} className="inline-block mr-1 mb-0.5 px-1.5 py-px rounded bg-white border border-slate-200 text-slate-600">{a}</span>)}</> : "sin alias"}
+          {" · "}{mapeo.multiple ? "varios documentos" : "un documento"}
+          {mapeo.sensible ? <span className="ml-1 font-semibold text-amber-700">· datos sensibles (no se envía a la IA)</span> : null}
         </p>
         <p className="text-[11px] text-slate-400">Se calcula con las reglas activas y los campos adicionales.</p>
         <CamposAdicionales datos={config.camposAdicionales} ocupado={ocupado}
@@ -293,6 +305,8 @@ export const ReglasIARequerimiento = ({ requerimientoId, ubicacion = null, onCam
           </ul>
         )}
       </div>
+      </>
+      )}
 
       {modal === "agregar" && (
         <AgregarReglaModal entidad={requerimiento.tipoEntidad} vinculadas={vinculos.map((v) => v.reglaId)}

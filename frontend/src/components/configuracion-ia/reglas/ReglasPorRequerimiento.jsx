@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderTree, Search, Sparkles } from "lucide-react";
+import { Search } from "lucide-react";
 import { useMandanteContexto } from "../../../hooks/useMandanteContexto";
 import { CampoMandante } from "../../shared/CampoMandante";
 import { ErrorBanner } from "../../shared/ErrorBanner";
 import { requerimientoService } from "../../../services/requerimientoService";
-import { carpetaEmpresaService } from "../../../services/carpetaEmpresaService";
-import { patronService } from "../../../services/patronService";
+import { mapeoRequerimientoService } from "../../../services/mapeoRequerimientoService";
 import { ReglasIARequerimiento } from "../../requerimientos/reglas-ia/ReglasIARequerimiento";
-import { CoberturaMapeo } from "../../requerimientos/reglas-ia/UbicacionMapeo";
-import { ESTADOS_IA_REQ, fechaDMA } from "../../../utils/reglasIA";
+import { ESTADOS_IA_REQ } from "../../../utils/reglasIA";
 import { CLASE_INPUT } from "../estilos";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
@@ -19,76 +17,14 @@ const GRUPOS = [
 ];
 const nombreReq = (r) => r.nombreCorto || r.nombre;
 const porNombre = (a, b) => nombreReq(a).localeCompare(nombreReq(b), "es", { numeric: true, sensitivity: "base" });
-const veces = (n) => `${n} ${n === 1 ? "vez" : "veces"}`;
-// Patrones aprendidos del requerimiento (al confirmar el mapeo): se desactivan o reactivan.
-const PatronesRequerimiento = ({ mandanteId, requerimientoId }) => {
-  const [estado, setEstado] = useState({ clave: null, lista: null, error: null });
-  const [ocupado, setOcupado] = useState(null);
-  const clave = `${mandanteId}|${requerimientoId}`;
-
-  useEffect(() => {
-    let vigente = true;
-    patronService.listar({ mandanteId, requerimientoId })
-      .then((l) => { if (vigente) setEstado({ clave, lista: l || [], error: null }); })
-      .catch((err) => { if (vigente) setEstado({ clave, lista: [], error: err.message || "No se pudieron cargar los patrones." }); });
-    return () => { vigente = false; };
-  }, [mandanteId, requerimientoId, clave]);
-
-  const lista = estado.clave === clave ? estado.lista : null;
-  const cambiar = async (p) => {
-    setOcupado(p.id);
-    try {
-      const nuevo = await patronService.cambiarEstado(p.id, p.estado === "activo" ? "inactivo" : "activo");
-      setEstado((e) => ({ ...e, lista: e.lista.map((x) => (x.id === p.id ? { ...x, ...nuevo } : x)), error: null }));
-    } catch (err) {
-      setEstado((e) => ({ ...e, error: err.message || "No se pudo cambiar el estado." }));
-    } finally {
-      setOcupado(null);
-    }
-  };
-
-  if (!lista) return <p className="text-[11px] text-slate-400">Cargando patrones...</p>;
-  const ordenada = [...lista].sort((a, b) => (a.estado === b.estado ? (b.vecesConfirmado || 0) - (a.vecesConfirmado || 0) : a.estado === "activo" ? -1 : 1));
-  return (
-    <div className="space-y-2">
-      <ErrorBanner message={estado.error} />
-      {ordenada.length === 0 ? (
-        <p className="text-[11px] text-slate-400">Sin patrones todavía: se aprenden al confirmar ubicaciones en Mapeo documental.</p>
-      ) : (
-        <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
-          {ordenada.map((p) => (
-            <li key={p.id} className={`flex flex-wrap items-center gap-2 px-3 py-2 text-xs ${p.estado === "activo" ? "" : "bg-slate-50/70"}`}>
-              <span className={`min-w-0 flex-1 truncate font-semibold ${p.estado === "activo" ? "text-carbon-dark" : "text-slate-400 line-through"}`} title={p.patron}>
-                «{p.patron}»
-              </span>
-              <span className="text-[11px] text-slate-500">{p.objetivo === "archivo" ? "Archivo" : "Carpeta"} · {veces(p.vecesConfirmado || 0)} · {fechaDMA(p.ultimaConfirmacionAt)}</span>
-              <button type="button" disabled={ocupado === p.id} onClick={() => cambiar(p)}
-                className="px-2 py-1 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
-                {p.estado === "activo" ? "Desactivar" : "Activar"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};
-
-const Seccion = ({ titulo, Icono, children }) => (
-  <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-card space-y-3">
-    <h3 className="flex items-center gap-2 text-sm font-bold text-carbon-dark"><Icono className="w-4 h-4 text-primary" /> {titulo}</h3>
-    {children}
-  </section>
-);
-
 // Reglas de revisión › Por requerimiento (solo superadmin): todo lo de cada requerimiento en un
 // lugar. A la izquierda, los requerimientos activos del Mandante por entidad, numerados, con su
-// estado de reglas y en cuántas carpetas está ubicado; a la derecha, su ubicación en el mapeo
-// documental, sus patrones aprendidos y sus reglas (estado IA, campos, modelo y pruebas).
+// estado de reglas y si está mapeado (vinculado a un nodo de la plantilla); a la derecha, su
+// ubicación en el Mapeo documental (solo lectura) y sus reglas, que dependen del mapeo.
 export const ReglasPorRequerimiento = () => {
   const contexto = useMandanteContexto();
   const { mandanteId, modo } = contexto;
-  const [datos, setDatos] = useState({ mandanteId: null, requerimientos: null, cobertura: null, error: null });
+  const [datos, setDatos] = useState({ mandanteId: null, requerimientos: null, mapeados: null, error: null });
   const [elegido, setElegido] = useState(null);
   const [texto, setTexto] = useState("");
 
@@ -97,22 +33,26 @@ export const ReglasPorRequerimiento = () => {
     let vigente = true;
     Promise.all([
       requerimientoService.listar({ mandanteId, estado: "activo" }),
-      // false: no se pudo leer (se informa; no se muestra como "sin carpetas").
-      carpetaEmpresaService.cobertura(mandanteId).catch(() => false),
+      // null: no se pudo leer el mapeo (no se muestra el badge).
+      mapeoRequerimientoService.listar(mandanteId).catch(() => null),
     ])
-      .then(([reqs, cob]) => { if (vigente) setDatos({ mandanteId, requerimientos: reqs || [], cobertura: cob, error: null }); })
-      .catch((err) => { if (vigente) setDatos({ mandanteId, requerimientos: [], cobertura: null, error: err.message || "No se pudieron cargar los requerimientos." }); });
+      .then(([reqs, vinculos]) => {
+        if (!vigente) return;
+        const mapeados = vinculos ? new Set(vinculos.filter((v) => v.estado === "activo").map((v) => v.requerimientoId)) : null;
+        setDatos({ mandanteId, requerimientos: reqs || [], mapeados, error: null });
+      })
+      .catch((err) => { if (vigente) setDatos({ mandanteId, requerimientos: [], mapeados: null, error: err.message || "No se pudieron cargar los requerimientos." }); });
     return () => { vigente = false; };
   }, [mandanteId]);
 
-  const vigentes = datos.mandanteId === mandanteId ? datos : { requerimientos: null, cobertura: null, error: null };
+  const vigentes = datos.mandanteId === mandanteId ? datos : { requerimientos: null, mapeados: null, error: null };
   const grupos = useMemo(() => GRUPOS.map((g) => ({
     ...g, lista: (vigentes.requerimientos || []).filter((r) => r.tipoEntidad === g.entidad).sort(porNombre)
       .map((r, i) => ({ ...r, numero: i + 1 })),
   })), [vigentes.requerimientos]);
   const t = texto.trim().toLowerCase();
   const seleccionado = (vigentes.requerimientos || []).find((r) => r.id === elegido) || null;
-  const ubicadoEn = (id) => (vigentes.cobertura ? vigentes.cobertura.porRequerimiento[id]?.length || 0 : null);
+  const mapeado = (id) => (vigentes.mapeados ? vigentes.mapeados.has(id) : null);
   // Al cambiar las reglas en el panel, se refleja el estado IA en la lista.
   const alCambiar = (config) => setDatos((d) => ({
     ...d, requerimientos: (d.requerimientos || []).map((r) => (r.id === config.requerimiento.id ? { ...r, estadoIA: config.requerimiento.estadoIA } : r)),
@@ -143,7 +83,7 @@ export const ReglasPorRequerimiento = () => {
                         {lista.map((r) => {
                           const activo = r.id === elegido;
                           const conReglas = (r.estadoIA || "sin_reglas") !== "sin_reglas";
-                          const n = ubicadoEn(r.id);
+                          const m = mapeado(r.id);
                           return (
                             <li key={r.id}>
                               <button type="button" onClick={() => setElegido(r.id)} aria-current={activo ? "true" : undefined}
@@ -155,9 +95,9 @@ export const ReglasPorRequerimiento = () => {
                                     <span className={`${CLASE_BADGE} ${conReglas ? "bg-white text-primary border-primary/30" : "bg-white text-slate-500 border-slate-200"}`}>
                                       {conReglas ? `Con reglas · ${ESTADOS_IA_REQ[r.estadoIA]?.label || ""}` : "Sin reglas"}
                                     </span>
-                                    {g.entidad === "empresa" && n !== null && (
-                                      <span className={`${CLASE_BADGE} ${n ? "bg-sage-lighter text-sage-darker border-sage-light" : "bg-white text-slate-400 border-slate-200"}`}>
-                                        Ubicado en {n} {n === 1 ? "carpeta" : "carpetas"}
+                                    {m !== null && (
+                                      <span className={`${CLASE_BADGE} ${m ? "bg-sage-lighter text-sage-darker border-sage-light" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                                        {m ? "Mapeado" : "Sin mapear"}
                                       </span>
                                     )}
                                   </span>
@@ -183,14 +123,6 @@ export const ReglasPorRequerimiento = () => {
                 <h2 className="text-base font-bold text-carbon-dark">{nombreReq(seleccionado)}</h2>
                 {seleccionado.nombreCorto && <p className="text-xs text-slate-500">{seleccionado.nombre}</p>}
               </div>
-              {seleccionado.tipoEntidad === "empresa" && (
-                <Seccion titulo="Ubicación en el mapeo documental" Icono={FolderTree}>
-                  <CoberturaMapeo cobertura={vigentes.cobertura} requerimientoId={seleccionado.id} />
-                </Seccion>
-              )}
-              <Seccion titulo="Patrones aprendidos" Icono={Sparkles}>
-                <PatronesRequerimiento mandanteId={mandanteId} requerimientoId={seleccionado.id} />
-              </Seccion>
               <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-card space-y-3">
                 <h3 className="text-sm font-bold text-carbon-dark">Reglas de revisión</h3>
                 <ReglasIARequerimiento requerimientoId={seleccionado.id} onCambio={alCambiar} />

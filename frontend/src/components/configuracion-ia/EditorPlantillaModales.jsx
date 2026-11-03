@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { ChipsInput } from "./ChipsInput";
+import { claveDesdeNombre } from "../../utils/claveNodo";
 import { CLASE_INPUT, CLASE_LABEL, CLASE_PRIMARIO, CLASE_SECUNDARIO, TIPOS_SECCION } from "./estilos";
 
 const RE_CLAVE = /^[a-z0-9_]{2,40}$/;
+
 
 const Modal = ({ titulo, children, onCancelar, onGuardar, puedeGuardar = true }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCancelar}>
@@ -38,18 +40,21 @@ const Check = ({ etiqueta, checked, onChange, ayuda }) => (
   </label>
 );
 
-// Modal de una sección de la plantilla. `clavesUsadas`: para no repetir la clave.
-export const SeccionModal = ({ seccion, clavesUsadas, requerimientos, onGuardar, onCancelar }) => {
+// Modal de una sección de la plantilla. `clavesUsadas`: para no repetir la clave (también las
+// retiradas). La clave se genera desde el nombre al crearla y no cambia. Los requerimientos se
+// vinculan en la tabla (Mapeo documental), no aquí.
+export const SeccionModal = ({ seccion, clavesUsadas, onGuardar, onCancelar }) => {
   const esNueva = !seccion;
   const [d, setD] = useState(() => ({
-    clave: seccion?.clave || "", nombre: seccion?.nombre || "", alias: seccion?.alias || [],
+    nombre: seccion?.nombre || "", alias: seccion?.alias || [],
     numeroSugerido: seccion?.numeroSugerido || "", obligatoria: Boolean(seccion?.obligatoria),
     tipo: seccion?.tipo || "archivos", entidad: seccion?.entidad || "persona", rolEntidad: seccion?.rolEntidad || "",
     min: String(seccion?.cardinalidad?.min ?? 0), max: seccion?.cardinalidad?.max ?? "",
-    requerimientoId: seccion?.requerimientoId || "", nota: seccion?.nota || "",
+    nota: seccion?.nota || "", multiple: Boolean(seccion?.multiple), datosSensibles: Boolean(seccion?.datosSensibles),
   }));
   const set = (campo, valor) => setD((x) => ({ ...x, [campo]: valor }));
-  const errorClave = esNueva && (!RE_CLAVE.test(d.clave) ? "Minúsculas, números y _ (2 a 40)." : clavesUsadas.includes(d.clave) ? "Ya existe." : null);
+  const clave = seccion?.clave || claveDesdeNombre(d.nombre, clavesUsadas);
+  const errorClave = esNueva && !RE_CLAVE.test(clave) ? "Escriba un nombre." : null;
   const min = Number(d.min);
   const max = d.max === "" ? null : Number(d.max);
   const errorCard = !(Number.isInteger(min) && min >= 0) || (max !== null && !(Number.isInteger(max) && max >= min)) ? "Mínimo ≥ 0 y máximo ≥ mínimo (vacío = sin límite)." : null;
@@ -61,20 +66,20 @@ export const SeccionModal = ({ seccion, clavesUsadas, requerimientos, onGuardar,
       onCancelar={onCancelar}
       puedeGuardar={Boolean(valido)}
       onGuardar={() => onGuardar({
-        ...(seccion || { archivosSeccion: [], documentos: [] }),
-        clave: seccion?.clave || d.clave, nombre: d.nombre.trim(), alias: d.alias,
+        ...(seccion || { archivosSeccion: [], documentos: [], estado: "activo" }),
+        clave, nombre: d.nombre.trim(), alias: d.alias,
         numeroSugerido: d.numeroSugerido.trim() || null, obligatoria: d.obligatoria, tipo: d.tipo,
         entidad: d.tipo === "entidades" ? d.entidad : null,
         rolEntidad: d.tipo === "entidades" && d.entidad === "persona" ? d.rolEntidad.trim() || null : null,
-        cardinalidad: { min, max }, requerimientoId: d.requerimientoId || null, nota: d.nota.trim() || null,
+        cardinalidad: { min, max }, nota: d.nota.trim() || null, multiple: d.multiple, datosSensibles: d.datosSensibles,
       })}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Campo etiqueta="Clave *" error={errorClave}>
-          <input value={d.clave} disabled={!esNueva} onChange={(e) => set("clave", e.target.value.trim().toLowerCase())} placeholder="mutualidad" className={CLASE_INPUT} />
-        </Campo>
         <Campo etiqueta="Nombre de referencia *">
           <input value={d.nombre} onChange={(e) => set("nombre", e.target.value)} className={CLASE_INPUT} />
+        </Campo>
+        <Campo etiqueta={esNueva ? "Clave (automática, no cambia después)" : "Clave (no cambia)"} error={errorClave}>
+          <input value={clave} disabled className={`${CLASE_INPUT} font-mono`} />
         </Campo>
       </div>
       <Campo etiqueta="Alias (palabras clave para reconocer la carpeta)">
@@ -111,31 +116,31 @@ export const SeccionModal = ({ seccion, clavesUsadas, requerimientos, onGuardar,
           )}
         </div>
       )}
-      <Campo etiqueta="Requerimiento de Empresa (opcional)">
-        <select value={d.requerimientoId} onChange={(e) => set("requerimientoId", e.target.value)} className={CLASE_INPUT}>
-          <option value="">Sin requerimiento</option>
-          {requerimientos.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-        </select>
-      </Campo>
       <Campo etiqueta="Nota (opcional)">
         <input value={d.nota} onChange={(e) => set("nota", e.target.value)} className={CLASE_INPUT} />
       </Campo>
-      <Check etiqueta="Obligatoria" checked={d.obligatoria} onChange={(v) => set("obligatoria", v)} ayuda="Si falta en la carpeta, la empresa queda incompleta." />
+      <div className="flex flex-wrap gap-6">
+        <Check etiqueta="Obligatoria" checked={d.obligatoria} onChange={(v) => set("obligatoria", v)} ayuda="Si falta en la carpeta, la empresa queda incompleta." />
+        <Check etiqueta="Múltiple" checked={d.multiple} onChange={(v) => set("multiple", v)} ayuda="La carpeta trae varios documentos del requerimiento." />
+        <Check etiqueta="Datos sensibles" checked={d.datosSensibles} onChange={(v) => set("datosSensibles", v)} ayuda="Nunca se envía a la IA: solo se revisa su presencia." />
+      </div>
     </Modal>
   );
 };
 
-// Modal de un documento esperado.
-export const DocumentoModal = ({ documento, clavesUsadas, tiposDocumentales, requerimientos, onGuardar, onCancelar }) => {
+// Modal de un documento esperado (archivo suelto o documento de entidad). La clave se genera desde
+// el nombre y no cambia. El tipo documental (opcional) da los campos base de lo que la IA lee.
+export const DocumentoModal = ({ documento, clavesUsadas, tiposDocumentales, onGuardar, onCancelar }) => {
   const esNuevo = !documento;
   const [d, setD] = useState(() => ({
-    clave: documento?.clave || "", nombre: documento?.nombre || "", alias: documento?.alias || [],
+    nombre: documento?.nombre || "", alias: documento?.alias || [],
     excluir: documento?.excluir || [], obligatorio: Boolean(documento?.obligatorio), multiple: Boolean(documento?.multiple),
-    tipoDocumentalCodigo: documento?.tipoDocumentalCodigo || "", requerimientoId: documento?.requerimientoId || "",
+    tipoDocumentalCodigo: documento?.tipoDocumentalCodigo || "",
     datosSensibles: Boolean(documento?.datosSensibles),
   }));
   const set = (campo, valor) => setD((x) => ({ ...x, [campo]: valor }));
-  const errorClave = esNuevo && (!RE_CLAVE.test(d.clave) ? "Minúsculas, números y _ (2 a 40)." : clavesUsadas.includes(d.clave) ? "Ya existe en la sección." : null);
+  const clave = documento?.clave || claveDesdeNombre(d.nombre, clavesUsadas);
+  const errorClave = esNuevo && !RE_CLAVE.test(clave) ? "Escriba un nombre." : null;
 
   return (
     <Modal
@@ -143,17 +148,18 @@ export const DocumentoModal = ({ documento, clavesUsadas, tiposDocumentales, req
       onCancelar={onCancelar}
       puedeGuardar={!errorClave && Boolean(d.nombre.trim())}
       onGuardar={() => onGuardar({
-        clave: documento?.clave || d.clave, nombre: d.nombre.trim(), alias: d.alias, excluir: d.excluir,
+        ...(documento || { estado: "activo" }),
+        clave, nombre: d.nombre.trim(), alias: d.alias, excluir: d.excluir,
         obligatorio: d.obligatorio, multiple: d.multiple, tipoDocumentalCodigo: d.tipoDocumentalCodigo || null,
-        requerimientoId: d.requerimientoId || null, datosSensibles: d.datosSensibles,
+        datosSensibles: d.datosSensibles,
       })}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Campo etiqueta="Clave *" error={errorClave}>
-          <input value={d.clave} disabled={!esNuevo} onChange={(e) => set("clave", e.target.value.trim().toLowerCase())} placeholder="cedula" className={CLASE_INPUT} />
-        </Campo>
         <Campo etiqueta="Nombre *">
           <input value={d.nombre} onChange={(e) => set("nombre", e.target.value)} className={CLASE_INPUT} />
+        </Campo>
+        <Campo etiqueta={esNuevo ? "Clave (automática, no cambia después)" : "Clave (no cambia)"} error={errorClave}>
+          <input value={clave} disabled className={`${CLASE_INPUT} font-mono`} />
         </Campo>
       </div>
       <Campo etiqueta="Alias (palabras clave para reconocer el archivo)">
@@ -162,20 +168,12 @@ export const DocumentoModal = ({ documento, clavesUsadas, tiposDocumentales, req
       <Campo etiqueta="Palabras de exclusión (descartan el calce)">
         <ChipsInput valores={d.excluir} onChange={(v) => set("excluir", v)} placeholder="anexo…" ariaLabel="Palabras de exclusión" clase="bg-red-50 text-red-700" />
       </Campo>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Campo etiqueta="Tipo documental (validación con IA)">
-          <select value={d.tipoDocumentalCodigo} onChange={(e) => set("tipoDocumentalCodigo", e.target.value)} className={CLASE_INPUT}>
-            <option value="">Sin tipo (solo completitud)</option>
-            {tiposDocumentales.map((t) => <option key={t.codigo} value={t.codigo}>{t.nombre} ({t.codigo})</option>)}
-          </select>
-        </Campo>
-        <Campo etiqueta="Requerimiento (opcional)">
-          <select value={d.requerimientoId} onChange={(e) => set("requerimientoId", e.target.value)} className={CLASE_INPUT}>
-            <option value="">Sin requerimiento</option>
-            {requerimientos.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-          </select>
-        </Campo>
-      </div>
+      <Campo etiqueta="Tipo documental (opcional: campos base que la IA lee)">
+        <select value={d.tipoDocumentalCodigo} onChange={(e) => set("tipoDocumentalCodigo", e.target.value)} className={CLASE_INPUT}>
+          <option value="">Sin tipo</option>
+          {tiposDocumentales.map((t) => <option key={t.codigo} value={t.codigo}>{t.nombre} ({t.codigo})</option>)}
+        </select>
+      </Campo>
       <div className="flex flex-wrap gap-6">
         <Check etiqueta="Obligatorio" checked={d.obligatorio} onChange={(v) => set("obligatorio", v)} />
         <Check etiqueta="Múltiple" checked={d.multiple} onChange={(v) => set("multiple", v)} ayuda="Acepta varios archivos (ej. versiones de ODI)." />

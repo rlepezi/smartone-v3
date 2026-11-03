@@ -16,6 +16,13 @@ jest.mock("../src/repositories/tipoDocumentalRepository", () => ({
 jest.mock("../src/repositories/plantillaEstructuraRepository", () => ({
   getActiva: jest.fn().mockResolvedValue(null),
 }));
+// Mapeo documental: por defecto el requerimiento está ubicado en un nodo
+// sin tipo documental (las reglas dependen del mapeo).
+const mockNodoBase = {nodoClave: "seccion", estado: "activo", alias: [],
+  multiple: false, datosSensibles: false, tipoDocumentalCodigo: null};
+jest.mock("../src/services/mapeoRequerimientoService", () => ({
+  nodosDeRequerimiento: jest.fn().mockResolvedValue([mockNodoBase]),
+}));
 jest.mock("../src/repositories/reglaIARepository", () => ({
   getById: jest.fn(), getByIds: jest.fn(),
 }));
@@ -58,6 +65,13 @@ const modeloReglasIAService =
 const plantillaEstructuraRepository =
     require("../src/repositories/plantillaEstructuraRepository");
 const servicio = require("../src/services/requerimientoReglaIAService");
+const mapeoRequerimientoService =
+    require("../src/services/mapeoRequerimientoService");
+// Nodo del mapeo con el tipo de la cédula (el tipo sale de los nodos).
+const NODO_CI = {nodoClave: "personal/ci", estado: "activo", alias: ["ci"],
+  multiple: false, datosSensibles: true, tipoDocumentalCodigo: "CEDULA_CL",
+  ruta: "Personal › Cédula", tipoNodo: "documentoEntidad", nivel: "persona",
+  habilitado: true};
 
 const ACTOR = {uid: "u1", rol: "superadmin", email: "demo@ejemplo.cl"};
 const CEDULA = {id: "t-ci", codigo: "CEDULA_CL", nombre: "Cédula",
@@ -105,13 +119,11 @@ describe("vincular reglas", () => {
     expect(r.camposIA.map((c) => c.clave)).toEqual(["fechaEmision", "titulo"]);
   });
 
-  it("el tipo sale del documento de la plantilla vinculado y sus campos " +
-      "se suman a los de las reglas", async () => {
+  it("el tipo sale del nodo vinculado en el mapeo y sus campos se suman " +
+      "a los de las reglas", async () => {
     req = {...req, tipoDocumentalId: null};
-    plantillaEstructuraRepository.getActiva.mockResolvedValueOnce({
-      secciones: [{clave: "personal", tipo: "entidades", entidad: "persona",
-        documentos: [{clave: "ci", nombre: "Cédula",
-          tipoDocumentalCodigo: "CEDULA_CL", requerimientoId: "r1"}]}]});
+    mapeoRequerimientoService.nodosDeRequerimiento
+        .mockResolvedValueOnce([NODO_CI]).mockResolvedValueOnce([NODO_CI]);
     requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([
       {id: "v9", requerimientoId: "r1", reglaId: "g-emi", orden: 1,
         severidad: "bloqueante", parametros: {}, activa: true}]);
@@ -268,11 +280,14 @@ describe("E4: campos adicionales y Documento legible", () => {
   beforeEach(() => {
     req = {...req, tipoDocumentalId: null};
     plantillaEstructuraRepository.getActiva.mockResolvedValue(PLANTILLA);
+    mapeoRequerimientoService.nodosDeRequerimiento.mockResolvedValue([NODO_CI]);
     requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([]);
     reglaIARepository.getByIds.mockResolvedValue([]);
   });
   afterEach(() => {
     plantillaEstructuraRepository.getActiva.mockResolvedValue(null);
+    mapeoRequerimientoService.nodosDeRequerimiento
+        .mockResolvedValue([mockNodoBase]);
   });
 
   it("sin campos propios hereda los del tipo de la plantilla; al guardar " +
@@ -325,5 +340,39 @@ describe("E4: campos adicionales y Documento legible", () => {
     expect(requerimientoReglaRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({parametros: {umbral: 65}}));
     tipoDocumentalRepository.list.mockResolvedValue([CEDULA]);
+  });
+});
+
+describe("Reglas dependen del Mapeo documental", () => {
+  afterEach(() => {
+    mapeoRequerimientoService.nodosDeRequerimiento
+        .mockResolvedValue([mockNodoBase]);
+  });
+
+  it("sin nodo vinculado no se pueden agregar reglas ni avanzar el estado",
+      async () => {
+        mapeoRequerimientoService.nodosDeRequerimiento.mockResolvedValue([]);
+        requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([]);
+        reglaIARepository.getByIds.mockResolvedValue([]);
+        const config = await servicio.obtener("r1", ACTOR);
+        expect(config.requiereMapeo).toBe(true);
+        await expect(servicio.agregarRegla("r1", {reglaId: "g-rut"}, ACTOR))
+            .rejects.toMatchObject({status: 409,
+              message: expect.stringMatching(/Mapeo documental/)});
+        await expect(servicio.cambiarEstadoIA("r1", "en_prueba", ACTOR))
+            .rejects.toMatchObject({status: 409});
+      });
+
+  it("lo que la IA lee sale de los nodos: alias (unión), múltiple y " +
+      "sensible", async () => {
+    mapeoRequerimientoService.nodosDeRequerimiento.mockResolvedValue([
+      NODO_CI, {...mockNodoBase, nodoClave: "otra", alias: ["cedula"],
+        multiple: true}]);
+    requerimientoReglaRepository.listByRequerimiento.mockResolvedValue([]);
+    reglaIARepository.getByIds.mockResolvedValue([]);
+    const config = await servicio.obtener("r1", ACTOR);
+    expect(config.requiereMapeo).toBe(false);
+    expect(config.mapeo).toMatchObject({alias: ["ci", "cedula"],
+      multiple: true, sensible: true, tiposDocumentales: ["CEDULA_CL"]});
   });
 });

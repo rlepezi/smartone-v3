@@ -9,7 +9,7 @@ import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import { ordenarPerfilesParticipacion } from "../../utils/ordenPerfiles";
 import { Tabs } from "../shared/Tabs";
 import { ReglasIARequerimiento } from "./reglas-ia/ReglasIARequerimiento";
-import { CoberturaMapeoRequerimiento } from "./reglas-ia/UbicacionMapeo";
+import { UbicacionNodosRequerimiento } from "./reglas-ia/UbicacionMapeo";
 
 const CLASE_INPUT = "w-full px-3.5 py-2.5 bg-gray-50/50 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all";
 const CLASE_LABEL = "block text-xs font-semibold text-gray-700 mb-1.5";
@@ -231,13 +231,7 @@ export const RequerimientoModal = ({
         )}
         {pestana === "reglas" && conReglasIA ? (
           <div className="flex-1 min-h-0 overflow-y-auto p-5">
-            <ReglasIARequerimiento requerimientoId={requerimiento.id}
-              ubicacion={tipoEntidad === "empresa" ? (
-                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1.5">
-                  <p className="text-xs font-bold text-carbon-dark">Ubicación en el mapeo documental</p>
-                  <CoberturaMapeoRequerimiento mandanteId={mandante.id} requerimientoId={requerimiento.id} />
-                </div>
-              ) : null} />
+            <ReglasIARequerimiento requerimientoId={requerimiento.id} />
           </div>
         ) : (
         <form onSubmit={alEnviar} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
@@ -262,22 +256,11 @@ export const RequerimientoModal = ({
               <p className="text-[11px] text-slate-400 mt-1">Heredado de la pestaña seleccionada</p>
             </div>
 
-            {/* Empresa: dónde está ubicado en las carpetas mapeadas (Mapeo documental). Personas y
-                maquinarias: por patrón aprendido (E5). */}
-            {tipoEntidad === "empresa" ? (
+            {/* Ubicación: nodos de la plantilla vinculados en el Mapeo documental (solo lectura). */}
+            {requerimiento?.id ? <UbicacionNodosRequerimiento requerimientoId={requerimiento.id} /> : (
               <div>
                 <label className={CLASE_LABEL}>Ubicación en el mapeo documental</label>
-                {requerimiento?.id
-                  ? <CoberturaMapeoRequerimiento mandanteId={mandante.id} requerimientoId={requerimiento.id} />
-                  : <p className="text-[11px] text-slate-400">Se verá al ubicarlo en Configuración › Inteligencia Artificial › Mapeo documental.</p>}
-              </div>
-            ) : (
-              <div>
-                <label className={CLASE_LABEL}>Ubicación del documento</label>
-                <p className="text-[11px] text-slate-500">
-                  En la carpeta de cada {tipoEntidad === "persona" ? "persona" : "maquinaria"}, el archivo se ubica por patrón aprendido:
-                  al elegirlo en el panel de evaluación, «Recordar» hace que la próxima vez (y en la revisión en lote) se ubique solo.
-                </p>
+                <p className="text-[11px] text-slate-400">Se define en Configuración › Inteligencia Artificial › Mapeo documental, vinculando el requerimiento a un nodo de la plantilla.</p>
               </div>
             )}
 

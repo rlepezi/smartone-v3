@@ -13,29 +13,37 @@ import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "../estilos";
 import { ListaCarpetasFuente } from "./ListaCarpetasFuente";
 import { MapeoCarpeta } from "./MapeoCarpeta";
 
-// Pestaña "Mapeo documental" (superadmin y evaluador): el árbol REAL de cada carpeta de empresa de
-// la fuente documental del Mandante y la asignación manual de qué carpeta o archivo cumple cada
-// requerimiento de nivel Empresa, más la carpeta del personal y la de maquinarias.
-//  - Columna izquierda: subcarpetas de primer nivel de la fuente (registradas o no).
-//  - Centro y derecha: árbol de la carpeta elegida (por niveles) y sus requerimientos.
-// La plantilla de estructura (que el motor de Revisiones IA aún usa) queda como "Plantilla anterior"
-// (`plantillaAnterior`), solo para superadmin, con su comportamiento de siempre.
-export const TabMapeoDocumental = ({ plantillaAnterior = false }) => {
+// Pestaña "Mapeo documental": la PLANTILLA DE ESTRUCTURA del Mandante (TabEstructura), única fuente
+// de ubicación: sus nodos (secciones, archivos sueltos y documentos de entidad) se reconocen por
+// alias y cada requerimiento se ubica vinculándolo a uno o más nodos. Edita solo superadmin.
+// El mapeo anterior por carpeta real (`mapeoAnterior`, ?vista=carpetas) queda en solo lectura para
+// superadmin y evaluador; se retira en E7.
+export const TabMapeoDocumental = ({ mapeoAnterior = false }) => {
   const { profile } = useAuth();
   const esSuperadmin = profile?.rol === "superadmin";
-  if (plantillaAnterior) {
+  const veAnterior = ["superadmin", "evaluador"].includes(profile?.rol);
+  if (mapeoAnterior && veAnterior) {
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span className="mr-auto">En desuso: será reemplazada por el mapeo documental. El motor de Revisiones IA aún la usa.</span>
-          <Link to="/configuracion/ia?tab=mapeo" className={CLASE_SECUNDARIO}><ArrowLeft className="w-3.5 h-3.5" /> Volver a Mapeo documental</Link>
+          <span className="mr-auto">Mapeo anterior por carpeta real: solo lectura. La ubicación ahora se define en la plantilla (Mapeo documental).</span>
+          <Link to="/configuracion/ia?tab=mapeo" className={CLASE_SECUNDARIO}><ArrowLeft className="w-3.5 h-3.5" /> Volver al Mapeo documental</Link>
         </div>
-        {esSuperadmin ? <TabEstructura /> : <p className="text-xs text-slate-500">Solo un superadmin puede ver la plantilla anterior.</p>}
+        <MapeoDocumental usuarioId={profile?.uid} esSuperadmin={esSuperadmin} />
       </div>
     );
   }
-  return <MapeoDocumental usuarioId={profile?.uid} esSuperadmin={esSuperadmin} />;
+  return (
+    <div className="space-y-3">
+      {veAnterior && (
+        <div className="flex justify-end">
+          <Link to="/configuracion/ia?tab=mapeo&vista=carpetas" className="text-xs font-bold text-slate-500 hover:text-primary hover:underline">Mapeo anterior por carpeta (solo lectura)</Link>
+        </div>
+      )}
+      <TabEstructura />
+    </div>
+  );
 };
 
 const MapeoDocumental = ({ usuarioId, esSuperadmin }) => {
@@ -108,9 +116,7 @@ const MapeoDocumental = ({ usuarioId, esSuperadmin }) => {
           <div className="w-full max-w-sm"><CampoMandante contexto={contexto} conFoco={false} /></div>
         )}
         {modo === "ninguno" && <CampoMandante contexto={contexto} />}
-        {esSuperadmin && (
-          <Link to="/configuracion/ia?tab=mapeo&vista=plantilla" className="ml-auto text-xs font-bold text-slate-500 hover:text-primary hover:underline">Plantilla anterior</Link>
-        )}
+
       </div>
 
       {!mandanteId ? (

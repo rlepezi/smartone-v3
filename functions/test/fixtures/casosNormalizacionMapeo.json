@@ -92,6 +92,34 @@
         "identificadorRecurso": "ABCD12"
       },
       "esperado": "licencia"
+    },
+    {
+      "entrada": "02 -  Listado del personal.",
+      "opciones": {
+        "archivo": false
+      },
+      "esperado": "listado del personal"
+    },
+    {
+      "entrada": "2) Listado  del Personal",
+      "opciones": {
+        "archivo": false
+      },
+      "esperado": "listado del personal"
+    },
+    {
+      "entrada": "03. Listado del personal;",
+      "opciones": {
+        "archivo": false
+      },
+      "esperado": "listado del personal"
+    },
+    {
+      "entrada": "Certificado de Mutualidad!",
+      "opciones": {
+        "archivo": false
+      },
+      "esperado": "certificado de mutualidad"
     }
   ],
   "similitud": [

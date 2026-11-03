@@ -44,4 +44,16 @@ export const plantillaEstructuraService = {
     const res = await apiClient(`/plantillas-estructura/${id}/desactivar`, { method: "POST" });
     return res.data;
   },
+
+  // Nodos de la plantilla activa: { plantillaId, version, nodos: [{ nodoClave, tipoNodo, ruta, nivel, estado, ... }] } | null.
+  async nodos(mandanteId) {
+    const res = await apiClient(`/plantillas-estructura/nodos?mandanteId=${encodeURIComponent(mandanteId)}`);
+    return res.data;
+  },
+
+  // Duplica la plantilla hacia otro Mandante sin plantilla activa (parte en v1, sin vínculos).
+  async duplicar(id, mandanteDestinoId) {
+    const res = await apiClient(`/plantillas-estructura/${id}/duplicar`, { method: "POST", body: { mandanteDestinoId } });
+    return res.data;
+  },
 };

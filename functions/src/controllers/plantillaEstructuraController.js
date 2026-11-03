@@ -125,4 +125,25 @@ class PlantillaEstructuraController {
   }
 }
 
-module.exports = new PlantillaEstructuraController();
+/**
+ * Responde con el resultado de una operación del servicio.
+ * @param {Function} operacion (req) => Promise.
+ * @return {Function} Middleware Express.
+ */
+const responder = (operacion) => async (req, res, next) => {
+  try {
+    res.status(200).json({data: await operacion(req)});
+  } catch (error) {
+    next(error);
+  }
+};
+
+const controlador = new PlantillaEstructuraController();
+// Nodos de la plantilla activa del Mandante (mapeo y resolvedor).
+controlador.nodos = responder((req) => plantillaEstructuraService.nodos(
+    req.query.mandanteId, req.user));
+// Duplica la plantilla hacia otro Mandante (sin plantilla activa).
+controlador.duplicar = responder((req) => plantillaEstructuraService.duplicar(
+    req.params.id, (req.body || {}).mandanteDestinoId, req.user));
+
+module.exports = controlador;

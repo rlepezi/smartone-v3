@@ -86,6 +86,37 @@ class PlantillaEstructuraRepository {
     });
     return this.getById(id);
   }
+
+  /**
+   * Guarda la copia de una versión (subcolección versiones/{n}) para
+   * auditoría. Idempotente: la misma versión se sobrescribe con lo mismo.
+   * @param {string} id Plantilla.
+   * @param {Object} plantilla Plantilla (con version).
+   * @param {Object} autor {uid, nombre}.
+   * @return {Promise<void>}
+   */
+  async guardarVersion(id, plantilla, autor) {
+    const version = Number(plantilla.version || 1);
+    await db.collection(COLLECTION).doc(id).collection("versiones")
+        .doc(String(version)).set({
+          version, nombre: plantilla.nombre,
+          profundidadSubcontratos: plantilla.profundidadSubcontratos ?? 1,
+          secciones: plantilla.secciones || [], guardadaPor: autor || null,
+          guardadaAt: FieldValue.serverTimestamp(),
+        });
+  }
+
+  /**
+   * true si la versión ya tiene copia.
+   * @param {string} id Plantilla.
+   * @param {number} version Versión.
+   * @return {Promise<boolean>} Existe.
+   */
+  async existeVersion(id, version) {
+    const doc = await db.collection(COLLECTION).doc(id).collection("versiones")
+        .doc(String(version)).get();
+    return doc.exists;
+  }
 }
 
 module.exports = new PlantillaEstructuraRepository();

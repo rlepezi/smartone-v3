@@ -1053,6 +1053,41 @@
         {"fieldPath": "rol", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "mapeoRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "requerimientoId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "mapeoRequerimientos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "nodoClave", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "ubicacionesExpediente",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "expedienteId", "order": "ASCENDING"},
+        {"fieldPath": "activo", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "aliasSugeridos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

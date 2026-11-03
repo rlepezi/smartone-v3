@@ -568,6 +568,7 @@ export const ExpedienteDetailPage = () => {
       mandanteId={expediente?.mandanteId}
       proyecto={proyecto}
       puedeDefinirReglas={profile?.rol === "superadmin"}
+      puedeConfirmarUbicacion={["superadmin", "evaluador"].includes(profile?.rol)}
       onIrADocumentacion={() => { setRequisitosAbiertos(false); cambiarNivel("documentacion"); }}
       onCarpetaAsignada={() => cargarDatos(true)}
     />

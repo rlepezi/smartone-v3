@@ -2,14 +2,16 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Bot, CheckCircle2, FileText, KeyRound, Loader2, PlayCircle, RefreshCw, Square, XCircle } from "lucide-react";
 import { useCarpetaExpediente } from "../../../hooks/useCarpetaExpediente";
-import { listarDirectorio, obtenerArchivo } from "../../../services/fuentes/carpetaLocal";
+import { obtenerArchivo } from "../../../services/fuentes/carpetaLocal";
 import { expedienteService } from "../../../services/expedienteService";
 import { revisionRequerimientoIAService } from "../../../services/revisionRequerimientoIAService";
-import { patronService } from "../../../services/patronService";
+import { ubicacionExpedienteService } from "../../../services/ubicacionExpedienteService";
+import { carpetaDeEntidades, lectorCarpeta, resolverRequerimiento } from "../../../utils/resolverEnExpediente";
 import { carpetaUnicaDe } from "../../../utils/carpetasSujetos";
 import { prepararPiezasIA } from "../../../utils/revisionIAArchivos";
 import {
-  ENTIDADES_LOTE, MOTIVOS_LOTE, claveSujeto, contarPaginasPdf, mimeDe, planLote, resumenPlan,
+  ENTIDADES_LOTE, MOTIVOS_LOTE, ORIGENES_UBICACION, claveResolucion, claveSujeto, contarPaginasPdf, mimeDe, planLote,
+  resumenPlan, sujetoDeInstancia,
 } from "../../../utils/loteRevision";
 import { formatUsd } from "../../configuracion-ia/estilos";
 
@@ -18,34 +20,36 @@ const PRIMARIO = `${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`;
 const SECUNDARIO = `${CLASE_BOTON} border border-slate-200 bg-white text-carbon-dark hover:bg-slate-50`;
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
 
-// Lee las carpetas que necesita el plan: las ubicaciones mapeadas de Empresa y la carpeta de cada
-// persona o maquinaria (la asignada; si no tiene, la única con su nombre o patente dentro de la
-// carpeta del personal o de maquinarias). No escribe nada.
-const leerContenidos = async (handle, mapeo, sujetos) => {
-  const contenidos = new Map();
-  const leer = async (ruta) => {
-    if (contenidos.has(ruta)) return contenidos.get(ruta);
-    const l = await listarDirectorio(handle, ruta).catch(() => null);
-    contenidos.set(ruta, l ? { archivos: l.archivos || [], carpetas: l.carpetas || [] } : null);
-    return contenidos.get(ruta);
+// Carpeta de cada persona o maquinaria: la asignada o, si no tiene, la única con su nombre o
+// patente dentro de la sección de entidades de la plantilla (por alias u override). No escribe.
+const carpetasDeSujetos = async ({ config, sujetos, leer, cache }) => {
+  const raices = {
+    persona: (await carpetaDeEntidades({ config, entidad: "persona", leer, cache }))?.rutaReal || null,
+    recurso: (await carpetaDeEntidades({ config, entidad: "maquinaria", leer, cache }))?.rutaReal || null,
   };
-  for (const entradas of Object.values(mapeo?.requerimientos || {})) {
-    for (const e of entradas || []) {
-      if (e.tipo !== "archivo") await leer(e.ruta);
-    }
-  }
   const conCarpeta = new Map();
   for (const s of sujetos) {
     let carpeta = s.carpeta || null;
-    if (!carpeta) {
-      const raiz = s.tipo === "persona" ? mapeo?.carpetaPersonas : mapeo?.carpetaRecursos;
-      const l = raiz ? await leer(raiz) : null;
+    if (!carpeta && raices[s.tipo]) {
+      const l = await leer(raices[s.tipo]);
       carpeta = l ? carpetaUnicaDe(l.carpetas, s.tipo, s)?.ruta || null : null;
     }
-    if (carpeta) await leer(carpeta);
     conCarpeta.set(claveSujeto(s.tipo, s.id), { ...s, carpeta });
   }
-  return { contenidos, sujetos: conCarpeta };
+  return conCarpeta;
+};
+
+// Ubicación de cada requisito según el Mapeo documental (nodos aplicables del expediente).
+const resolverRequisitos = async ({ instancias, config, sujetos, leer, cache }) => {
+  const resoluciones = new Map();
+  for (const i of instancias) {
+    const sujeto = sujetoDeInstancia(i);
+    const tipo = i.personaId ? "persona" : i.recursoId ? "recurso" : null;
+    const carpetaSujeto = tipo ? sujetos.get(claveSujeto(tipo, sujeto))?.carpeta || null : null;
+    resoluciones.set(claveResolucion(i.requerimientoId, sujeto),
+      await resolverRequerimiento({ config, requerimientoId: i.requerimientoId, sujeto, carpetaSujeto, leer, cache }));
+  }
+  return resoluciones;
 };
 
 // Páginas de un PDF (para estimar el costo); null si no se pueden contar.
@@ -70,8 +74,8 @@ const Modal = ({ titulo, children, onCerrar }) => createPortal(
   document.body,
 );
 
-// Revisión en lote del expediente (superadmin y evaluador): arma el plan con el mapeo de la Carpeta
-// de empresa y los patrones aprendidos, muestra el resumen con el costo estimado y el límite
+// Revisión en lote del expediente (superadmin y evaluador): arma el plan con el Mapeo documental
+// (nodos de la plantilla y overrides del expediente), muestra el resumen con el costo estimado y el límite
 // mensual, y revisa uno por uno con el motor de reglas (cada uno deja una propuesta; la IA nunca
 // evalúa sola). `carpeta`: la Carpeta de empresa resuelta del expediente; `sujetos`: personas y
 // maquinarias activas [{ tipo, id, nombre, apellido, patente, carpeta }].
@@ -92,17 +96,18 @@ export const LoteRevisionExpediente = ({ expediente, usuarioId, carpeta, sujetos
     setPreparando(true);
     setError(null);
     try {
-      const [instancias, estado, patronesPersona, patronesRecurso] = await Promise.all([
+      const [instancias, estado, config] = await Promise.all([
         expedienteService.listarRequerimientos(expediente.id, { estado: "activo" }),
         revisionRequerimientoIAService.estado(expediente.id),
-        patronService.listar({ mandanteId: expediente.mandanteId, ambito: "persona", objetivo: "archivo", estado: "activo" }).catch(() => []),
-        patronService.listar({ mandanteId: expediente.mandanteId, ambito: "recurso", objetivo: "archivo", estado: "activo" }).catch(() => []),
+        ubicacionExpedienteService.config(expediente.id),
       ]);
-      const leidos = await leerContenidos(acceso.handle, carpeta.mapeo, sujetos);
+      const cache = new Map();
+      const leer = lectorCarpeta(acceso.handle, cache);
+      const conCarpeta = await carpetasDeSujetos({ config, sujetos, leer, cache });
+      const resoluciones = await resolverRequisitos({ instancias: instancias || [], config, sujetos: conCarpeta, leer, cache });
       const nuevo = planLote({
         instancias: instancias || [], habilitados: new Set(estado?.requerimientosHabilitados || []),
-        mapeo: carpeta.mapeo, sujetos: leidos.sujetos, contenidos: leidos.contenidos,
-        patrones: [...(patronesPersona || []), ...(patronesRecurso || [])],
+        sujetos: conCarpeta, resoluciones,
       });
       setPlan(nuevo);
       setSeleccion(new Set(nuevo.filter((x) => x.estado === "listo").map((x) => x.instanciaId)));
@@ -215,7 +220,9 @@ export const LoteRevisionExpediente = ({ expediente, usuarioId, carpeta, sujetos
       {resumen && Object.keys(resumen.porMotivo).length > 0 && (
         <p className="text-[11px] text-slate-500">
           Fuera del lote: {Object.entries(resumen.porMotivo).map(([m, n]) => `${MOTIVOS_LOTE[m] || m} (${n})`).join(" · ")}.
-          {resumen.porMotivo.sin_documento ? " Elija esos documentos en el panel de evaluación y use «Recordar»." : ""}
+          {resumen.porMotivo.sin_documento || resumen.porMotivo.ubicacion_ambigua || resumen.porMotivo.ubicacion_no_encontrada
+            ? " Elija esos documentos en el panel de evaluación y confirme su ubicación." : ""}
+          {resumen.porMotivo.sin_ubicacion ? " Los requisitos sin ubicación se vinculan a un nodo en el Mapeo documental." : ""}
         </p>
       )}
 
@@ -230,7 +237,12 @@ export const LoteRevisionExpediente = ({ expediente, usuarioId, carpeta, sujetos
                 <input type="checkbox" disabled={x.estado !== "listo" || ejecutando} checked={seleccion.has(x.instanciaId)}
                   onChange={() => alternar(x.instanciaId)} aria-label={`Incluir ${x.nombre}`} className="mt-0.5 rounded text-primary" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-carbon-dark">{x.nombre}{x.sujetoNombre && <span className="font-normal text-slate-500"> · {x.sujetoNombre}</span>}</p>
+                  <p className="font-semibold text-carbon-dark">
+                    {x.nombre}{x.sujetoNombre && <span className="font-normal text-slate-500"> · {x.sujetoNombre}</span>}
+                    {x.estado === "listo" && x.origen && (
+                      <span className={`${CLASE_BADGE} ml-1.5 align-middle bg-primary-lighter text-primary border-primary/20`}>{ORIGENES_UBICACION[x.origen] || x.origen}</span>
+                    )}
+                  </p>
                   {x.estado === "listo" ? x.archivos.map((a) => (
                     <p key={a.ruta} className="flex items-center gap-1 text-[11px] text-slate-600 min-w-0" title={a.ruta}><FileText className="w-3 h-3 shrink-0 text-slate-400" /><span className="truncate">{a.nombre}</span></p>
                   )) : <span className={`${CLASE_BADGE} mt-0.5 bg-white text-slate-500 border-slate-200`}>{MOTIVOS_LOTE[x.estado] || x.estado}</span>}

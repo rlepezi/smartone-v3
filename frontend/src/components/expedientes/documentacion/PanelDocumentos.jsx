@@ -6,12 +6,12 @@ import {
 import { Link } from "react-router-dom";
 import { useCarpetaExpediente } from "../../../hooks/useCarpetaExpediente";
 import { carpetaEsDe } from "../../../utils/carpetasSujetos";
-import { patronService } from "../../../services/patronService";
-import { archivosPorPatron } from "../../../utils/loteRevision";
+import { ubicacionExpedienteService } from "../../../services/ubicacionExpedienteService";
+import { carpetaDeEntidades, lectorCarpeta, resolverRequerimiento } from "../../../utils/resolverEnExpediente";
 import { listarDirectorio, obtenerArchivo } from "../../../services/fuentes/carpetaLocal";
 import { expedienteService } from "../../../services/expedienteService";
 import { repositorioDocumentalService } from "../../../services/repositorioDocumentalService";
-import { esImagen, esPdf, extensionDe, formatTamano, MAPEO_VACIO } from "../../../utils/repositorioDocumental";
+import { esImagen, esPdf, extensionDe, formatTamano } from "../../../utils/repositorioDocumental";
 import { formatFecha } from "../../../utils/fechas";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO, MENSAJE_SIN_SOPORTE } from "./estilos";
 import { SelectorCarpeta } from "./SelectorCarpeta";
@@ -29,12 +29,13 @@ const BOTON_ICONO = "p-1 rounded text-slate-500 hover:bg-slate-100 hover:text-ca
 // Panel de documentos junto a la evaluación (Empresa, Personas, Recursos): SOLO previsualiza. Muestra
 // la carpeta del contexto dentro del repositorio del expediente, sin subir de ella (E5: solo mapeo
 // documental y patrones; la plantilla ya no se usa aquí):
-//  - Persona / Recurso: su carpetaRelativa (o "Asignar carpeta", que la guarda en su participación).
-//    El documento de cada requerimiento se ubica por patrón aprendido de alta confianza; sin
-//    coincidencia, el evaluador lo elige y puede "Recordar".
-//  - Empresa: la ubicación del requerimiento en el mapeo de la Carpeta de empresa (carpetas y
-//    archivos); sin ubicación, la raíz sin las carpetas del personal y de maquinarias, con el enlace
-//    al Mapeo documental y "Asociar esta carpeta al requerimiento".
+//  - Ubicación de cada requerimiento: SOLO el Mapeo documental (nodos de la plantilla vinculados al
+//    requerimiento): override confirmado en el expediente → alias del nodo; con varias posibles no
+//    elige. Si no resuelve o es ambigua, superadmin y evaluador eligen la carpeta o el archivo y se
+//    guarda un override; si el nombre real no está en los alias, "Sugerir como alias".
+//  - Persona / Recurso: su carpetaRelativa (o "Asignar carpeta", que la guarda en su participación);
+//    si no tiene, se busca por nombre dentro de la sección de entidades de la plantilla.
+//  - Empresa: sin ubicación, la raíz de la carpeta del expediente.
 // Lista ↔ visor: la lista conserva filtro y scroll; el visor navega ‹ › por la lista filtrada.
 // La evaluación de la izquierda sigue usable mientras tanto. Acceso de solo lectura.
 export const PanelDocumentos = (props) => {
@@ -59,30 +60,42 @@ export const PanelDocumentos = (props) => {
 };
 
 const ContenidoPanel = ({
-  expedienteId, mandanteId, repositorio, tipo, sujeto, carpetaSujeto = null, puedeEditar,
-  onIrADocumentacion, onRepositorio, onCarpetaAsignada, empresa = null, carpeta,
-  proyecto = null, puedeDefinirReglas = false, origenCarpeta = null,
+  expedienteId, repositorio, tipo, sujeto, carpetaSujeto = null, puedeEditar,
+  onIrADocumentacion, onCarpetaAsignada, empresa = null, carpeta,
+  proyecto = null, puedeDefinirReglas = false, origenCarpeta = null, puedeConfirmarUbicacion = false,
 }) => {
   const {
     expandible, expandido, alternarExpandido, informarArchivo, archivoAbierto, requerimientoActivo, abrirRequerimiento,
   } = usePanelDocumentos();
-  const mapeo = repositorio?.mapeo || MAPEO_VACIO;
-
-  // Persona / Recurso: patrones aprendidos de archivos (para ubicar el documento de cada
-  // requerimiento). Sin permiso o sin patrones, el evaluador elige el archivo.
-  const [patrones, setPatrones] = useState({ clave: null, lista: [] });
-  const [versionPatrones, setVersionPatrones] = useState(0);
-  const clavePatrones = tipo !== "empresa" && mandanteId ? `${mandanteId}|${tipo}|${versionPatrones}` : null;
+  // Configuración del Mapeo documental para este expediente (nodos, aplicables y overrides).
+  const [config, setConfig] = useState(null);
+  const [versionConfig, setVersionConfig] = useState(0);
   useEffect(() => {
-    if (!clavePatrones) return undefined;
     let vigente = true;
-    patronService.listar({ mandanteId, ambito: tipo, objetivo: "archivo", estado: "activo" })
-      .then((l) => { if (vigente) setPatrones({ clave: clavePatrones, lista: l || [] }); })
-      .catch(() => { if (vigente) setPatrones({ clave: clavePatrones, lista: [] }); });
+    ubicacionExpedienteService.config(expedienteId)
+      .then((c) => { if (vigente) setConfig(c); })
+      .catch(() => { if (vigente) setConfig(null); });
     return () => { vigente = false; };
-  }, [clavePatrones, mandanteId, tipo]);
-  const patronesActuales = patrones.clave === clavePatrones ? patrones.lista : [];
+  }, [expedienteId, versionConfig]);
   const local = repositorio?.tipo === "local";
+  // Resoluciones por clave (cada una se pide una vez; al confirmar se vuelven a pedir).
+  const [resoluciones, setResoluciones] = useState({});
+  const pedidas = useRef(new Set());
+  const pedirResolucion = (clave, entrada) => {
+    if (!clave || !config || !carpeta.lista || pedidas.current.has(clave)) return;
+    pedidas.current.add(clave);
+    const cache = new Map();
+    resolverRequerimiento({ config, ...entrada, leer: lectorCarpeta(carpeta.handle, cache), cache })
+      .then((r) => setResoluciones((x) => ({ ...x, [clave]: r })))
+      .catch(() => setResoluciones((x) => ({ ...x, [clave]: { estado: "no_encontrada", archivos: [], candidatos: [] } })));
+  };
+  const [propuestaAlias, setPropuestaAlias] = useState(null);
+  const [confirmando, setConfirmando] = useState(false);
+  const recargarUbicacion = () => {
+    pedidas.current.clear();
+    setResoluciones({});
+    setVersionConfig((v) => v + 1);
+  };
 
   // Empresa: requerimiento cuyo documento se busca (solo para ubicar su carpeta).
   const [requerimientos, setRequerimientos] = useState([]);
@@ -96,13 +109,13 @@ const ContenidoPanel = ({
       .catch(() => { if (vigente) setRequerimientos([]); });
     return () => { vigente = false; };
   }, [tipo, expedienteId]);
-  // Ubicación del requerimiento en el mapeo: la primera carpeta mapeada (o la carpeta del primer
-  // archivo mapeado) y, si hay archivos mapeados, solo esos son candidatos.
-  const entradasReq = requerimientoId ? (mapeo.requerimientos?.[requerimientoId] || []) : [];
+  // Empresa: ubicación del requerimiento en el Mapeo documental (sus nodos, sobre esta carpeta).
+  const claveEmpresa = tipo === "empresa" && requerimientoId && config ? `e|${requerimientoId}|${versionConfig}` : null;
+  const resolEmpresa = claveEmpresa ? resoluciones[claveEmpresa] || null : null;
+  const resolviendo = Boolean(claveEmpresa) && !resolEmpresa;
   const padre = (r) => r.split("/").slice(0, -1).join("/");
-  const carpetaMapeada = entradasReq.find((e) => e.tipo !== "archivo")?.ruta || null;
-  const archivosMapeados = entradasReq.filter((e) => e.tipo === "archivo").map((e) => e.ruta);
-  const rutaRequerimiento = carpetaMapeada ?? (archivosMapeados.length ? padre(archivosMapeados[0]) : null);
+  const archivosMapeados = resolEmpresa?.estado === "resuelta" ? resolEmpresa.archivos.map((a) => a.ruta) : [];
+  const rutaRequerimiento = resolviendo ? null : archivosMapeados.length ? padre(archivosMapeados[0]) : null;
 
   // Persona / Recurso: si no tiene carpeta, o la asignada no es la suya (p. ej. la carpeta de todo el
   // personal), se busca por su nombre (o patente) entre las subcarpetas de la asignada, de la
@@ -135,6 +148,12 @@ const ContenidoPanel = ({
   const scrollGuardado = useRef(0);
 
   useEffect(() => {
+    pedirResolucion(claveEmpresa, { requerimientoId, sujeto: "empresa" });
+    // pedirResolucion depende de la clave (requerimiento y versión de la configuración).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveEmpresa, carpeta.lista]);
+
+  useEffect(() => {
     if (!local || !carpeta.lista || ruta === null || ruta === undefined) return undefined;
     let vigente = true;
     listarDirectorio(carpeta.handle, ruta)
@@ -150,7 +169,10 @@ const ContenidoPanel = ({
     const subcarpetasSuyas = async (r) => ((await listarDirectorio(carpeta.handle, r).catch(() => null))?.carpetas || [])
       .filter((c) => carpetaEsDe(c, tipo, sujeto));
     (async () => {
-      const raizMapeo = (tipo === "persona" ? mapeo.carpetaPersonas : mapeo.carpetaRecursos) || null;
+      const cache = new Map();
+      const entidades = config ? await carpetaDeEntidades({ config, entidad: tipo === "persona" ? "persona" : "maquinaria",
+        leer: lectorCarpeta(carpeta.handle, cache), cache }) : null;
+      const raizMapeo = entidades?.rutaReal || null;
       const raices = [...new Set([carpetaSujeto, raizMapeo].filter(Boolean))];
       for (const r of raices) {
         const encontradas = await subcarpetasSuyas(r);
@@ -182,9 +204,9 @@ const ContenidoPanel = ({
       }
     });
     return () => { vigente = false; };
-    // esSuya y mapeo dependen de sujeto/carpetaSujeto/repositorio, ya en las dependencias.
+    // esSuya depende de sujeto/carpetaSujeto, ya en las dependencias; config, de su versión.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, sujeto?.id, carpetaSujeto, local, carpeta.lista, carpeta.handle, repositorio]);
+  }, [tipo, sujeto?.id, carpetaSujeto, local, carpeta.lista, carpeta.handle, repositorio, Boolean(config)]);
 
   // Archivo del visor (lectura perezosa; un PDF de 11 MB no bloquea la columna de requisitos).
   useEffect(() => {
@@ -209,9 +231,7 @@ const ContenidoPanel = ({
 
   const texto = filtro.trim().toLowerCase();
   const enLista = listado && listado !== "no_existe" ? listado : { carpetas: [], archivos: [] };
-  // En Empresa, la raíz no muestra las carpetas del personal ni de maquinarias.
-  const excluidas = tipo === "empresa" ? new Set([mapeo.carpetaPersonas, mapeo.carpetaRecursos].filter(Boolean)) : new Set();
-  const subcarpetas = enLista.carpetas.filter((c) => !excluidas.has(c.ruta) && (!texto || c.nombre.toLowerCase().includes(texto)));
+  const subcarpetas = enLista.carpetas.filter((c) => !texto || c.nombre.toLowerCase().includes(texto));
   const archivos = enLista.archivos.filter((a) => !texto || a.nombre.toLowerCase().includes(texto));
   const indiceVisor = visor ? archivos.findIndex((a) => a.ruta === visor) : -1;
 
@@ -235,18 +255,49 @@ const ContenidoPanel = ({
       setError(err.message || "No se pudo asignar la carpeta.");
     }
   };
-  const asociarRequerimiento = async () => {
+  // Override: la carpeta o el archivo real de un nodo en ESTE expediente. Si el nombre real no está
+  // en los alias del nodo, se ofrece "Sugerir como alias".
+  const confirmarUbicacion = async (nodoClave, sujetoClave, rutaReal) => {
+    if (!nodoClave || !rutaReal) return;
     setError(null);
+    setConfirmando(true);
     try {
-      const datos = await repositorioDocumentalService.actualizar(expedienteId, {
-        mapeo: { ...mapeo, requerimientos: { ...(mapeo.requerimientos || {}), [requerimientoId]: ruta } },
-      });
-      onRepositorio?.(datos);
+      const r = await ubicacionExpedienteService.confirmarOverride(expedienteId, { nodoClave, sujeto: sujetoClave, rutaReal });
+      setPropuestaAlias(r?.propuestaAlias || null);
       setExplorarRaiz(false);
+      recargarUbicacion();
     } catch (err) {
-      setError(err.message || "No se pudo asociar la carpeta.");
+      setError(err.message || "No se pudo confirmar la ubicación.");
+    } finally {
+      setConfirmando(false);
     }
   };
+  const sugerirAlias = async () => {
+    const p = propuestaAlias;
+    setPropuestaAlias(null);
+    if (!p) return;
+    try {
+      const s = await ubicacionExpedienteService.sugerirAlias({ expedienteId, nodoClave: p.nodoClave, alias: p.alias });
+      setAvisoAlias(s.estado === "aprobado" ? `Alias «${p.alias}» agregado a «${p.nodo}».` : `Alias «${p.alias}» sugerido: queda pendiente de aprobación del superadmin.`);
+      recargarUbicacion();
+    } catch (err) {
+      setError(err.message || "No se pudo sugerir el alias.");
+    }
+  };
+  const [avisoAlias, setAvisoAlias] = useState(null);
+  const bloqueAlias = (propuestaAlias || avisoAlias) ? (
+    <div className="p-2 rounded-lg bg-primary-lighter border border-primary/20 text-[11px] text-carbon-dark space-y-1.5">
+      {propuestaAlias ? (
+        <>
+          <p>«<b>{propuestaAlias.alias}</b>» no está en los alias de «{propuestaAlias.nodo}». ¿Sugerirlo para que se encuentre solo en otros expedientes?</p>
+          <div className="flex gap-1.5">
+            <button type="button" onClick={sugerirAlias} className={CLASE_PRIMARIO}>Sugerir como alias</button>
+            <button type="button" onClick={() => setPropuestaAlias(null)} className={CLASE_SECUNDARIO}>No</button>
+          </div>
+        </>
+      ) : <p className="font-semibold text-sage-darker">{avisoAlias}</p>}
+    </div>
+  ) : null;
 
   // ── Modo requerimiento (ícono IA de un requisito de la planilla) ──
   // Ubica el documento: en Empresa, por el mapeo (sus archivos mapeados o los de su carpeta); en
@@ -263,13 +314,23 @@ const ContenidoPanel = ({
       setExplorarRaiz(false);
     }
   }
-  const listoParaUbicar = Boolean(activo) && Boolean(listado) && listado !== "no_existe" && ruta === base;
-  // Empresa: con archivos mapeados, esos; con solo una carpeta mapeada, todos sus archivos; sin
-  // ubicación, ninguno. Persona/Recurso: los que calzan con un patrón aprendido.
+  // Persona / Recurso: el documento del requerimiento activo en la carpeta del sujeto (nodos de
+  // entidad del mapeo).
+  const claveSujetoUbic = tipo !== "empresa" && sujeto && reqActivoId && carpetaDelSujeto && config
+    ? `s|${reqActivoId}|${sujeto.id}|${carpetaDelSujeto}|${versionConfig}` : null;
+  const resolSujeto = claveSujetoUbic ? resoluciones[claveSujetoUbic] || null : null;
+  useEffect(() => {
+    pedirResolucion(claveSujetoUbic, { requerimientoId: reqActivoId, sujeto: sujeto?.id, carpetaSujeto: carpetaDelSujeto });
+    // Los datos están incluidos en la clave.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveSujetoUbic, carpeta.lista]);
+  const esperandoSujeto = Boolean(claveSujetoUbic) && !resolSujeto;
+
+  const listoParaUbicar = Boolean(activo) && Boolean(listado) && listado !== "no_existe" && ruta === base && !resolviendo && !esperandoSujeto;
+  // Empresa: los archivos ubicados por el mapeo. Persona/Recurso: los del nodo de entidad.
   const candidatos = !listoParaUbicar ? [] : tipo === "empresa"
-    ? (archivosMapeados.length ? enLista.archivos.filter((a) => archivosMapeados.includes(a.ruta))
-      : carpetaMapeada ? enLista.archivos : [])
-    : archivosPorPatron({ archivos: enLista.archivos, patrones: patronesActuales, requerimientoId: reqActivoId, tipo, sujeto });
+    ? enLista.archivos.filter((a) => archivosMapeados.includes(a.ruta))
+    : (resolSujeto?.estado === "resuelta" ? resolSujeto.archivos : []);
   const claveUbicacion = listoParaUbicar ? `${idActivo}|${base}` : null;
   const [ubicacionHecha, setUbicacionHecha] = useState(null);
   if (claveUbicacion && claveUbicacion !== ubicacionHecha) {
@@ -280,35 +341,74 @@ const ContenidoPanel = ({
   // Empresa: dónde está el documento del requerimiento (ubicación en el mapeo documental o "Asociar
   // esta carpeta"). En modo requerimiento se muestran en el encabezado, entre el requerimiento y sus
   // reglas (el flujo: qué requisito → dónde está → qué revisar).
+  const nodoEmpresa = resolEmpresa?.nodoClave || null;
   const controlesCarpetaEmpresa = tipo === "empresa" && requerimientoId ? (
     <>
-      {entradasReq.length > 0 && !explorarRaiz && (
+      {resolviendo && <p className="text-[11px] text-slate-400">Buscando la ubicación en el mapeo documental...</p>}
+      {resolEmpresa?.estado === "resuelta" && !explorarRaiz && (
         <div className="text-[11px] text-slate-500 space-y-0.5">
-          <p>Ubicación en el mapeo documental:{" "}
-            {puedeEditar && <button type="button" onClick={() => setExplorarRaiz(true)} className="font-bold text-primary hover:underline">Explorar la carpeta</button>}
+          <p>{resolEmpresa.origen === "override" ? "Ubicación confirmada en este expediente" : "Ubicación por el mapeo documental"}:{" "}
+            <button type="button" onClick={() => setExplorarRaiz(true)} className="font-bold text-primary hover:underline">Explorar la carpeta</button>
           </p>
-          {entradasReq.map((e) => (
-            <p key={e.ruta} className="flex items-center gap-1 text-carbon-dark min-w-0" title={e.ruta}>
-              {e.tipo === "archivo" ? <FileText className="w-3 h-3 shrink-0 text-slate-400" /> : <Folder className="w-3 h-3 shrink-0 text-primary" />}
-              <b className="truncate">{e.ruta}</b>
+          {resolEmpresa.resultados.filter((x) => x.r.estado === "resuelta").map((x) => (
+            <p key={x.nodo.nodoClave} className="flex items-center gap-1 text-carbon-dark min-w-0" title={x.r.rutaReal}>
+              <Folder className="w-3 h-3 shrink-0 text-primary" /><b className="truncate">{x.r.rutaReal}</b>
+              <span className="text-slate-400 truncate">· {x.nodo.ruta}</span>
             </p>
           ))}
         </div>
       )}
-      {!entradasReq.length && (
+      {resolEmpresa?.estado === "sugerida" && (
+        <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 space-y-1.5">
+          <p>Hay varias ubicaciones posibles. {puedeConfirmarUbicacion ? "Confirme la correcta:" : "Un evaluador debe confirmar la correcta."}</p>
+          {puedeConfirmarUbicacion && (
+            <div className="flex flex-wrap gap-1.5">
+              {resolEmpresa.candidatos.map((c) => (
+                <button key={c} type="button" disabled={confirmando} onClick={() => confirmarUbicacion(nodoEmpresa, "empresa", c)} className={CLASE_SECUNDARIO}>{c.split("/").pop()}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {resolEmpresa?.estado === "no_encontrada" && !explorarRaiz && (
+        <p className="text-[11px] text-amber-700">
+          No se encontró en esta carpeta por los alias del mapeo.{puedeConfirmarUbicacion ? " Abra la carpeta correcta y confírmela." : ""}
+        </p>
+      )}
+      {resolEmpresa?.estado === "sin_mapeo" && (
+        <p className="text-[11px] text-amber-700">
+          Sin ubicación en el mapeo documental (o no aplica al perfil de este expediente).{" "}
+          <Link to="/configuracion/ia?tab=mapeo" className="font-bold text-primary hover:underline">Ir al Mapeo documental</Link>
+        </p>
+      )}
+      {puedeConfirmarUbicacion && nodoEmpresa && base === "" && ruta && ruta !== rutaRequerimiento && (
+        <button type="button" disabled={confirmando} onClick={() => confirmarUbicacion(nodoEmpresa, "empresa", visor || ruta)} className={CLASE_SECUNDARIO}>
+          <FolderTree className="w-3.5 h-3.5" /> {visor ? "Confirmar este archivo para el requerimiento" : "Confirmar esta carpeta para el requerimiento"}
+        </button>
+      )}
+      {puedeConfirmarUbicacion && nodoEmpresa && base === "" && !ruta && resolEmpresa?.estado !== "resuelta" && (
+        <p className="text-[11px] text-slate-500">Abra la carpeta donde está el documento y presione «Confirmar esta carpeta para el requerimiento» (queda como excepción de este expediente).</p>
+      )}
+      {bloqueAlias}
+    </>
+  ) : null;
+  // Persona / Recurso: confirmar el archivo abierto como documento del requerimiento (override).
+  const nodoSujeto = resolSujeto?.nodoClave || null;
+  const controlesSujeto = tipo !== "empresa" && activo && sujeto ? (
+    <>
+      {resolSujeto?.estado === "sin_mapeo" && (
         <p className="text-[11px] text-amber-700">
           Sin ubicación en el mapeo documental.{" "}
           <Link to="/configuracion/ia?tab=mapeo" className="font-bold text-primary hover:underline">Ir al Mapeo documental</Link>
         </p>
       )}
-      {puedeEditar && base === "" && ruta && ruta !== rutaRequerimiento && (
-        <button type="button" onClick={asociarRequerimiento} className={CLASE_SECUNDARIO}>
-          <FolderTree className="w-3.5 h-3.5" /> Asociar esta carpeta al requerimiento
+      {resolSujeto?.estado === "sugerida" && <p className="text-[11px] text-amber-700">Varios archivos posibles: ábralo y confírmelo.</p>}
+      {puedeConfirmarUbicacion && nodoSujeto && visor && !candidatos.some((a) => a.ruta === visor) && (
+        <button type="button" disabled={confirmando} onClick={() => confirmarUbicacion(nodoSujeto, sujeto.id, visor)} className={CLASE_SECUNDARIO}>
+          <FolderTree className="w-3.5 h-3.5" /> Confirmar este documento para el requerimiento
         </button>
       )}
-      {puedeEditar && base === "" && !ruta && !entradasReq.length && (
-        <p className="text-[11px] text-slate-500">Abra la carpeta donde está el documento y presione «Asociar esta carpeta al requerimiento».</p>
-      )}
+      {bloqueAlias}
     </>
   ) : null;
 
@@ -321,13 +421,7 @@ const ContenidoPanel = ({
       archivoAbierto={archivoAbierto}
       puedeDefinirReglas={puedeDefinirReglas}
       onCerrar={() => abrirRequerimiento?.(null)}
-      carpeta={controlesCarpetaEmpresa}
-      mapeoExpediente={tipo === "empresa" ? mapeo : null}
-      recordar={tipo !== "empresa" && sujeto && repositorio?.carpetaEmpresaId ? {
-        carpetaEmpresaId: repositorio.carpetaEmpresaId, ambito: tipo, sujeto,
-        ubicado: (r) => candidatos.some((a) => a.ruta === r),
-        onRecordado: () => setVersionPatrones((n) => n + 1),
-      } : null}
+      carpeta={tipo === "empresa" ? controlesCarpetaEmpresa : controlesSujeto}
       documento={listoParaUbicar ? {
         opciones: [
           ...candidatos.map((a) => ({ ruta: a.ruta, nombre: a.nombre, candidato: true })),
@@ -432,7 +526,7 @@ const ContenidoPanel = ({
     <SelectorCarpeta
       handle={carpeta.handle}
       tipo={tipo === "empresa" ? null : tipo}
-      rutaInicial={(tipo === "persona" ? mapeo.carpetaPersonas : mapeo.carpetaRecursos) || ""}
+      rutaInicial={busquedaActual?.buscadoEn || ""}
       titulo={`Carpeta de ${sujeto ? (`${sujeto.nombre || ""} ${sujeto.apellido || ""}`.trim() || "este recurso") : "este recurso"}`}
       onElegir={asignarCarpeta}
       onCerrar={() => setAsignando(false)}
@@ -513,7 +607,7 @@ const ContenidoPanel = ({
               className="mt-0.5 w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs text-carbon-dark">
               <option value="">Toda la carpeta de la empresa</option>
               {requerimientos.map((r) => (
-                <option key={r.id} value={r.requerimientoId}>{r.nombreCorto || r.nombre}{mapeo.requerimientos?.[r.requerimientoId] ? " · 📁" : ""}</option>
+                <option key={r.id} value={r.requerimientoId}>{r.nombreCorto || r.nombre}{config?.aplicables?.[r.requerimientoId] ? " · 📁" : ""}</option>
               ))}
             </select>
           </label>

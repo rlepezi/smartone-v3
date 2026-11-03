@@ -3,7 +3,6 @@
 const path = require("path");
 const {execFileSync} = require("child_process");
 const {pathToFileURL} = require("url");
-const {normalizarNombreMapeo} = require("../src/utils/normalizacionMapeo");
 
 const RUTA = path.join(__dirname, "../../frontend/src/utils/loteRevision.js");
 
@@ -20,113 +19,64 @@ function correr(cuerpo) {
       ["--input-type=module", "-e", script], {encoding: "utf8"}));
 }
 
-const ANA = {nombre: "Ana", apellido: "Rojas Demo"};
-const PATRONES = [
-  {estado: "activo", ambito: "persona", objetivo: "archivo",
-    patron: "contrato de trabajo", requerimientoId: "rContrato",
-    vecesConfirmado: 3},
-  {estado: "activo", ambito: "persona", objetivo: "archivo", patron: "ci",
-    requerimientoId: "rCi", vecesConfirmado: 2},
-  // Empate: "anexo" apunta a dos requerimientos con las mismas
-  // confirmaciones → ambiguo, no se asigna.
-  {estado: "activo", ambito: "persona", objetivo: "archivo", patron: "anexo",
-    requerimientoId: "rContrato", vecesConfirmado: 1},
-  {estado: "activo", ambito: "persona", objetivo: "archivo", patron: "anexo",
-    requerimientoId: "rOtro", vecesConfirmado: 1},
-  {estado: "inactivo", ambito: "persona", objetivo: "archivo",
-    patron: "examen", requerimientoId: "rExamen", vecesConfirmado: 0},
-];
-
-describe("patrón de archivo de persona", () => {
-  test("igual que el backend al Recordar (mismas opciones)", () => {
-    const nombres = ["1.- CONTRATO DE TRABAJO_Ana Rojas Demo.pdf",
-      "2.- C.I. Ana Rojas Demo 31-12-2031.pdf", "Anexo.pdf"];
-    const frontend = correr(`console.log(JSON.stringify(${JSON.stringify(
-        nombres)}.map((n) => m.patronArchivoSujeto(n, "persona",
-        ${JSON.stringify(ANA)}))));`);
-    const backend = nombres.map((n) => normalizarNombreMapeo(n, {
-      archivo: true, quitarFechas: true, nombrePersona: "Ana Rojas Demo"}));
-    expect(frontend).toEqual(backend);
-    expect(frontend).toEqual(["contrato de trabajo", "ci", "anexo"]);
-  });
-});
-
-describe("archivosPorPatron", () => {
-  test("solo coincidencias exactas de alta confianza, sin empates", () => {
-    const archivos = [
-      {nombre: "1.- CONTRATO DE TRABAJO_Ana Rojas Demo.pdf", ruta: "p/a.pdf"},
-      {nombre: "Anexo.pdf", ruta: "p/anexo.pdf"},
-      {nombre: "Examen.pdf", ruta: "p/ex.pdf"},
-      {nombre: "contrato de trabajo.txt", ruta: "p/c.txt"},
-    ];
-    const r = correr(`console.log(JSON.stringify(["rContrato", "rOtro",
-      "rExamen"].map((id) => m.archivosPorPatron({archivos: ${JSON.stringify(
-      archivos)}, patrones: ${JSON.stringify(PATRONES)},
-      requerimientoId: id, tipo: "persona", sujeto: ${JSON.stringify(ANA)}})
-      .map((a) => a.ruta))));`);
-    // rContrato: solo el contrato (el anexo es ambiguo y el .txt no es
-    // revisable); rOtro: nada; rExamen: patrón inactivo.
-    expect(r).toEqual([["p/a.pdf"], [], []]);
-  });
-});
-
-describe("planLote", () => {
-  test("Empresa por mapeo, personas por patrón, con motivos", () => {
-    const r = correr(`
-      const contenidos = new Map([
-        ["05. ODI", {archivos: [{nombre: "ODI firmada.pdf",
-          ruta: "05. ODI/ODI firmada.pdf"}, {nombre: "nota.txt",
-          ruta: "05. ODI/nota.txt"}]}],
-        ["06. Vacia", {archivos: []}],
-        ["10. Trabajadores/Ana", {archivos: [{nombre:
-          "1.- CONTRATO DE TRABAJO_Ana Rojas Demo.pdf",
-          ruta: "10. Trabajadores/Ana/c.pdf"}]}],
-      ]);
+describe("planLote (ubicación desde el Mapeo documental)", () => {
+  test("resuelta / sugerida / no encontrada / sin mapeo, con su motivo",
+      () => {
+        const r = correr(`
       const sujetos = new Map([
         ["persona|p1", {tipo: "persona", id: "p1", nombre: "Ana",
           apellido: "Rojas Demo", carpeta: "10. Trabajadores/Ana"}],
         ["persona|p2", {tipo: "persona", id: "p2", nombre: "Luis",
           apellido: "Demo", carpeta: null}],
       ]);
+      const resoluciones = new Map([
+        ["rMutual|empresa", {estado: "resuelta", origen: "alias",
+          archivos: [{nombre: "Cert.pdf", ruta: "03. Mutual/Cert.pdf"},
+            {nombre: "nota.txt", ruta: "03. Mutual/nota.txt"}]}],
+        ["rSeguro|empresa", {estado: "sugerida", origen: "alias",
+          candidatos: ["03. A", "04. A"]}],
+        ["rIper|empresa", {estado: "no_encontrada"}],
+        ["rVacia|empresa", {estado: "resuelta", origen: "alias",
+          archivos: [{nombre: "x.txt", ruta: "x.txt"}]}],
+        ["rCi|p1", {estado: "resuelta", origen: "override",
+          archivos: [{nombre: "CI.pdf", ruta: "10. Trabajadores/Ana/CI.pdf"}]}],
+        ["rContrato|p1", {estado: "no_encontrada"}],
+        ["rSinMapeo|empresa", {estado: "sin_mapeo"}],
+      ]);
       const plan = m.planLote({
         instancias: [
-          {id: "i1", requerimientoId: "rOdi", nombre: "ODI"},
-          {id: "i2", requerimientoId: "rVacia", nombre: "Vacía"},
-          {id: "i3", requerimientoId: "rSinMapeo", nombre: "Sin mapeo"},
-          {id: "i4", requerimientoId: "rContrato", nombre: "Contrato",
+          {id: "a", requerimientoId: "rMutual", nombre: "Mutual"},
+          {id: "b", requerimientoId: "rSeguro", nombre: "Seguro"},
+          {id: "c", requerimientoId: "rIper", nombre: "IPER"},
+          {id: "d", requerimientoId: "rVacia", nombre: "Vacía"},
+          {id: "e", requerimientoId: "rCi", nombre: "CI", personaId: "p1"},
+          {id: "f", requerimientoId: "rContrato", nombre: "Contrato",
             personaId: "p1"},
-          {id: "i5", requerimientoId: "rCi", nombre: "CI", personaId: "p1"},
-          {id: "i6", requerimientoId: "rContrato", nombre: "Contrato",
-            personaId: "p2"},
-          {id: "i7", requerimientoId: "rNoHab", nombre: "Sin reglas"},
-          {id: "i8", requerimientoId: "rArchivo", nombre: "Póliza"},
+          {id: "g", requerimientoId: "rCi", nombre: "CI", personaId: "p2"},
+          {id: "h", requerimientoId: "rSinMapeo", nombre: "Sin mapeo"},
+          {id: "i", requerimientoId: "rNoHab", nombre: "Sin reglas"},
         ],
-        habilitados: new Set(["rOdi", "rVacia", "rSinMapeo", "rContrato",
-          "rCi", "rArchivo"]),
-        mapeo: {requerimientos: {
-          rOdi: [{ruta: "05. ODI", tipo: "carpeta"}],
-          rVacia: [{ruta: "06. Vacia", tipo: "carpeta"}],
-          rArchivo: [{ruta: "02. Poliza/Poliza.pdf", tipo: "archivo"}],
-        }},
-        sujetos, contenidos, patrones: ${JSON.stringify(PATRONES)},
+        habilitados: new Set(["rMutual", "rSeguro", "rIper", "rVacia", "rCi",
+          "rContrato", "rSinMapeo"]),
+        sujetos, resoluciones,
       });
       console.log(JSON.stringify({
         estados: Object.fromEntries(plan.map((x) => [x.instanciaId,
-          x.estado])),
+          [x.estado, x.origen || null]])),
         archivos: Object.fromEntries(plan.map((x) => [x.instanciaId,
           x.archivos.map((a) => a.ruta)])),
         resumen: m.resumenPlan(plan),
       }));`);
-    expect(r.estados).toEqual({i1: "listo", i2: "carpeta_vacia",
-      i3: "sin_ubicacion", i4: "listo", i5: "sin_documento",
-      i6: "sin_carpeta_sujeto", i7: "sin_reglas", i8: "listo"});
-    expect(r.archivos.i1).toEqual(["05. ODI/ODI firmada.pdf"]);
-    expect(r.archivos.i4).toEqual(["10. Trabajadores/Ana/c.pdf"]);
-    expect(r.archivos.i8).toEqual(["02. Poliza/Poliza.pdf"]);
-    expect(r.resumen).toEqual({listos: {empresa: 2, persona: 1, recurso: 0},
-      totalListos: 3, porMotivo: {carpeta_vacia: 1, sin_ubicacion: 1,
-        sin_documento: 1, sin_carpeta_sujeto: 1, sin_reglas: 1}});
-  });
+        expect(r.estados).toEqual({
+          a: ["listo", "alias"], b: ["ubicacion_ambigua", null],
+          c: ["ubicacion_no_encontrada", null], d: ["carpeta_vacia", null],
+          e: ["listo", "override"], f: ["sin_documento", null],
+          g: ["sin_carpeta_sujeto", null], h: ["sin_ubicacion", null],
+          i: ["sin_reglas", null]});
+        // Solo los archivos revisables.
+        expect(r.archivos.a).toEqual(["03. Mutual/Cert.pdf"]);
+        expect(r.resumen.totalListos).toBe(2);
+      });
 });
 
 describe("resumenPropuestas y páginas de PDF", () => {

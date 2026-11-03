@@ -169,6 +169,8 @@ describe("PATCH de habilitación", () => {
             getById: jest.fn(async () => mockPlantilla),
             actualizarEnTransaccion: jest.fn(async (id, fn) =>
               ({...mockPlantilla, ...fn(mockPlantilla)})),
+            existeVersion: jest.fn(async () => true),
+            guardarVersion: jest.fn(async () => {}),
           }));
           jest.doMock("../src/repositories/mandanteRepository", () => ({
             getById: jest.fn(async (id) => ({id})),

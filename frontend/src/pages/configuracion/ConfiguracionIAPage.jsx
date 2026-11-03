@@ -14,9 +14,9 @@ import { TabReglas } from "../../components/configuracion-ia/TabReglas";
 const PESTANAS = [
   { key: "conexion", label: "Conexión IA", roles: ["superadmin"] },
   { key: "fuentes", label: "Fuentes documentales", roles: ["superadmin", "mandante_admin"] },
-  // Mapeo documental (reemplaza a "Estructura de carpetas"; la plantilla queda como "Plantilla
-  // anterior" dentro de ella): superadmin y evaluador.
-  { key: "mapeo", label: "Mapeo documental", roles: ["superadmin", "evaluador"] },
+  // Mapeo documental: la plantilla de estructura del Mandante y el vínculo de sus nodos con los
+  // requerimientos. Edita solo superadmin; evaluador, mandante_admin y mandante_lector la ven.
+  { key: "mapeo", label: "Mapeo documental", roles: ["superadmin", "evaluador", "mandante_admin", "mandante_lector"] },
   // Tipos documentales: en desuso, fuera del menú. La URL (?tab=tipos) sigue abriéndola para los
   // enlaces de la revisión por carpetas, que aún usa los tipos (hasta la E5).
   { key: "tipos", label: "Tipos documentales", roles: ["superadmin"], oculta: true },
@@ -55,7 +55,7 @@ export const ConfiguracionIAPage = () => {
       />
       {activa === "conexion" && <TabConexion />}
       {activa === "fuentes" && <TabFuentes />}
-      {activa === "mapeo" && <TabMapeoDocumental plantillaAnterior={params.get("tab") === "estructura" || params.get("vista") === "plantilla"} />}
+      {activa === "mapeo" && <TabMapeoDocumental mapeoAnterior={params.get("vista") === "carpetas"} />}
       {activa === "tipos" && <TabTipos />}
       {activa === "reglas" && <TabReglas />}
       {activa === "consumo" && <TabConsumo />}

@@ -27,7 +27,8 @@ const {calcularResultadoPropuesto} = require("../reglasIA/resultado");
 const {validarParametros} = require("../reglasIA/verificaciones");
 const {aFechaIso} = require("../reglasIA/verificaciones/comunes");
 const {camposEfectivos} = require("../reglasIA/camposEfectivos");
-const {tipoDeRequerimiento} = require("../utils/ubicacionRequerimiento");
+const {lecturaDeNodos} = require("../utils/resolverNodo");
+const mapeoRequerimientoService = require("./mapeoRequerimientoService");
 const plantillaEstructuraRepository =
     require("../repositories/plantillaEstructuraRepository");
 
@@ -37,6 +38,7 @@ const ETIQUETA_ENTIDAD = {persona: "Persona", empresa: "Empresa",
 // Los campos del tipo se suman a los de las reglas SOLO si el tipo sale del
 // documento de la plantilla vinculado (no del guardado de respaldo).
 const tipoDePlantilla = (tipo) => (tipo?.origen === "plantilla" ? tipo : null);
+const SIN_MAPEO = "Primero ubica este requerimiento en el Mapeo documental.";
 // Campos que la IA lee además de los de las reglas: los propios del
 // requerimiento (copiados del tipo cuando un superadmin lo guarda) o, si aún
 // no los tiene, los del tipo del documento de la plantilla (como hasta ahora).
@@ -126,13 +128,43 @@ class RequerimientoReglaIAService {
    * @return {Promise<?Object>} Tipo.
    */
   async _tipo(req, datos = null) {
-    const {tipos, plantilla} = datos || await this._datosTipo(req.mandanteId);
-    const {tipo, origen} = tipoDeRequerimiento({requerimiento: req, plantilla,
-      tipoEntidad: req.tipoEntidad || "persona",
-      tiposPorCodigo: new Map(tipos.map((t) => [t.codigo, t])),
-      tipoGuardado: req.tipoDocumentalId ?
-        tipos.find((t) => t.id === req.tipoDocumentalId) || null : null});
-    return tipo ? {...conDefaults(tipo), origen} : null;
+    const {tipos} = datos || await this._datosTipo(req.mandanteId);
+    // Del tipoDocumentalCodigo de los nodos vinculados en el Mapeo
+    // documental (varios tipos: unión de campos); respaldo, el guardado en el
+    // requerimiento solo si ningún nodo tiene tipo.
+    const codigos = lecturaDeNodos(await this._nodos(req)).tiposDocumentales;
+    const porCodigo = new Map(tipos.map((t) => [t.codigo, t]));
+    const deNodos = codigos.map((c) => porCodigo.get(c)).filter(Boolean)
+        .map(conDefaults);
+    if (deNodos.length) {
+      const campos = [];
+      deNodos.forEach((t) => (t.campos || []).forEach((c) => {
+        if (!campos.some((x) => x.clave === c.clave)) campos.push(c);
+      }));
+      return {...deNodos[0], campos, origen: "plantilla",
+        codigos: deNodos.map((t) => t.codigo)};
+    }
+    const guardado = req.tipoDocumentalId ?
+      tipos.find((t) => t.id === req.tipoDocumentalId) || null : null;
+    return guardado ? {...conDefaults(guardado), origen: "guardado"} : null;
+  }
+
+  /**
+   * Nodos del Mapeo documental vinculados (activos) al requerimiento.
+   * @param {Object} req Requerimiento.
+   * @return {Promise<Array<Object>>} Nodos.
+   */
+  async _nodos(req) {
+    return (await mapeoRequerimientoService.nodosDeRequerimiento(req) || [])
+        .filter((n) => n.estado === "activo");
+  }
+
+  /**
+   * Las reglas dependen del mapeo: sin nodo vinculado no se pueden definir.
+   * @param {Object} req Requerimiento.
+   */
+  async _exigirMapeo(req) {
+    if (!(await this._nodos(req)).length) throw new AppError(409, SIN_MAPEO);
   }
 
   /**
@@ -253,6 +285,7 @@ class RequerimientoReglaIAService {
   async asignarCamposAdicionales(id, campos, actor) {
     this._exigirSuperadmin(actor);
     const req = await this._requerimiento(id);
+    await this._exigirMapeo(req);
     if (!Array.isArray(campos)) {
       throw new AppError(400, "Indique la lista de campos.");
     }
@@ -334,7 +367,8 @@ class RequerimientoReglaIAService {
       pruebaReglaIARepository.listByRequerimiento(id, ULTIMAS_PRUEBAS),
     ]);
     const tipos = datosTipo.tipos;
-    const tipo = await this._tipo(req, datosTipo);
+    const [tipo, nodos] = await Promise.all([this._tipo(req, datosTipo),
+      this._nodos(req)]);
     const estadoIA = estadoIADe(req);
     const vinculos = items.map((i) => ({
       ...i.vinculo, createdAt: aISO(i.vinculo.createdAt),
@@ -366,8 +400,15 @@ class RequerimientoReglaIAService {
         tipoDocumentalId: req.tipoDocumentalId || null,
         modeloPreferidoIA: req.modeloPreferidoIA || null,
         reglasIAActualizadasAt: aISO(req.reglasIAActualizadasAt)},
+      // Ubicación en el Mapeo documental (solo lectura) y lo que la IA lee
+      // de sus nodos: alias (unión), múltiple y sensible (basta uno).
+      mapeo: {nodos: nodos.map((n) => ({nodoClave: n.nodoClave, ruta: n.ruta,
+        tipoNodo: n.tipoNodo, nivel: n.nivel, habilitado: n.habilitado,
+        tipoDocumentalCodigo: n.tipoDocumentalCodigo})),
+      ...lecturaDeNodos(nodos)},
+      requiereMapeo: nodos.length === 0,
       // Lo que la IA leerá al revisar: los campos de las reglas aplicables
-      // (más los del tipo, si sale del documento de la plantilla).
+      // (más los del tipo, si sale de los nodos del mapeo).
       camposIA: camposEfectivos({campos: camposAdicionalesDe(req, tipo)},
           aplicables.map((i) => i.snapshot)),
       // Campos adicionales: propios (del requerimiento) o heredados del tipo.
@@ -434,6 +475,7 @@ class RequerimientoReglaIAService {
   async asignarModelo(id, modelo, actor) {
     this._exigirSuperadmin(actor);
     const req = await this._requerimiento(id);
+    await this._exigirMapeo(req);
     const nuevo = modelo ? String(modelo).trim() : null;
     if ((req.modeloPreferidoIA || null) === nuevo) {
       return this.obtener(id, actor);
@@ -461,6 +503,7 @@ class RequerimientoReglaIAService {
   async agregarRegla(id, payload, actor) {
     this._exigirSuperadmin(actor);
     const req = await this._requerimiento(id);
+    await this._exigirMapeo(req);
     const regla = await reglaIARepository.getById(String(payload?.reglaId ||
         ""));
     if (!regla) throw new AppError(404, "Regla no encontrada.");
@@ -640,6 +683,7 @@ class RequerimientoReglaIAService {
       throw new AppError(400, "Elija otro requerimiento como origen.");
     }
     const req = await this._requerimiento(id);
+    await this._exigirMapeo(req);
     const origen = await this._requerimiento(String(origenId));
     const [items, origenItems, tipo] = await Promise.all([
       this._vinculos(id), this._vinculos(origen.id), this._tipo(req)]);
@@ -679,6 +723,10 @@ class RequerimientoReglaIAService {
   async cambiarEstadoIA(id, destino, actor) {
     this._exigirSuperadmin(actor);
     const config = await this.obtener(id, actor);
+    // Volver a "En definición" siempre se puede; avanzar exige el mapeo.
+    if (destino !== "en_definicion" && config.requiereMapeo) {
+      throw new AppError(409, SIN_MAPEO);
+    }
     const actual = config.requerimiento.estadoIA;
     const error = errorTransicion(actual, destino, {
       reglasActivas: config.vinculos.filter((v) => v.activa &&
@@ -906,6 +954,7 @@ class RequerimientoReglaIAService {
   async probar(id, payload, actor) {
     this._exigirSuperadmin(actor);
     const req = await this._requerimiento(id);
+    await this._exigirMapeo(req);
     if (!ESTADOS_PRUEBA.includes(estadoIADe(req))) {
       throw new AppError(409, "Las reglas se prueban en En definición o En " +
           "prueba.");

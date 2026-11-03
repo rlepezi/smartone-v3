@@ -4,7 +4,10 @@ const mandanteRepository = require("../repositories/mandanteRepository");
 const usuarioRepository = require("../repositories/usuarioRepository");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
-const {validarPlantilla} = require("../utils/plantillaEstructura");
+const {
+  validarPlantilla, validarCambioEstructura, nodosDe,
+} = require("../utils/plantillaEstructura");
+const {aliasLimpios} = require("../utils/aliasNodo");
 const {
   aplicarHabilitacion, cambiosMasivos, calcularAlcance, calcularEstadoEfectivo,
 } = require("../utils/alcanceValidacion");
@@ -13,10 +16,9 @@ const tipoDocumentalRepository =
 const PLANTILLA_TRANSEMEL =
     require("../../config/plantillas/transemel-carpeta-arranque-v1.json");
 
-// Roles que administran plantillas: superadmin (cualquier Mandante) y
-// mandante_admin (el suyo). Leer la activa: también evaluador y
-// mandante_lector (Nueva revisión, detalle).
-const ROLES_ADMINISTRAN = ["superadmin", "mandante_admin"];
+// Solo superadmin administra la plantilla (Mapeo documental). Leer la activa:
+// también evaluador, mandante_admin y mandante_lector (solo lectura).
+const ROLES_ADMINISTRAN = ["superadmin"];
 const ROLES_ALCANCE_FORZADO = ["mandante_admin", "mandante_lector"];
 
 /**
@@ -51,8 +53,51 @@ class PlantillaEstructuraService {
    */
   _exigirAdministra(actor) {
     if (!ROLES_ADMINISTRAN.includes(actor.rol)) {
-      throw new AppError(403, "No puede administrar plantillas.");
+      throw new AppError(403, "Solo un superadmin puede editar la plantilla.");
     }
+  }
+
+  /**
+   * Guarda la copia de la versión vigente (auditoría). Si la versión
+   * anterior no tenía copia (plantillas previas a este cambio), la guarda
+   * también, para no perderla.
+   * @param {string} id Plantilla.
+   * @param {Object} plantilla Plantilla vigente.
+   * @param {Object} autor {uid, nombre}.
+   * @param {?Object} [previa] Plantilla anterior.
+   * @return {Promise<void>}
+   */
+  async _versionar(id, plantilla, autor, previa = null) {
+    if (previa && !(await plantillaEstructuraRepository.existeVersion(id,
+        previa.version || 1))) {
+      await plantillaEstructuraRepository.guardarVersion(id, previa,
+          previa.updatedBy || null);
+    }
+    await plantillaEstructuraRepository.guardarVersion(id, plantilla, autor);
+  }
+
+  /**
+   * Conserva el requerimientoId 1:1 de cada nodo (solo para el motor
+   * anterior, hasta E7): el formulario ya no lo envía.
+   * @param {Object} previa Plantilla vigente.
+   * @param {Object} datos Plantilla validada.
+   * @return {Object} datos con el requerimientoId anterior.
+   */
+  _conRequerimientoAnterior(previa, datos) {
+    const sec = new Map((previa.secciones || []).map((x) => [x.clave, x]));
+    return {...datos, secciones: datos.secciones.map((x) => {
+      const antes = sec.get(x.clave);
+      if (!antes) return x;
+      const conservar = (lista) => (x[lista] || []).map((d) => {
+        const previo = (antes[lista] || []).find((p) => p.clave === d.clave);
+        return {...d, requerimientoId: d.requerimientoId ||
+          previo?.requerimientoId || null};
+      });
+      return {...x, requerimientoId: x.requerimientoId ||
+        antes.requerimientoId || null,
+      archivosSeccion: conservar("archivosSeccion"),
+      documentos: conservar("documentos")};
+    })};
   }
 
   /**
@@ -100,6 +145,7 @@ class PlantillaEstructuraService {
       ...datos, mandanteId: id, version: 1, estado: "activa",
       createdBy: autor, updatedBy: autor,
     });
+    await this._versionar(creada.id, creada, autor);
     await bitacoraLogger.registrarEvento({
       mandanteId: id, entidad: "plantillasEstructura", entidadId: creada.id,
       accion: "creado", actor,
@@ -123,16 +169,28 @@ class PlantillaEstructuraService {
     if (previa.estado !== "activa") {
       throw new AppError(409, "La plantilla está inactiva.");
     }
-    const datos = validarPlantilla(cambios);
+    const datos = this._conRequerimientoAnterior(previa,
+        validarPlantilla(cambios));
+    const {retirados, reactivados} = validarCambioEstructura(previa, datos);
+    const autor = await this._autor(actor);
     const actualizada = await plantillaEstructuraRepository.update(
         plantillaId, {...datos, version: (previa.version || 1) + 1,
-          updatedBy: await this._autor(actor)},
+          updatedBy: autor},
     );
+    await this._versionar(plantillaId, actualizada, autor, previa);
+    // Nodos retirados: sus vínculos con requerimientos quedan inactivos;
+    // al reactivarlos, vuelven los que se inactivaron por el retiro.
+    // eslint-disable-next-line global-require
+    const mapeoService = require("./mapeoRequerimientoService");
+    const vinculos = await mapeoService.alRetirarNodos(previa.mandanteId,
+        retirados, reactivados, autor);
     await bitacoraLogger.registrarEvento({
       mandanteId: previa.mandanteId, entidad: "plantillasEstructura",
       entidadId: plantillaId, accion: "actualizado", actor,
       detalle: {version: actualizada.version,
-        secciones: datos.secciones.length},
+        secciones: datos.secciones.length, retirados, reactivados,
+        vinculosInactivados: vinculos.inactivados,
+        vinculosReactivados: vinculos.reactivados},
     });
     return actualizada;
   }
@@ -162,6 +220,7 @@ class PlantillaEstructuraService {
           return {secciones: r.secciones, version: (actual.version || 1) + 1,
             updatedBy: autor};
         });
+    await this._versionar(plantillaId, plantilla, autor, previa);
     await bitacoraLogger.registrarEvento({
       mandanteId: previa.mandanteId, entidad: "plantillasEstructura",
       entidadId: plantillaId, accion: "habilitacion_actualizada", actor,
@@ -192,6 +251,116 @@ class PlantillaEstructuraService {
     return this.habilitacion(plantillaId,
         cambiosMasivos(plantilla.secciones, accion, seccionClave || null),
         actor);
+  }
+
+  /**
+   * Agrega un alias a un nodo de la plantilla activa del Mandante (alias
+   * sugerido aprobado): nueva versión, con su copia y Bitácora.
+   * @param {string} mandanteId Mandante.
+   * @param {string} nodoClave Nodo.
+   * @param {string} alias Alias.
+   * @param {Object} actor Usuario autenticado (superadmin).
+   * @return {Promise<Object>} Plantilla actualizada.
+   */
+  async agregarAlias(mandanteId, nodoClave, alias, actor) {
+    this._exigirAdministra(actor);
+    const previa = await plantillaEstructuraRepository.getActiva(mandanteId);
+    if (!previa) {
+      throw new AppError(404, "El Mandante no tiene plantilla activa.");
+    }
+    const [seccionClave, docClave] = String(nodoClave || "").split("/");
+    const autor = await this._autor(actor);
+    let agregado = false;
+    const plantilla = await plantillaEstructuraRepository
+        .actualizarEnTransaccion(previa.id, (actual) => {
+          const secciones = (actual.secciones || []).map((x) => {
+            if (x.clave !== seccionClave) return x;
+            const sumar = (n) => {
+              const nuevos = aliasLimpios([...(n.alias || []), alias]);
+              agregado = nuevos.length > (n.alias || []).length;
+              return {...n, alias: nuevos};
+            };
+            if (!docClave) return sumar(x);
+            const enLista = (lista) => (x[lista] || []).map((d) =>
+              (d.clave === docClave ? sumar(d) : d));
+            return {...x, archivosSeccion: enLista("archivosSeccion"),
+              documentos: enLista("documentos")};
+          });
+          if (!nodosDe({secciones}).some((n) => n.nodoClave === nodoClave)) {
+            throw new AppError(404, "El nodo no existe en la plantilla.");
+          }
+          return agregado ? {secciones, version: (actual.version || 1) + 1,
+            updatedBy: autor} : {};
+        });
+    if (!agregado) return plantilla;
+    await this._versionar(previa.id, plantilla, autor, previa);
+    await bitacoraLogger.registrarEvento({
+      mandanteId, entidad: "plantillasEstructura", entidadId: previa.id,
+      accion: "alias_agregado", actor,
+      detalle: {version: plantilla.version, nodoClave, alias},
+    });
+    return plantilla;
+  }
+
+  /**
+   * Duplica la plantilla activa hacia otro Mandante (solo si el destino no
+   * tiene plantilla activa): estructura, alias y tipo documental; sin
+   * vínculos con requerimientos ni versiones anteriores (parte en v1).
+   * @param {string} plantillaId Plantilla origen.
+   * @param {string} mandanteDestinoId Mandante destino.
+   * @param {Object} actor Usuario autenticado (superadmin).
+   * @return {Promise<Object>} Plantilla creada.
+   */
+  async duplicar(plantillaId, mandanteDestinoId, actor) {
+    this._exigirAdministra(actor);
+    const origen = await this._cargar(plantillaId, actor);
+    const destino = await this._mandante(actor, mandanteDestinoId);
+    if (destino === origen.mandanteId) {
+      throw new AppError(400, "Elija otro Mandante de destino.");
+    }
+    if (await plantillaEstructuraRepository.getActiva(destino)) {
+      throw new AppError(409, "El Mandante de destino ya tiene una plantilla " +
+          "activa.");
+    }
+    const sinVinculos = (n) => ({...n, requerimientoId: null});
+    const datos = validarPlantilla({nombre: origen.nombre,
+      profundidadSubcontratos: origen.profundidadSubcontratos,
+      secciones: (origen.secciones || []).map((x) => ({...sinVinculos(x),
+        archivosSeccion: (x.archivosSeccion || []).map(sinVinculos),
+        documentos: (x.documentos || []).map(sinVinculos)}))});
+    const autor = await this._autor(actor);
+    const creada = await plantillaEstructuraRepository.create({...datos,
+      mandanteId: destino, version: 1, estado: "activa", createdBy: autor,
+      updatedBy: autor, duplicadaDe: {plantillaId: origen.id,
+        mandanteId: origen.mandanteId, version: origen.version || 1}});
+    await this._versionar(creada.id, creada, autor);
+    await Promise.all([
+      bitacoraLogger.registrarEvento({mandanteId: destino,
+        entidad: "plantillasEstructura", entidadId: creada.id,
+        accion: "creado", actor, detalle: {nombre: datos.nombre,
+          origen: "duplicada", plantillaOrigenId: origen.id,
+          mandanteOrigenId: origen.mandanteId, version: 1}}),
+      bitacoraLogger.registrarEvento({mandanteId: origen.mandanteId,
+        entidad: "plantillasEstructura", entidadId: origen.id,
+        accion: "duplicada", actor, detalle: {mandanteDestinoId: destino,
+          plantillaDestinoId: creada.id, version: origen.version || 1}}),
+    ]);
+    return creada;
+  }
+
+  /**
+   * Nodos de la plantilla activa del Mandante (activos y retirados), para el
+   * mapeo y el resolvedor. null si no hay plantilla.
+   * @param {string} mandanteId Mandante.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<?{plantillaId: string, version: number,
+   *     nodos: Object[]}>} Nodos.
+   */
+  async nodos(mandanteId, actor) {
+    const id = await this._mandante(actor, mandanteId);
+    const p = await plantillaEstructuraRepository.getActiva(id);
+    return p ? {plantillaId: p.id, version: p.version || 1,
+      nodos: nodosDe(p)} : null;
   }
 
   /**

@@ -1,0 +1,140 @@
+{
+  "resolver": [
+    {
+      "caso": "f) Sección con numeración distinta resuelve por alias",
+      "entrada": {
+        "nodo": {"tipoNodo": "seccion", "nombre": "Listado del personal", "alias": ["listado del personal", "nomina"]},
+        "base": "17.B-BOSCH",
+        "arbol": {
+          "17.B-BOSCH": {"carpetas": ["01. Cronograma", "03. Listado del personal"], "archivos": []},
+          "17.B-BOSCH/03. Listado del personal": {"carpetas": [], "archivos": ["lista.xlsx"]}
+        }
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "17.B-BOSCH/03. Listado del personal", "origen": "alias", "candidatos": [], "archivos": ["lista.xlsx"]}
+    },
+    {
+      "caso": "Sección con prefijo '2)' y puntuación final",
+      "entrada": {
+        "nodo": {"tipoNodo": "seccion", "nombre": "Certificados Mutualidad", "alias": ["certificado mutualidad"]},
+        "base": "",
+        "arbol": {
+          "": {"carpetas": ["2) Certificado de Mutualidad.", "05. ODI"], "archivos": []},
+          "2) Certificado de Mutualidad.": {"carpetas": [], "archivos": ["cert.pdf"]}
+        }
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "2) Certificado de Mutualidad.", "origen": "alias", "candidatos": [], "archivos": ["cert.pdf"]}
+    },
+    {
+      "caso": "Dos carpetas calzan: no elige, sugiere",
+      "entrada": {
+        "nodo": {"tipoNodo": "seccion", "nombre": "Certificados Mutualidad", "alias": ["certificado mutualidad"]},
+        "base": "",
+        "arbol": {"": {"carpetas": ["03. Certificado de Mutualidad", "04. Certificado mutualidad 2025"], "archivos": []}}
+      },
+      "esperado": {"estado": "sugerida", "rutaReal": null, "origen": "alias", "candidatos": ["03. Certificado de Mutualidad", "04. Certificado mutualidad 2025"], "archivos": []}
+    },
+    {
+      "caso": "Archivo suelto con exclusión ('no: anexo')",
+      "entrada": {
+        "nodo": {"tipoNodo": "archivoSuelto", "nombre": "ODI", "alias": ["odi"], "excluir": ["anexo"]},
+        "seccion": {"tipoNodo": "seccion", "nombre": "Obligación de informar", "alias": ["odi"]},
+        "base": "",
+        "arbol": {
+          "": {"carpetas": ["05. ODI"], "archivos": []},
+          "05. ODI": {"carpetas": [], "archivos": ["ODI firmada.pdf", "Anexo ODI.pdf"]}
+        }
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "05. ODI", "origen": "alias", "candidatos": [], "archivos": ["ODI firmada.pdf"]}
+    },
+    {
+      "caso": "Documento de entidad (cédula) en la carpeta de la persona",
+      "entrada": {
+        "nodo": {"tipoNodo": "documentoEntidad", "nombre": "Cédula de identidad", "alias": ["ci", "cedula"], "multiple": false},
+        "carpetaSujeto": "02. Trabajadores/Ana Prueba",
+        "arbol": {"02. Trabajadores/Ana Prueba": {"carpetas": [], "archivos": ["2.- C.I. Ana Prueba.pdf", "1.- CONTRATO DE TRABAJO.pdf"]}}
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "02. Trabajadores/Ana Prueba", "origen": "alias", "candidatos": [], "archivos": ["2.- C.I. Ana Prueba.pdf"]}
+    },
+    {
+      "caso": "Documento no múltiple con dos archivos que calzan: sugerencia",
+      "entrada": {
+        "nodo": {"tipoNodo": "documentoEntidad", "nombre": "Contrato de trabajo", "alias": ["contrato"], "multiple": false},
+        "carpetaSujeto": "P/Juan",
+        "arbol": {"P/Juan": {"carpetas": [], "archivos": ["Contrato 2024.pdf", "Contrato 2025.pdf"]}}
+      },
+      "esperado": {"estado": "sugerida", "rutaReal": "P/Juan", "origen": "alias", "candidatos": ["P/Juan/Contrato 2024.pdf", "P/Juan/Contrato 2025.pdf"], "archivos": []}
+    },
+    {
+      "caso": "Documento múltiple: devuelve todos",
+      "entrada": {
+        "nodo": {"tipoNodo": "documentoEntidad", "nombre": "Liquidaciones", "alias": ["liquidacion"], "multiple": true},
+        "carpetaSujeto": "P/Juan",
+        "arbol": {"P/Juan": {"carpetas": [], "archivos": ["Liquidacion marzo.pdf", "Liquidacion abril.pdf", "Otro.pdf"]}}
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "P/Juan", "origen": "alias", "candidatos": [], "archivos": ["Liquidacion marzo.pdf", "Liquidacion abril.pdf"]}
+    },
+    {
+      "caso": "Override de un archivo puntual gana sobre el alias",
+      "entrada": {
+        "nodo": {"tipoNodo": "archivoSuelto", "nombre": "ODI", "alias": ["odi"]},
+        "seccion": {"tipoNodo": "seccion", "nombre": "ODI", "alias": ["odi"]},
+        "override": {"rutaReal": "Varios/Obligacion informar.pdf"},
+        "base": "",
+        "arbol": {"Varios": {"carpetas": [], "archivos": ["Obligacion informar.pdf", "otro.pdf"]}}
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "Varios", "origen": "override", "candidatos": [], "archivos": ["Obligacion informar.pdf"]}
+    },
+    {
+      "caso": "Override de una carpeta (sección)",
+      "entrada": {
+        "nodo": {"tipoNodo": "seccion", "nombre": "Listado del personal", "alias": []},
+        "override": {"rutaReal": "Varios/Nomina 2026"},
+        "base": "",
+        "arbol": {"Varios": {"carpetas": ["Nomina 2026"], "archivos": []}, "Varios/Nomina 2026": {"carpetas": [], "archivos": ["n.xlsx"]}}
+      },
+      "esperado": {"estado": "resuelta", "rutaReal": "Varios/Nomina 2026", "origen": "override", "candidatos": [], "archivos": ["n.xlsx"]}
+    },
+    {
+      "caso": "Sin carpeta que calce: no_encontrada",
+      "entrada": {
+        "nodo": {"tipoNodo": "seccion", "nombre": "Seguros", "alias": ["seguro"]},
+        "base": "",
+        "arbol": {"": {"carpetas": ["01. Cronograma"], "archivos": []}}
+      },
+      "esperado": {"estado": "no_encontrada", "rutaReal": null, "origen": "alias", "candidatos": [], "archivos": []}
+    },
+    {
+      "caso": "Carpeta aún no leída: pide leerla",
+      "entrada": {"nodo": {"tipoNodo": "seccion", "nombre": "Seguros", "alias": []}, "base": "X", "arbol": {}},
+      "esperado": {"estado": "pendiente", "rutaReal": null, "origen": null, "candidatos": [], "archivos": [], "leer": "X"}
+    }
+  ],
+  "calza": [
+    {"nombre": "03. Listado del personal", "nodo": {"nombre": "Listado del personal", "alias": []}, "archivo": false, "esperado": true},
+    {"nombre": "02 -  Listado  del Personal.", "nodo": {"nombre": "X", "alias": ["listado del personal"]}, "archivo": false, "esperado": true},
+    {"nombre": "Anexo ODI.pdf", "nodo": {"nombre": "ODI", "alias": [], "excluir": ["anexo"]}, "archivo": true, "esperado": false},
+    {"nombre": "2.- C.I. Diego Garrido Muñoz 31-12-2031.pdf", "nodo": {"nombre": "Cédula", "alias": ["c.i."]}, "archivo": true, "esperado": true},
+    {"nombre": "Cronograma.xlsx", "nodo": {"nombre": "Certificado", "alias": ["mutualidad"]}, "archivo": true, "esperado": false}
+  ],
+  "aplicables": [
+    {
+      "caso": "Solo nodos activos, habilitados y con requerimiento del perfil",
+      "nodos": [
+        {"nodoClave": "listado", "estado": "activo", "habilitado": true},
+        {"nodoClave": "mutual", "estado": "activo", "habilitado": false},
+        {"nodoClave": "odi", "estado": "retirado", "habilitado": true},
+        {"nodoClave": "carpetas/cedula", "estado": "activo", "habilitado": true}
+      ],
+      "vinculos": [
+        {"nodoClave": "listado", "requerimientoId": "rTrab", "estado": "activo"},
+        {"nodoClave": "mutual", "requerimientoId": "rMutual", "estado": "activo"},
+        {"nodoClave": "odi", "requerimientoId": "rOdi", "estado": "activo"},
+        {"nodoClave": "carpetas/cedula", "requerimientoId": "rCi", "estado": "activo"},
+        {"nodoClave": "carpetas/cedula", "requerimientoId": "rNoPerfil", "estado": "activo"},
+        {"nodoClave": "listado", "requerimientoId": "rInactivo", "estado": "inactivo"}
+      ],
+      "requerimientosPerfil": ["rTrab", "rMutual", "rOdi", "rCi", "rInactivo"],
+      "esperado": {"rTrab": ["listado"], "rCi": ["carpetas/cedula"]}
+    }
+  ]
+}
