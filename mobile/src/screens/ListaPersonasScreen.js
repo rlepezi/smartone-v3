@@ -1,128 +1,147 @@
 import React, { useMemo, useState } from "react";
-import { View, FlatList, TouchableOpacity, Text, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { SlidersHorizontal } from "lucide-react-native";
+import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { useListPaging } from "../hooks/useListPaging";
 import { personaService } from "../services/personaService";
 import { colors } from "../theme/colors";
+import { estadoNivel } from "../theme/status";
 import { spacing, radius, minTouchTarget } from "../theme/spacing";
 import { typography } from "../theme/typography";
-import { formatRut } from "../utils/formatRut";
-import { formatNombre } from "../utils/formatNombre";
-import { GradientHeader } from "../components/GradientHeader";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { ScreenBody } from "../components/ScreenBody";
+import { useNombreMandante } from "../components/MandanteSelector";
 import { SearchBar } from "../components/SearchBar";
 import { FilterChips } from "../components/FilterChips";
-import { ListRow } from "../components/ListRow";
+import { OptionSheet } from "../components/OptionSheet";
+import { ListCard } from "../components/ListCard";
+import { StatusBadge } from "../components/StatusBadge";
+import { EntityAvatar } from "../components/EntityAvatar";
 import { EmptyState } from "../components/EmptyState";
-import { ErrorState } from "../components/ErrorState";
-import { SkeletonList } from "../components/Skeleton";
+import { VerMas } from "../components/VerMas";
+import { formatRut } from "../utils/formatRut";
+import { formatNombre } from "../utils/formatNombre";
+import { coincide } from "../utils/texto";
 
-// GAP conocido (auditoría Fase A/B): no existe un "estado de acreditación"
-// agregado por Persona fuera de un Proyecto puntual — se mantiene el
-// estado Activo/Inactivo real (no se inventa una acreditación).
-const ESTADOS = [
-  { value: null, label: "Todas" },
-  { value: "activo", label: "Activas" },
-  { value: "inactivo", label: "Inactivas" },
+const FILTROS = [
+  { value: "acreditada", label: "Acreditadas" },
+  { value: "aceptable", label: "Aceptables" },
+  { value: "rechazada", label: "Rechazadas" },
+  { value: "pendiente", label: "Pendientes" },
+  { value: "sinEmpresa", label: "Sin empresa" },
 ];
+const ESTADOS_SIEMPRE = ["acreditada", "aceptable", "rechazada", "sinEmpresa"];
 
-// Empresa actual: la de la relación activa (empresaActual), ya resuelta por la API.
-function PersonaRow({ item, onPress }) {
-  const empresaNombre = item.empresaActual?.empresaNombre || null;
-  return (
-    <ListRow
-      entity="personas"
-      titulo={formatNombre(`${item.nombre} ${item.apellido}`)}
-      subtituloMono={item.identificacion?.tipo === "RUT" ?
-        formatRut(item.identificacion.numero) : item.identificacion?.numero}
-      meta={empresaNombre}
-      estado={{
-        label: item.estado === "activo" ? "Activo" : "Inactivo",
-        fg: item.estado === "activo" ? "#15803D" : colors.muted,
-        bar: item.estado === "activo" ? "#16A34A" : null,
-        bg: item.estado === "activo" ? "#DCF5E7" : colors.bg,
-      }}
-      onPress={onPress}
-    />
+// Persona dentro de un filtro ("Sin requerimientos" cuenta como Pendiente).
+const enFiltro = (p, f) => (f === "sinEmpresa" ? !p.empresaActual :
+  f === "pendiente" ? ["pendiente", "sinRequerimientos"].includes(p.nivel.clave) : p.nivel.clave === f);
+
+export default function ListaPersonasScreen({ route, navigation }) {
+  const { mandanteId, umbralesDe } = useMandante();
+  const nombreMandante = useNombreMandante();
+  const [busqueda, setBusqueda] = useState("");
+  const [filtro, setFiltro] = useState(null);
+  const [empresaId, setEmpresaId] = useState(null);
+  const [eligiendoEmpresa, setEligiendoEmpresa] = useState(false);
+
+  // Abierta desde un acceso (Inicio, detalle de proyecto): filtros en "Todos" y sin búsqueda.
+  const [paramsPrevios, setParamsPrevios] = useState(route.params);
+  if (route.params !== paramsPrevios) {
+    setParamsPrevios(route.params);
+    if (route.params?.reset) {
+      setBusqueda("");
+      setFiltro(null);
+      setEmpresaId(null);
+    }
+  }
+
+  const estado = useAsync(
+    ({ forzar } = {}) => personaService.listar({ mandanteId, umbralesDe, forzar }),
+    [mandanteId],
   );
-}
 
-export default function ListaPersonasScreen({ navigation, route }) {
-  const [busqueda, setBusqueda] = useState(route.params?.busquedaInicial || "");
-  const [estado, setEstado] = useState(null);
+  const personas = useMemo(() => (estado.data?.personas || []).map((p) => ({
+    ...p,
+    nombreCompleto: formatNombre(`${p.nombre || ""} ${p.apellido || ""}`),
+    nivel: estado.data.indice.persona(p.id),
+  })).sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, "es")), [estado.data]);
 
-  const { data, loading, refreshing, error, refresh } = useAsync(
-      () => personaService.listar({ estado }), [estado],
-  );
+  const empresas = useMemo(() => {
+    const m = new Map();
+    personas.forEach((p) => { if (p.empresaActual?.empresaId) m.set(p.empresaActual.empresaId, p.empresaActual.empresaNombre || "Empresa"); });
+    return [...m.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [personas]);
 
-  const filtrados = useMemo(() => {
-    if (!data) return [];
-    const texto = busqueda.trim().toLowerCase();
-    if (!texto) return data;
-    return data.filter((p) => {
-      const nombreCompleto = `${p.nombre} ${p.apellido}`.toLowerCase();
-      return nombreCompleto.includes(texto) ||
-        p.identificacion?.numero?.toLowerCase().includes(texto);
-    });
-  }, [data, busqueda]);
+  const buscadas = useMemo(() => personas.filter((p) =>
+    coincide(busqueda, p.nombreCompleto, p.rut) && (!empresaId || p.empresaActual?.empresaId === empresaId)),
+  [personas, busqueda, empresaId]);
 
-  const { visibles, hayMas, cargarMas } = useListPaging(filtrados);
+  const filtradas = useMemo(() => buscadas.filter((p) => !filtro || enFiltro(p, filtro)), [buscadas, filtro]);
+  const { visibles, hayMas, cargarMas } = useListPaging(filtradas);
+
+  const opciones = [
+    { value: null, label: "Todas", count: buscadas.length },
+    ...FILTROS.map((f) => ({ ...f, count: buscadas.filter((p) => enFiltro(p, f.value)).length }))
+      .filter((f) => f.count > 0 || f.value === filtro || ESTADOS_SIEMPRE.includes(f.value)),
+  ];
+  const nombreEmpresa = empresas.find((e) => e.value === empresaId)?.label;
 
   return (
     <View style={styles.screen}>
-      <GradientHeader variant="detail" title={`Personas${data ? ` (${filtrados.length})` : ""}`} />
-      <View style={styles.body}>
-        <View style={styles.filtros}>
-          <SearchBar value={busqueda} onChangeText={setBusqueda} placeholder="Buscar persona o RUT..." />
-          <FilterChips options={ESTADOS} value={estado} onChange={setEstado} />
-        </View>
-
-        {loading && !data && <SkeletonList />}
-        {error && !data && <ErrorState message={error.message} onRetry={refresh} />}
-
-        {data && (
-          <FlatList
-            data={visibles}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.lista}
-            refreshing={refreshing}
-            onRefresh={refresh}
-            renderItem={({ item }) => (
-              <PersonaRow
-                item={item}
-                onPress={() => navigation.navigate("DetallePersona", { personaId: item.id })}
-              />
-            )}
-            ListEmptyComponent={<EmptyState message="No hay personas para este filtro." />}
-            ListFooterComponent={hayMas ? (
-              <TouchableOpacity style={styles.masBtn} onPress={cargarMas}>
-                <Text style={[typography.body, { color: colors.primary }]}>Cargar más</Text>
-              </TouchableOpacity>
-            ) : null}
-          />
-        )}
-      </View>
+      <ScreenHeader title="Personas" subtitle={nombreMandante} count={estado.data ? filtradas.length : null} />
+      <ScreenBody estado={estado}>
+        <SearchBar
+          value={busqueda}
+          onChangeText={setBusqueda}
+          placeholder="Buscar por nombre o RUT"
+          right={(
+            <TouchableOpacity style={[styles.filtro, empresaId && styles.filtroActivo]} onPress={() => setEligiendoEmpresa(true)}
+              accessibilityLabel="Filtrar por empresa">
+              <SlidersHorizontal color={empresaId ? colors.onDark : colors.textMuted} size={18} />
+            </TouchableOpacity>
+          )}
+        />
+        {empresaId ? (
+          <TouchableOpacity onPress={() => setEmpresaId(null)} style={styles.empresaFiltro}>
+            <Text style={[typography.caption, { color: colors.primary }]} numberOfLines={1}>Empresa: {nombreEmpresa} · Quitar</Text>
+          </TouchableOpacity>
+        ) : null}
+        <FilterChips options={opciones} value={filtro} onChange={setFiltro} />
+        {filtradas.length === 0 ? <EmptyState message="No hay personas que coincidan con el filtro." /> : null}
+        {visibles.map((p) => (
+          <ListCard key={p.id} onPress={() => navigation.navigate("DetallePersona", { personaId: p.id })} accessibilityLabel={p.nombreCompleto}>
+            <EntityAvatar tipo="persona" nombre={p.nombreCompleto} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{p.nombreCompleto}</Text>
+              <Text style={[typography.caption, { color: colors.textSubtle }]} numberOfLines={1}>
+                {formatRut(p.rut)} · {p.empresaActual?.empresaNombre || "Sin empresa"}
+              </Text>
+            </View>
+            <StatusBadge estado={estadoNivel(p.nivel.clave)} style={{ maxWidth: 120 }} />
+          </ListCard>
+        ))}
+        <VerMas visible={hayMas} onPress={cargarMas} />
+      </ScreenBody>
+      <OptionSheet
+        visible={eligiendoEmpresa}
+        title="Filtrar por empresa"
+        options={[{ value: null, label: "Todas las empresas" }, ...empresas]}
+        value={empresaId}
+        onChange={setEmpresaId}
+        onClose={() => setEligiendoEmpresa(false)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  body: {
-    flex: 1,
-    marginTop: -radius.headerOverlap,
-    borderTopLeftRadius: radius.headerOverlap,
-    borderTopRightRadius: radius.headerOverlap,
-    backgroundColor: colors.bg,
+  filtro: {
+    width: minTouchTarget, minHeight: minTouchTarget, alignItems: "center", justifyContent: "center",
+    borderRadius: radius.button, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
-  filtros: { padding: spacing.lg, paddingBottom: 0 },
-  lista: { padding: spacing.lg },
-  masBtn: {
-    minHeight: minTouchTarget,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: spacing.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
+  filtroActivo: { backgroundColor: colors.primary, borderColor: colors.primary },
+  empresaFiltro: { marginTop: -spacing.xs, marginBottom: spacing.sm },
 });
+

@@ -5,8 +5,8 @@ import { expedientesApi } from "../api/expedientes";
 // backend; la app no cruza requerimientos con sujetos). `sujeto`: { empresa: true } |
 // { personaId } | { recursoId }.
 export const evaluacionService = {
-  // Filas { requerimiento, evaluacion } del sujeto: cada instancia activa (que trae su nombre
-  // congelado) con su Evaluación vigente, si la tiene.
+  // Filas { requerimiento, evaluacion, resultado } del sujeto: cada instancia activa (que trae su
+  // nombre congelado) con su Evaluación VIGENTE (evaluacionVigenteId; las históricas no se usan).
   async filasDeSujeto(expedienteId, sujeto) {
     if (!expedienteId) return [];
     const [instancias, evaluaciones] = await Promise.all([
@@ -18,9 +18,13 @@ export const evaluacionService = {
       requerimiento: {
         requerimientoId: i.requerimientoId,
         nombre: i.nombre,
+        // Nombre corto del catálogo (el backend lo copia del nombre si no tiene).
+        nombreCorto: i.nombreCorto || null,
         requiereVencimiento: i.requiereVencimiento,
       },
       evaluacion: i.evaluacionVigenteId ? porId[i.evaluacionVigenteId] || null : null,
+      // Resultado vigente copiado en la instancia (respaldo si la Evaluación no llega).
+      resultado: i.resultado || null,
     }));
   },
 };

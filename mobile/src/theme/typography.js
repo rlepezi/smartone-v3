@@ -1,6 +1,5 @@
-// Plus Jakarta Sans para la UI general, IBM Plex Mono para RUT, patentes y
-// códigos de proyecto. Escala fija de 5 niveles (Entrega 1.1) — no crear
-// tamaños sueltos fuera de esto.
+// Plus Jakarta Sans para la UI general, IBM Plex Mono para RUT, patentes,
+// N° de serie y códigos de proyecto. Escala fija — no crear tamaños sueltos.
 export const fontFamily = {
   regular: "PlusJakartaSans_400Regular",
   medium: "PlusJakartaSans_500Medium",
@@ -10,17 +9,25 @@ export const fontFamily = {
   mono: "IBMPlexMono_500Medium",
 };
 
+// Tope de escalado de la fuente del sistema para números, badges, chips y la
+// barra inferior: con letra grande no se cortan ("Acreditad/as").
+export const MAX_FONT_SCALE = 1.3;
+
 export const typography = {
-  // Números de KPI grandes (Inicio, Cumplimiento agregado).
-  display: { fontFamily: fontFamily.extraBold, fontSize: 34 },
-  // Título del header (GradientHeader).
-  headerTitle: { fontFamily: fontFamily.extraBold, fontSize: 28 },
-  // Título de card (SectionCard, EntityCard).
-  cardTitle: { fontFamily: fontFamily.bold, fontSize: 18 },
+  // Números grandes (% de cumplimiento, contadores de Inicio).
+  display: { fontFamily: fontFamily.extraBold, fontSize: 32 },
+  // Título del header.
+  headerTitle: { fontFamily: fontFamily.extraBold, fontSize: 20 },
+  // Título de card.
+  cardTitle: { fontFamily: fontFamily.bold, fontSize: 16 },
   // Texto de cuerpo.
-  body: { fontFamily: fontFamily.medium, fontSize: 15 },
-  // Texto secundario / pills / meta.
-  caption: { fontFamily: fontFamily.medium, fontSize: 13 },
-  // RUT, patentes, códigos de proyecto.
-  mono: { fontFamily: fontFamily.mono, fontSize: 13 },
+  body: { fontFamily: fontFamily.medium, fontSize: 14 },
+  // Texto de cuerpo destacado (nombres en filas).
+  bodyBold: { fontFamily: fontFamily.bold, fontSize: 14 },
+  // Texto secundario / meta.
+  caption: { fontFamily: fontFamily.medium, fontSize: 12 },
+  // Badges y chips.
+  label: { fontFamily: fontFamily.bold, fontSize: 11 },
+  // RUT, patentes, N° de serie, códigos de proyecto.
+  mono: { fontFamily: fontFamily.mono, fontSize: 12 },
 };

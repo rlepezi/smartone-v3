@@ -29,7 +29,8 @@ export function useAsync(fetcher, deps = []) {
     if (modo === "refresh") setRefreshing(true); else setLoading(true);
     setError(null);
     try {
-      const resultado = await fetcherRef.current();
+      // "Tirar para actualizar" pide datos frescos (sin la caché de cumplimientoService).
+      const resultado = await fetcherRef.current({ forzar: modo === "refresh" });
       if (montado.current) setData(resultado);
     } catch (err) {
       if (montado.current) setError(err);

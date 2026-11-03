@@ -1,15 +1,27 @@
-// Un ícono fijo por entidad, reutilizado en todas partes (EntityCard,
-// ListRow, tab bar) — nunca un mapeo nombre->ícono inventado por fila.
-//
-// Nota: lucide no tiene un ícono literal de "excavadora". `Truck` es el
-// más cercano disponible para Máquinas (más neutro que `Tractor`, que
-// lee como maquinaria agrícola). Si hay una preferencia distinta, es un
-// cambio de una sola línea acá.
-import { FolderKanban, Building, Users, Truck } from "lucide-react-native";
+// Un ícono fijo por entidad (accesos, avatares, barra inferior) y uno por
+// tipo de equipo (components/EquipoIcon.js). El tipo de equipo es texto libre en la Maquinaria
+// (recurso.tipo): se reconoce por palabras clave y, si no calza, se usa el
+// ícono genérico de maquinaria.
+import { FolderKanban, Building2, Users, Truck } from "lucide-react-native";
 
 export const entityIcons = {
   proyectos: FolderKanban,
-  empresas: Building,
+  empresas: Building2,
   personas: Users,
-  maquinas: Truck,
+  equipos: Truck,
 };
+
+const sinTildes = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+// Grupo de un tipo de equipo: vehiculo, minibus, drone o maquinaria.
+export function grupoEquipo(tipo) {
+  const t = sinTildes(tipo);
+  if (/drone|dron\b/.test(t)) return "drone";
+  if (/mini ?bus|bus\b|furgon/.test(t)) return "minibus";
+  if (/camioneta|auto|automovil|vehiculo|jeep|station|suv|moto/.test(t)) return "vehiculo";
+  if (/camion/.test(t)) return "camion";
+  if (/tractor/.test(t)) return "tractor";
+  if (/grua|horquilla/.test(t)) return "grua";
+  return "maquinaria";
+}
+

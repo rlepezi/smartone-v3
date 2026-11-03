@@ -1,164 +1,136 @@
 import React, { useMemo, useState } from "react";
-import { View, FlatList, TouchableOpacity, Text, StyleSheet } from "react-native";
-import { Check } from "lucide-react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { ArrowUpDown } from "lucide-react-native";
+import { useAuth } from "../contexts/AuthContext";
+import { useMandante } from "../contexts/MandanteContext";
+import { can } from "../permissions/can";
 import { useAsync } from "../hooks/useAsync";
 import { useListPaging } from "../hooks/useListPaging";
 import { empresaService } from "../services/empresaService";
-import { reportesApi } from "../api/reportes";
-import { participacionesApi } from "../api/participaciones";
 import { colors } from "../theme/colors";
+import { estadoNivel } from "../theme/status";
 import { spacing, radius, minTouchTarget } from "../theme/spacing";
-import { typography } from "../theme/typography";
-import { formatRut } from "../utils/formatRut";
-import { GradientHeader } from "../components/GradientHeader";
+import { typography, MAX_FONT_SCALE } from "../theme/typography";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { ScreenBody } from "../components/ScreenBody";
+import { useNombreMandante } from "../components/MandanteSelector";
 import { SearchBar } from "../components/SearchBar";
 import { FilterChips } from "../components/FilterChips";
-import { ListRow } from "../components/ListRow";
+import { ListCard } from "../components/ListCard";
+import { StatusBadge } from "../components/StatusBadge";
+import { PercentRing } from "../components/PercentRing";
+import { EntityAvatar } from "../components/EntityAvatar";
 import { EmptyState } from "../components/EmptyState";
-import { ErrorState } from "../components/ErrorState";
-import { SkeletonList } from "../components/Skeleton";
-import { estadoExpediente, bucketAcreditacion } from "../theme/status";
+import { VerMas } from "../components/VerMas";
+import { formatRut } from "../utils/formatRut";
+import { coincide, plural } from "../utils/texto";
 
-const BUCKETS = [
-  { value: null, label: "Todas" },
-  { value: "acreditadas", label: "Acreditadas" },
-  { value: "enProceso", label: "En proceso" },
-  { value: "observadas", label: "Con observaciones" },
+const FILTROS = [
+  { value: "acreditada", label: "Acreditadas" },
+  { value: "aceptable", label: "Aceptables" },
+  { value: "rechazada", label: "Rechazadas" },
+  { value: "pendiente", label: "Pendientes" },
+  { value: "sinParticipacion", label: "Sin participación" },
 ];
+// "Sin requerimientos" se agrupa con Pendientes (mismo criterio que Inicio).
+const filtroDe = (clave) => (clave === "sinRequerimientos" ? "pendiente" : clave);
 
-export default function ListaEmpresasScreen({ navigation, route }) {
+export default function ListaEmpresasScreen({ route, navigation }) {
+  const { rol } = useAuth();
+  const conCumplimiento = can(rol, "ver_operacion");
+  const { mandanteId, umbralesDe } = useMandante();
+  const nombreMandante = useNombreMandante();
   const [busqueda, setBusqueda] = useState(route.params?.busquedaInicial || "");
-  const [bucket, setBucket] = useState(route.params?.estadoInicial || null);
-  const [orden, setOrden] = useState(false); // false = alfabético, true = menor cumplimiento primero
+  const [filtro, setFiltro] = useState(route.params?.estadoInicial || null);
+  const [menorPrimero, setMenorPrimero] = useState(false);
 
-  const { data, loading, refreshing, error, refresh } = useAsync(
-      async () => {
-        const [empresas, resumen, participaciones] = await Promise.all([
-          empresaService.listar({ estado: "activo" }),
-          reportesApi.resumen({}),
-          participacionesApi.listar({ estado: "activa" }),
-        ]);
-        const porEmpresa = {};
-        (resumen.porEmpresa || []).forEach((fila) => {
-          porEmpresa[fila.empresaId] = fila;
-        });
-        // "N proyectos" (de la v2): proyectos distintos por empresa, a
-        // partir de las Participaciones ya cargadas (sin endpoint nuevo).
-        const proyectosPorEmpresa = {};
-        participaciones.forEach((p) => {
-          if (!proyectosPorEmpresa[p.empresaId]) proyectosPorEmpresa[p.empresaId] = new Set();
-          proyectosPorEmpresa[p.empresaId].add(p.proyectoId);
-        });
-        return { empresas, porEmpresa, proyectosPorEmpresa };
-      },
-      [],
+  // Abierta desde Inicio (contador o acceso): se aplica su filtro, o "Todas" (sin espejar en un efecto).
+  const [paramsPrevios, setParamsPrevios] = useState(route.params);
+  if (route.params !== paramsPrevios) {
+    setParamsPrevios(route.params);
+    if (route.params?.reset) {
+      setBusqueda(route.params.busquedaInicial || "");
+      setFiltro(route.params.estadoInicial || null);
+      setMenorPrimero(false);
+    }
+  }
+
+  const estado = useAsync(
+    ({ forzar } = {}) => empresaService.listar({ mandanteId, umbralesDe, forzar, conCumplimiento }),
+    [mandanteId, conCumplimiento],
   );
 
-  const filtrados = useMemo(() => {
-    if (!data) return [];
-    const texto = busqueda.trim().toLowerCase();
-    let lista = data.empresas.map((e) => ({
-      ...e,
-      cumplimiento: data.porEmpresa[e.id] || null,
-      nProyectos: data.proyectosPorEmpresa[e.id]?.size || 0,
-    }));
-    if (texto) {
-      lista = lista.filter((e) =>
-        e.razonSocial?.toLowerCase().includes(texto) ||
-        e.rut?.toLowerCase().includes(texto));
-    }
-    if (bucket) {
-      lista = lista.filter(
-          (e) => bucketAcreditacion(e.cumplimiento?.expedienteEstado) === bucket,
-      );
-    }
-    if (orden) {
-      lista = [...lista].sort((a, b) => {
-        const pa = a.cumplimiento?.avancePct;
-        const pb = b.cumplimiento?.avancePct;
-        if (pa === null || pa === undefined) return 1;
-        if (pb === null || pb === undefined) return -1;
-        return pa - pb;
-      });
-    } else {
-      lista = [...lista].sort((a, b) =>
-        (a.razonSocial || "").localeCompare(b.razonSocial || ""));
-    }
-    return lista;
-  }, [data, busqueda, bucket, orden]);
+  const empresas = useMemo(() => (estado.data?.empresas || []).map((e) => {
+    const c = estado.data.indice?.empresa(e.id) || null;
+    return { ...e, cumplimiento: c, filtro: c ? filtroDe(c.clave) : "sinParticipacion" };
+  }), [estado.data]);
 
-  const { visibles, hayMas, cargarMas } = useListPaging(filtrados);
+  const buscadas = useMemo(
+    () => empresas.filter((e) => coincide(busqueda, e.razonSocial, e.nombreFantasia, e.rut)),
+    [empresas, busqueda],
+  );
+  const filtradas = useMemo(() => {
+    const lista = buscadas.filter((e) => !filtro || e.filtro === filtro);
+    const porNombre = (a, b) => String(a.razonSocial || "").localeCompare(String(b.razonSocial || ""), "es");
+    if (!menorPrimero) return [...lista].sort(porNombre);
+    return [...lista].sort((a, b) => ((a.cumplimiento?.pct ?? 101) - (b.cumplimiento?.pct ?? 101)) || porNombre(a, b));
+  }, [buscadas, filtro, menorPrimero]);
+  const { visibles, hayMas, cargarMas } = useListPaging(filtradas);
+
+  const opciones = [
+    { value: null, label: "Todas", count: buscadas.length },
+    ...FILTROS.map((f) => ({ ...f, count: buscadas.filter((e) => e.filtro === f.value).length }))
+      .filter((f) => f.count > 0 || f.value === filtro || ["acreditada", "aceptable", "rechazada"].includes(f.value)),
+  ];
 
   return (
     <View style={styles.screen}>
-      <GradientHeader variant="detail" title={`Empresas${data ? ` (${filtrados.length})` : ""}`} />
-      <View style={styles.body}>
-        <View style={styles.filtros}>
-          <SearchBar value={busqueda} onChangeText={setBusqueda} placeholder="Buscar empresa o RUT..." />
-          <FilterChips options={BUCKETS} value={bucket} onChange={setBucket} />
-          <TouchableOpacity onPress={() => setOrden((o) => !o)} style={styles.ordenBtn}>
-            {orden && <Check color={colors.primary} size={14} />}
-            <Text style={[typography.body, { color: colors.primary }]}>
-              Menor cumplimiento primero
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {loading && !data && <SkeletonList />}
-        {error && !data && <ErrorState message={error.message} onRetry={refresh} />}
-
-        {data && (
-          <FlatList
-            data={visibles}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.lista}
-            refreshing={refreshing}
-            onRefresh={refresh}
-            renderItem={({ item }) => (
-              <ListRow
-                entity="empresas"
-                titulo={item.razonSocial}
-                subtituloMono={formatRut(item.rut)}
-                meta={`${item.nProyectos} proyecto${item.nProyectos === 1 ? "" : "s"}`}
-                estado={item.cumplimiento ?
-                  estadoExpediente(item.cumplimiento.expedienteEstado) : null}
-                extra={item.cumplimiento?.avancePct !== null && item.cumplimiento?.avancePct !== undefined ?
-                  `${Math.round(item.cumplimiento.avancePct)}%` : null}
-                onPress={() => navigation.navigate("DetalleEmpresa", { empresaId: item.id })}
-              />
-            )}
-            ListEmptyComponent={<EmptyState message="No hay empresas para este filtro." />}
-            ListFooterComponent={hayMas ? (
-              <TouchableOpacity style={styles.masBtn} onPress={cargarMas}>
-                <Text style={[typography.body, { color: colors.primary }]}>Cargar más</Text>
-              </TouchableOpacity>
-            ) : null}
-          />
-        )}
-      </View>
+      <ScreenHeader title="Empresas" subtitle={nombreMandante} count={estado.data ? filtradas.length : null} />
+      <ScreenBody estado={estado}>
+        <SearchBar
+          value={busqueda}
+          onChangeText={setBusqueda}
+          placeholder="Buscar por nombre o RUT"
+          right={conCumplimiento ? (
+            <TouchableOpacity
+              style={[styles.orden, menorPrimero && styles.ordenActivo]}
+              onPress={() => setMenorPrimero((v) => !v)}
+              accessibilityLabel="Ordenar por menor cumplimiento"
+              accessibilityState={{ selected: menorPrimero }}
+            >
+              <ArrowUpDown color={menorPrimero ? colors.onDark : colors.textMuted} size={16} />
+              <Text style={[typography.label, { color: menorPrimero ? colors.onDark : colors.textMuted }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                Menor %
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        />
+        {conCumplimiento ? <FilterChips options={opciones} value={filtro} onChange={setFiltro} /> : null}
+        {filtradas.length === 0 ? <EmptyState message="No hay empresas que coincidan con el filtro." /> : null}
+        {visibles.map((e) => (
+          <ListCard key={e.id} onPress={() => navigation.navigate("DetalleEmpresa", { empresaId: e.id })} accessibilityLabel={e.razonSocial}>
+            <EntityAvatar tipo="empresa" nombre={e.nombreFantasia || e.razonSocial} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{e.razonSocial}</Text>
+              <Text style={[typography.caption, { color: colors.textSubtle }]} numberOfLines={1}>
+                {formatRut(e.rut)}{e.cumplimiento ? ` · ${plural(e.cumplimiento.proyectos, "proyecto")}` : ""}
+              </Text>
+              {conCumplimiento ? <StatusBadge estado={estadoNivel(e.cumplimiento?.clave || "sinParticipacion")} /> : null}
+            </View>
+            {e.cumplimiento ? <PercentRing pct={e.cumplimiento.pct} color={estadoNivel(e.cumplimiento.clave).dot} /> : null}
+          </ListCard>
+        ))}
+        <VerMas visible={hayMas} onPress={cargarMas} />
+      </ScreenBody>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  body: {
-    flex: 1,
-    marginTop: -radius.headerOverlap,
-    borderTopLeftRadius: radius.headerOverlap,
-    borderTopRightRadius: radius.headerOverlap,
-    backgroundColor: colors.bg,
+  orden: {
+    minHeight: minTouchTarget, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: spacing.md,
+    borderRadius: radius.button, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
-  filtros: { padding: spacing.lg, paddingBottom: 0 },
-  ordenBtn: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingVertical: spacing.sm, marginBottom: spacing.sm },
-  lista: { padding: spacing.lg },
-  masBtn: {
-    minHeight: minTouchTarget,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: spacing.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
+  ordenActivo: { backgroundColor: colors.primary, borderColor: colors.primary },
 });

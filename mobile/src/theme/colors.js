@@ -1,29 +1,37 @@
-// Paleta del rediseño visual (Entrega 1.1). Tomada de las referencias en
-// mobile/docs/design/target/ — no modificar valores sueltos en pantallas o
-// componentes, todo color viene de acá.
+// Paleta del rediseño de la app móvil. Todo color de pantallas y componentes
+// viene de acá (o de theme/status.js para los estados): nunca colores sueltos.
 export const colors = {
-  // Header: degradado navy -> azul, con curvas decorativas en
-  // rgba(255,255,255,0.06) dibujadas con SVG (ver GradientHeader).
-  headerFrom: "#0A2350",
-  headerTo: "#1456C8",
-
-  // Primario y acento.
-  primary: "#1E6FE8", // tab activo, chip activo, links
-  accent: "#22C3E6", // "One" del logo, RUT y códigos sobre fondo oscuro
-
-  // Base.
-  bg: "#F4F7FB",
+  primaryDark: "#0B2A6B", // header
+  primary: "#1D4ED8", // tab activo, chip activo, links
+  bg: "#F1F4F9",
   surface: "#FFFFFF",
-  border: "#E6ECF5",
-  ink: "#0F1E3D",
-  muted: "#5B6B82",
+  border: "#E2E8F0",
+  text: "#0F172A",
+  textMuted: "#475569",
+  textSubtle: "#64748B",
   onDark: "#FFFFFF",
+  onDarkMuted: "rgba(255,255,255,0.75)",
+  onDarkSurface: "rgba(255,255,255,0.14)",
+  // Fondo de las hojas inferiores (selector de Mandante, filtros).
+  overlay: "rgba(15,23,42,0.45)",
+  // Texto de error sobre el fondo oscuro del Login.
+  errorOnDark: "#FDE4E5",
+  // Aviso (patente no válida): mismo ámbar que "Aceptable".
+  warningBg: "#FEF3C7",
+  warningText: "#92400E",
+
+  // Alias de la paleta anterior (Login): apuntan a los tokens nuevos.
+  headerFrom: "#0B2A6B",
+  headerTo: "#1D4ED8",
+  accent: "#93C5FD",
+  ink: "#0F172A",
+  muted: "#64748B",
 };
 
-// Acento por entidad: círculo del ícono y borde inferior de la card.
+// Acento por entidad: círculo del ícono en accesos y avatares.
 export const entityColors = {
-  proyectos: { color: "#3B82F6", bg: "#E3EEFE" },
-  empresas: { color: "#7C5CF0", bg: "#EEE9FE" },
-  personas: { color: "#1FA97A", bg: "#DDF5EC" },
-  maquinas: { color: "#EF5B5B", bg: "#FDE6E6" },
+  proyectos: { color: "#1D4ED8", bg: "#DBEAFE" },
+  empresas: { color: "#6D28D9", bg: "#EDE9FE" },
+  personas: { color: "#047857", bg: "#D1FAE5" },
+  equipos: { color: "#B91C1C", bg: "#FEE2E2" },
 };

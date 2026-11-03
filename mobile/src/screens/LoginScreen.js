@@ -129,5 +129,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     marginTop: spacing.sm,
   },
-  error: { color: "#FDE4E5" },
+  error: { color: colors.errorOnDark },
 });

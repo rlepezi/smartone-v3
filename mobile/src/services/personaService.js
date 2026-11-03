@@ -1,30 +1,29 @@
 import { personasApi } from "../api/personas";
-import { expedienteService } from "./expedienteService";
 import { evaluacionService } from "./evaluacionService";
+import { cumplimientoService } from "./cumplimientoService";
 
 export const personaService = {
-  listar: (params) => personasApi.listar(params),
+  async listar({ mandanteId, umbralesDe, forzar = false } = {}) {
+    const [personas, indice] = await Promise.all([
+      personasApi.listar({ estado: "activo" }),
+      cumplimientoService.cargar({ mandanteId, umbralesDe, forzar }),
+    ]);
+    return { personas, indice };
+  },
 
-  async obtenerDetalle(id) {
-    const [persona, resumen] = await Promise.all([
+  // Persona (con su empresa actual, de empresaPersonas), sus participaciones activas (de
+  // participacionPersonas, con proyecto y perfiles de recurso) y su historial de empresas.
+  async obtenerDetalle(id, { mandanteId, umbralesDe, forzar = false } = {}) {
+    const [persona, resumen, relaciones, indice] = await Promise.all([
       personasApi.obtener(id),
       personasApi.resumen(id),
+      personasApi.relaciones(id).catch(() => []),
+      cumplimientoService.cargar({ mandanteId, umbralesDe, forzar }),
     ]);
-    return { persona, resumen };
+    const participacionesActivas = (resumen?.participacionesActivas || [])
+      .filter((p) => !mandanteId || p.mandanteId === mandanteId);
+    return { persona, participacionesActivas, relaciones: relaciones || [], indice };
   },
 
-  // Requerimientos con vigencia de UNA participación elegida en el selector
-  // (proyectoId + empresaId de esa participación activa, con sus perfiles).
-  async obtenerDetalleParticipacion(
-      mandanteId, personaId, empresaId, proyectoId, perfilRecursoIds,
-  ) {
-    const expediente = await expedienteService.obtenerPorEmpresaYProyecto(
-        mandanteId, empresaId, proyectoId,
-    );
-    return {
-      expediente,
-      filas: await evaluacionService.filasDeSujeto(expediente?.id, { personaId }),
-    };
-  },
-
+  filas: (expedienteId, personaId) => evaluacionService.filasDeSujeto(expedienteId, { personaId }),
 };

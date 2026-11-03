@@ -13,8 +13,8 @@ restaurar este contenido.
 
 ## Alcance de Entrega 1
 
-**Solo lectura.** Seis pantallas: Inicio, Lista (Proyectos/Empresas/Personas/
-Máquinas), Detalle Empresa, Detalle Persona, Detalle Maquinaria, Detalle
+**Solo lectura.** Pantallas: Inicio, Lista (Proyectos/Empresas/Personas/
+Equipos), Detalle Empresa, Detalle Persona, Detalle Equipo, Detalle
 Proyecto. Cero escritura: ninguna llamada POST/PUT/PATCH/DELETE, ningún botón
 de acción funcional, no existe pantalla Evaluar. Los botones de acción del
 diseño (Editar, Asignar recurso, Cargar documento, Finalizar asignación,
@@ -46,11 +46,14 @@ service → controller → routes), con el mismo mecanismo de auth que
 - `src/api/client.js` agrega el header de auth, resuelve la baseURL según
   entorno (emulador vs. producción) y normaliza errores a `{ code, message }`
   (el backend responde `{ error, message }` — `code` = `error`).
-- Los conteos agregados (Inicio, cumplimiento) vienen de endpoints del
-  backend (`/reportes/*`). **Prohibido contar/sumar documentos en el
-  cliente** — eso replica el bug conocido de la app actual (`0/0` mostrado
-  como `0%` en vez de "sin datos"; `avancePct` es `null`, nunca `0`, cuando
-  no hay nada evaluable).
+- El cumplimiento sale de los contadores que el backend mantiene en cada
+  Expediente (`resumen` y `resumenSujetos`, vía `GET /expedientes`).
+  **Prohibido contar evaluaciones en el cliente**: solo se suman esos
+  contadores (agregados ponderados). Las reglas (% = cumple / (activas −
+  noAplica), umbrales `umbralesAcreditacion` del Mandante, "Pendiente" sin
+  evaluaciones, `null` → "—" y nunca 0 %) viven en
+  `src/utils/complianceStatus.js`, espejo de
+  `frontend/src/utils/cumplimientoCalculos.js`: mantener alineados.
 
 ## Roles y permisos
 

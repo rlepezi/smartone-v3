@@ -1,4 +1,4 @@
-// Escala de espaciado, radios y sombra del rediseño visual (Entrega 1.1).
+// Escala de espaciado (gutter lateral de 16), radios (12–16) y sombra.
 export const spacing = {
   xs: 4,
   sm: 8,
@@ -10,6 +10,8 @@ export const spacing = {
 
 export const radius = {
   card: 16,
+  // Botones, buscador y filas internas.
+  button: 12,
   pill: 999,
   // Borde superior del contenido que monta sobre el header (GradientHeader).
   headerOverlap: 20,

@@ -1,259 +1,147 @@
-import React, { useMemo, useState } from "react";
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
-import { Briefcase } from "lucide-react-native";
+import React, { useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { ChevronRight, History } from "lucide-react-native";
 import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { personaService } from "../services/personaService";
-import { proyectosApi } from "../api/proyectos";
-import { colors, entityColors } from "../theme/colors";
-import { spacing, radius } from "../theme/spacing";
+import { colors } from "../theme/colors";
+import { spacing } from "../theme/spacing";
 import { typography } from "../theme/typography";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { ScreenBody } from "../components/ScreenBody";
+import { Card } from "../components/Card";
+import { DataGrid } from "../components/DataGrid";
+import { TabsParticipacion } from "../components/TabsParticipacion";
+import { ComplianceSummary } from "../components/ComplianceSummary";
+import { RequerimientosLista } from "../components/RequerimientosLista";
+import { EntityAvatar } from "../components/EntityAvatar";
+import { EmptyState } from "../components/EmptyState";
+import { formatDate } from "../utils/fechas";
 import { formatRut } from "../utils/formatRut";
 import { formatNombre } from "../utils/formatNombre";
-import { diasRestantes } from "../utils/fechas";
-import { GradientHeader } from "../components/GradientHeader";
-import { SectionCard } from "../components/SectionCard";
-import { ProgressRow } from "../components/ProgressRow";
-import { ResultCounters } from "../components/ResultCounters";
-import { StatusPill } from "../components/StatusPill";
-import { ReqRow } from "../components/ReqRow";
-import { EmptyState } from "../components/EmptyState";
-import { ErrorState } from "../components/ErrorState";
-import { SkeletonCard } from "../components/Skeleton";
-
-const UMBRAL_AVISO_DIAS = 30;
-
-function iniciales(nombre, apellido) {
-  return `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase();
-}
-
-// "Acreditada" a nivel de ESTA persona en ESTA asignación: no viene
-// servido por ningún endpoint — se deriva con el mismo criterio que
-// reporteService._contarAcreditados en el backend (sin no_cumple ni
-// pendiente, y todos los requerimientos propios resueltos).
-function calcularAvance(filas) {
-  let cumple = 0; let noCumple = 0; let pendiente = 0; let noAplica = 0;
-  filas.forEach(({ evaluacion }) => {
-    const r = evaluacion?.resultado || "pendiente";
-    if (r === "cumple") cumple++;
-    else if (r === "no_cumple") noCumple++;
-    else if (r === "no_aplica") noAplica++;
-    else pendiente++;
-  });
-  const evaluables = filas.length - noAplica;
-  const avancePct = evaluables > 0 ? (cumple / evaluables) * 100 : null;
-  const acreditada = filas.length > 0 && noCumple === 0 && pendiente === 0;
-  return { cumple, noCumple, pendiente, noAplica, avancePct, acreditada };
-}
+import { nivelDeResumen, resumenDeSujeto } from "../utils/complianceStatus";
 
 export default function DetallePersonaScreen({ route, navigation }) {
   const { personaId } = route.params;
-  const { mandanteId } = useMandante();
+  const { mandanteId, umbralesDe } = useMandante();
+  const [tab, setTab] = useState(null);
+  const [verHistorial, setVerHistorial] = useState(false);
 
-  const base = useAsync(() => personaService.obtenerDetalle(personaId), [personaId]);
-  const [asignacionIdx, setAsignacionIdx] = useState(0);
-  const asignaciones = base.data?.resumen?.participacionesActivas || [];
-  const asignacionActiva = asignaciones[asignacionIdx] || null;
+  const base = useAsync(
+    ({ forzar } = {}) => personaService.obtenerDetalle(personaId, { mandanteId, umbralesDe, forzar }),
+    [personaId, mandanteId],
+  );
+  const data = base.data;
+  const participaciones = data?.participacionesActivas || [];
+  const activa = participaciones.find((p) => p.participacionId === tab) || participaciones[0] || null;
+  const expediente = activa ? data.indice.expedienteDe(activa.empresaId, activa.proyectoId) : null;
 
-  const proyectoActivo = useAsync(async () => {
-    if (!asignacionActiva) return null;
-    return proyectosApi.obtener(asignacionActiva.proyectoId);
-  }, [asignacionActiva?.proyectoId]);
-
-  const detalle = useAsync(async () => {
-    if (!asignacionActiva?.empresaId) return null;
-    return personaService.obtenerDetalleParticipacion(
-        mandanteId, personaId, asignacionActiva.empresaId,
-        asignacionActiva.proyectoId, asignacionActiva.perfilRecursoIds,
-    );
-  }, [asignacionActiva?.participacionId, mandanteId]);
-
-  const avance = useMemo(
-      () => calcularAvance(detalle.data?.filas || []),
-      [detalle.data],
+  const filas = useAsync(
+    async () => (expediente ? personaService.filas(expediente.id, personaId) : []),
+    [expediente?.id, personaId],
   );
 
-  const porVencer = useMemo(() => {
-    return (detalle.data?.filas || []).filter(({ evaluacion }) => {
-      if (!evaluacion?.fechaVencimiento) return false;
-      const dias = diasRestantes(evaluacion.fechaVencimiento);
-      return dias !== null && dias <= UMBRAL_AVISO_DIAS;
-    });
-  }, [detalle.data]);
-
-  if (base.loading && !base.data) return <SkeletonCard height={320} />;
-  if (base.error && !base.data) return <ErrorState message={base.error.message} onRetry={base.reload} />;
-  if (!base.data) return null;
-
-  const { persona } = base.data;
-  // Relación activa con su Empresa (null si no tiene, o si es con una Empresa fuera del alcance).
-  const empresaActual = persona.empresaActual;
+  const persona = data?.persona;
+  const nombre = persona ? formatNombre(`${persona.nombre || ""} ${persona.apellido || ""}`) : "Persona";
+  const empresaActual = persona?.empresaActual;
+  // Historial: relaciones con empresas que ya terminaron (la vigente es la "Empresa actual").
+  const anteriores = (data?.relaciones || []).filter((r) => r.estado !== "activa");
 
   return (
     <View style={styles.screen}>
-      <GradientHeader variant="detail" title="Persona" onBack={() => navigation.goBack()}>
-        <View style={styles.headerInfo}>
-          <View style={styles.avatar}>
-            <Text style={[typography.cardTitle, { color: colors.onDark }]}>
-              {iniciales(persona.nombre, persona.apellido)}
-            </Text>
+      <ScreenHeader
+        variant="detalle"
+        onBack={() => navigation.goBack()}
+        label="Persona"
+        left={persona ? (
+          <View style={styles.cabecera}>
+            <EntityAvatar tipo="persona" nombre={nombre} size={48} oscuro />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[typography.label, styles.label]}>PERSONA</Text>
+              <Text style={[typography.headerTitle, { color: colors.onDark }]} numberOfLines={2}>{nombre}</Text>
+              <Text style={[typography.mono, { color: colors.onDarkMuted }]}>{formatRut(persona.rut)}</Text>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[typography.cardTitle, { color: colors.onDark }]} numberOfLines={1}>
-              {formatNombre(`${persona.nombre} ${persona.apellido}`)}
-            </Text>
-            <Text style={[typography.mono, { color: colors.accent }]}>
-              {persona.identificacion?.tipo === "RUT" ?
-                formatRut(persona.identificacion.numero) : persona.identificacion?.numero}
-            </Text>
-          </View>
-        </View>
-        {asignacionActiva?.perfilesRecurso?.length > 0 && (
-          <View style={styles.rolPill}>
-            <Briefcase color={colors.onDark} size={14} />
-            <Text style={[typography.caption, { color: colors.onDark }]}>
-              {asignacionActiva.perfilesRecurso.map((p) => p.nombre).join(", ")}
-            </Text>
-          </View>
-        )}
-      </GradientHeader>
-
-      <ScrollView
-        style={styles.body}
-        contentContainerStyle={styles.bodyContent}
-        refreshControl={<RefreshControl refreshing={base.refreshing} onRefresh={base.refresh} />}
-      >
-        <SectionCard title="Empresa actual">
-          <Text style={[typography.body, { color: colors.ink }]}>
-            {empresaActual?.empresaNombre || "—"}
-          </Text>
-          {empresaActual?.cargo && (
-            <Text style={[typography.caption, { color: colors.muted }]}>
-              {empresaActual.cargo}
-            </Text>
-          )}
-        </SectionCard>
-
-        {asignaciones.length === 0 && (
-          <EmptyState title="Sin asignaciones" message="Esta persona no tiene asignaciones activas." />
-        )}
-
-        {asignaciones.length > 0 && (
-          <SectionCard title="Asignaciones activas">
-            {asignaciones.length > 1 && (
-              <View style={styles.selector}>
-                {asignaciones.map((a, i) => (
-                  <TouchableOpacity
-                    key={`${a.proyectoId}-${i}`}
-                    onPress={() => setAsignacionIdx(i)}
-                    style={[styles.chip, i === asignacionIdx && styles.chipActivo]}
-                  >
-                    <Text style={{ color: i === asignacionIdx ? colors.onDark : colors.ink }}>
-                      {a.proyectoNombre}
+        ) : null}
+        title={persona ? null : "Persona"}
+      />
+      <ScreenBody estado={base}>
+        {persona ? (
+          <>
+            <Card title="Empresa actual">
+              {empresaActual ? (
+                <TouchableOpacity style={styles.empresa} onPress={() => navigation.navigate("DetalleEmpresa", { empresaId: empresaActual.empresaId })}>
+                  <EntityAvatar tipo="empresa" nombre={empresaActual.empresaNombre} size={40} />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{empresaActual.empresaNombre || "Empresa"}</Text>
+                    <Text style={[typography.caption, { color: colors.textSubtle }]}>
+                      {[empresaActual.cargo, empresaActual.tipoRelacion].filter(Boolean).join(" · ") || "Sin cargo"}
                     </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {proyectoActivo.data?.codigo && (
-              <Text style={[typography.mono, styles.codigoProyecto]}>
-                {proyectoActivo.data.codigo}
-              </Text>
-            )}
-
-            {detalle.loading && !detalle.data && <SkeletonCard height={100} />}
-            {detalle.error && !detalle.data && (
-              <ErrorState message={detalle.error.message} onRetry={detalle.reload} />
-            )}
-            {detalle.data && (
-              <>
-                <ProgressRow
-                  pct={avance.avancePct}
-                  ratio={{ num: avance.cumple, den: detalle.data.filas.length }}
-                />
-                <View style={styles.mt}>
-                  <ResultCounters
-                    cumple={avance.cumple}
-                    noCumple={avance.noCumple}
-                    pendiente={avance.pendiente}
-                  />
-                </View>
-                {avance.avancePct !== null && (
-                  <View style={styles.mt}>
-                    <StatusPill estado={avance.acreditada ?
-                      { label: "Acreditada", fg: "#15803D", bar: "#16A34A", bg: "#DCF5E7" } :
-                      { label: "En proceso", fg: "#A16207", bar: "#F2B01E", bg: "#FEF4D6" }} />
+                    <Text style={[typography.caption, { color: colors.textSubtle }]}>Desde {formatDate(empresaActual.fechaInicio)}</Text>
                   </View>
-                )}
-              </>
-            )}
-          </SectionCard>
-        )}
+                  <ChevronRight color={colors.textSubtle} size={18} />
+                </TouchableOpacity>
+              ) : <EmptyState title="Sin empresa" message="Esta persona no tiene una relación vigente con una empresa visible." />}
+              {anteriores.length > 0 ? (
+                <TouchableOpacity style={styles.historial} onPress={() => setVerHistorial((v) => !v)}>
+                  <History color={colors.primary} size={16} />
+                  <Text style={[typography.bodyBold, { color: colors.primary }]}>
+                    {verHistorial ? "Ocultar historial de empresas" : "Historial de empresas"}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {verHistorial ? anteriores.map((r) => (
+                <View key={r.id} style={styles.relacion}>
+                  <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{r.empresaNombre || "Empresa"}</Text>
+                  <Text style={[typography.caption, { color: colors.textSubtle }]}>
+                    {[r.cargo, `${formatDate(r.fechaInicio)} – ${formatDate(r.fechaTermino)}`].filter(Boolean).join(" · ")}
+                  </Text>
+                </View>
+              )) : null}
+            </Card>
 
-        {porVencer.length > 0 && (
-          <SectionCard title="Documentos por vencer">
-            {porVencer.map(({ requerimiento, evaluacion }, i) => (
-              <ReqRow
-                key={requerimiento.requerimientoId}
-                numero={i + 1}
-                nombre={requerimiento.nombre}
-                evaluacion={evaluacion}
-              />
-            ))}
-          </SectionCard>
-        )}
+            <TabsParticipacion
+              items={participaciones.map((p) => ({ key: p.participacionId, label: p.proyectoNombre || "Proyecto" }))}
+              value={activa?.participacionId}
+              onChange={setTab}
+            />
 
-        {asignacionActiva && detalle.data && (
-          <SectionCard title="Requerimientos">
-            {detalle.data.filas.length === 0 ? (
-              <EmptyState message="Este perfil no tiene requerimientos de persona." />
-            ) : (
-              detalle.data.filas.map(({ requerimiento, evaluacion }, i) => (
-                <ReqRow
-                  key={requerimiento.requerimientoId}
-                  numero={i + 1}
-                  nombre={requerimiento.nombre}
-                  evaluacion={evaluacion}
+            {activa ? (
+              <>
+                <Card>
+                  <DataGrid items={[
+                    { label: "Rol", value: (activa.perfilesRecurso || []).map((p) => p.nombre).join(", ") || "Sin perfil" },
+                    { label: "Mandante", value: activa.mandanteNombre },
+                  ]} />
+                  {expediente ? (
+                    <ComplianceSummary nivel={nivelDeResumen(resumenDeSujeto(expediente, { personaId }), umbralesDe(expediente.mandanteId))} />
+                  ) : <EmptyState title="Sin expediente" message="La participación aún no tiene expediente abierto." />}
+                </Card>
+                <RequerimientosLista
+                  key={`q-${activa.participacionId}`}
+                  titulo="Requerimientos de la persona"
+                  filas={filas.data}
+                  cargando={filas.loading}
+                  vacio="Su perfil no tiene requerimientos de persona en este proyecto."
                 />
-              ))
+              </>
+            ) : (
+              <Card>
+                <EmptyState title="Sin participaciones activas" message="Esta persona no está asignada hoy a proyectos de este mandante." />
+              </Card>
             )}
-          </SectionCard>
-        )}
-      </ScrollView>
+          </>
+        ) : null}
+      </ScreenBody>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  headerInfo: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  avatar: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: entityColors.personas.color,
-    alignItems: "center", justifyContent: "center",
-  },
-  rolPill: {
-    flexDirection: "row", alignItems: "center", gap: spacing.xs,
-    backgroundColor: "rgba(255,255,255,0.15)", borderRadius: radius.pill,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    alignSelf: "flex-start",
-  },
-  body: {
-    flex: 1,
-    marginTop: -radius.headerOverlap,
-    borderTopLeftRadius: radius.headerOverlap,
-    borderTopRightRadius: radius.headerOverlap,
-    backgroundColor: colors.bg,
-  },
-  bodyContent: { padding: spacing.lg },
-  selector: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
-  chip: {
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  chipActivo: { backgroundColor: colors.primary, borderColor: colors.primary },
-  codigoProyecto: { color: colors.muted, marginBottom: spacing.sm },
-  mt: { marginTop: spacing.md },
+  cabecera: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  label: { color: colors.onDarkMuted, letterSpacing: 0.6 },
+  empresa: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 44 },
+  historial: { flexDirection: "row", alignItems: "center", gap: spacing.xs, minHeight: 44 },
+  relacion: { gap: 2, paddingVertical: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border },
 });

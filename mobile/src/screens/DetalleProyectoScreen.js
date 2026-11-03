@@ -1,179 +1,159 @@
 import React, { useMemo } from "react";
-import { ScrollView, View, Text, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { ChevronRight } from "lucide-react-native";
+import { useMandante } from "../contexts/MandanteContext";
 import { useAsync } from "../hooks/useAsync";
 import { proyectoService } from "../services/proyectoService";
-import { reportesApi } from "../api/reportes";
-import { colors } from "../theme/colors";
+import { colors, entityColors } from "../theme/colors";
 import { entityIcons } from "../theme/entityIcons";
-import { estadoExpediente } from "../theme/status";
+import { estadoNivel, estadoProyecto } from "../theme/status";
 import { spacing, radius } from "../theme/spacing";
-import { typography } from "../theme/typography";
-import { formatFecha } from "../utils/fechas";
-import { GradientHeader } from "../components/GradientHeader";
-import { SectionCard } from "../components/SectionCard";
-import { ProgressRow } from "../components/ProgressRow";
-import { InfoGrid } from "../components/InfoGrid";
-import { EntityCard } from "../components/EntityCard";
-import { StatusPill } from "../components/StatusPill";
+import { typography, MAX_FONT_SCALE } from "../theme/typography";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { ScreenBody } from "../components/ScreenBody";
+import { Card } from "../components/Card";
+import { DataGrid } from "../components/DataGrid";
+import { ComplianceSummary } from "../components/ComplianceSummary";
+import { StatusBadge } from "../components/StatusBadge";
+import { SegmentBar } from "../components/SegmentBar";
+import { ListCard } from "../components/ListCard";
+import { EntityAvatar } from "../components/EntityAvatar";
 import { EmptyState } from "../components/EmptyState";
-import { ErrorState } from "../components/ErrorState";
-import { SkeletonCard } from "../components/Skeleton";
+import { formatDate } from "../utils/fechas";
+import { formatRut } from "../utils/formatRut";
+import { getMandanteDisplayName } from "../utils/mandanteDisplay";
+import { textoPorcentaje } from "../utils/complianceStatus";
+import { plural } from "../utils/texto";
+import { tokenReset } from "../utils/navegacion";
 
 export default function DetalleProyectoScreen({ route, navigation }) {
   const { proyectoId } = route.params;
+  const { mandanteId, mandantes, umbralesDe } = useMandante();
 
-  const { data, loading, refreshing, error, refresh } = useAsync(
-      async () => {
-        const [detalle, resumenProyecto, resumenGlobal] = await Promise.all([
-          proyectoService.obtenerDetalle(proyectoId),
-          // Ratio real x/y a nivel proyecto — GET /reportes/resumen?proyectoId=
-          // (existe en api/reportes.js), evita el promedio simple entre
-          // empresas que se usaba antes (ver auditoría Fase A/B).
-          reportesApi.resumen({ proyectoId }),
-          // Estado de acreditación por empresa: GET /reportes/proyectos/:id/
-          // participantes no trae expedienteEstado, solo cumplimientoPct —
-          // se resuelve cruzando con /reportes/resumen global. Si una
-          // empresa participa en más de un proyecto esto puede no ser
-          // exacto a ESTE proyecto puntual (gap documentado en Fase A/B).
-          reportesApi.resumen({}),
-        ]);
-        const estadoPorEmpresa = {};
-        (resumenGlobal.porEmpresa || []).forEach((f) => {
-          estadoPorEmpresa[f.empresaId] = f.expedienteEstado;
-        });
-        return { ...detalle, resumenProyecto, estadoPorEmpresa };
-      },
-      [proyectoId],
+  const estado = useAsync(
+    ({ forzar } = {}) => proyectoService.obtenerDetalle(proyectoId, { mandanteId, umbralesDe, forzar }),
+    [proyectoId, mandanteId],
   );
+  const data = estado.data;
 
-  const Icon = entityIcons.proyectos;
+  // Empresas participantes con el cumplimiento de su Expediente (contadores del backend) y el
+  // perfil de participación (reporte de participantes).
+  const empresas = useMemo(() => {
+    if (!data) return [];
+    const participantes = Object.fromEntries(data.participantes.map((p) => [p.empresaId, p]));
+    return data.indice.expedientesDeProyecto(proyectoId).map((e) => ({
+      expediente: e,
+      nivel: data.indice.nivelExpediente(e),
+      participante: participantes[e.empresaId] || {},
+    })).sort((a, b) => (a.nivel.pct ?? 101) - (b.nivel.pct ?? 101));
+  }, [data, proyectoId]);
 
-  const activas = useMemo(
-      () => (data?.participantes || []).filter((p) => p.estado === "activa").length,
-      [data],
-  );
-
-  if (loading && !data) return <SkeletonCard height={320} />;
-  if (error && !data) return <ErrorState message={error.message} onRetry={refresh} />;
-  if (!data) return null;
-
-  const { proyecto, resumen, participantes, resumenProyecto, estadoPorEmpresa } = data;
-  const req = resumenProyecto.requerimientos;
+  const proyecto = data?.proyecto;
+  const agregado = data?.indice.proyecto(proyectoId) || null;
+  const mandante = mandantes.find((m) => m.id === proyecto?.mandanteId);
 
   return (
     <View style={styles.screen}>
-      <GradientHeader variant="detail" title="Proyecto" onBack={() => navigation.goBack()}>
-        <View style={styles.headerInfo}>
-          <View style={[styles.iconCircle, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
-            <Icon color={colors.onDark} size={22} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[typography.cardTitle, { color: colors.onDark }]} numberOfLines={2}>
-              {proyecto.nombre}
-            </Text>
-            <Text style={[typography.mono, { color: colors.accent }]}>{proyecto.codigo}</Text>
-          </View>
-        </View>
-        <View style={styles.estadoRow}>
-          <View style={styles.estadoPill}>
-            <Text style={[typography.caption, { color: colors.onDark }]}>
-              {proyecto.estado.replace("_", " ")}
-            </Text>
-          </View>
-        </View>
-      </GradientHeader>
-
-      <ScrollView
-        style={styles.body}
-        contentContainerStyle={styles.bodyContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+      <ScreenHeader
+        variant="detalle"
+        onBack={() => navigation.goBack()}
+        label="Proyecto"
+        title={proyecto?.nombre || "Proyecto"}
+        meta={[proyecto?.codigo, getMandanteDisplayName(mandante)].filter(Boolean).join(" · ") || null}
       >
-        <InfoGrid
-          items={[
-            { label: "Inicio de contrato", value: formatFecha(proyecto.fechaInicio) },
-            { label: "Fin de contrato", value: formatFecha(proyecto.fechaTermino) },
-          ]}
-        />
+        {proyecto ? <StatusBadge estado={estadoProyecto(proyecto.estado)} /> : null}
+      </ScreenHeader>
+      <ScreenBody estado={estado}>
+        {proyecto ? (
+          <>
+            <Card>
+              <DataGrid items={[
+                { label: "Inicio", value: formatDate(proyecto.fechaInicio) },
+                { label: "Término plan.", value: formatDate(proyecto.fechaTermino) },
+                { label: "Término real", value: formatDate(proyecto.fechaTerminoReal) },
+              ]} />
+            </Card>
 
-        <SectionCard title="Cumplimiento agregado" style={styles.mtLg}>
-          <ProgressRow
-            pct={req.avancePct}
-            ratio={{ num: req.cumple, den: req.cumple + req.noCumple + req.pendiente + req.noAplica }}
-          />
-        </SectionCard>
+            <Card>
+              {agregado ? <ComplianceSummary nivel={agregado} titulo="Cumplimiento del proyecto" /> : (
+                <EmptyState title="Sin expedientes" message="Este proyecto no tiene empresas con expediente abierto." />
+              )}
+            </Card>
 
-        <View style={styles.grid}>
-          <EntityCard compact entity="empresas" value={resumen.empresasCount} label="Empresas" />
-          <EntityCard compact entity="personas" value={resumen.personasCount} label="Personas" />
-          <EntityCard compact entity="maquinas" value={resumen.recursosCount} label="Máquinas" />
-        </View>
-
-        <SectionCard
-          title="Empresas participantes"
-          action={(
-            <View style={styles.activasPill}>
-              <Text style={[typography.caption, { color: "#15803D" }]}>{activas} activas</Text>
+            <View style={styles.conteos}>
+              <Conteo entidad="empresas" n={agregado?.empresas || 0} singular="Empresa"
+                onPress={() => navigation.navigate("Empresas", { screen: "ListaEmpresas", params: { reset: tokenReset() } })} />
+              <Conteo entidad="personas" n={agregado?.personas || 0} singular="Persona"
+                onPress={() => navigation.navigate("Personas", { screen: "ListaPersonas", params: { reset: tokenReset() } })} />
+              <Conteo entidad="equipos" n={agregado?.equipos || 0} singular="Equipo"
+                onPress={() => navigation.navigate("Equipos", { screen: "ListaEquipos", params: { reset: tokenReset() } })} />
             </View>
-          )}
-        >
-          {participantes.length === 0 ? (
-            <EmptyState message="Este proyecto no tiene empresas con participación activa." />
-          ) : (
-            participantes.map((p) => (
-              <View key={p.empresaId} style={styles.empresaRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[typography.body, { color: colors.ink }]} numberOfLines={1}>
-                    {p.empresaNombre}
-                  </Text>
-                  <Text style={[typography.caption, { color: colors.muted }]}>
-                    {p.estado === "activa" ? "Activa" : "Finalizada"}
-                  </Text>
-                </View>
-                <View style={styles.empresaAside}>
-                  {p.cumplimientoPct !== null && p.cumplimientoPct !== undefined ? (
-                    <Text style={[typography.body, { color: colors.ink, fontWeight: "700" }]}>
-                      {Math.round(p.cumplimientoPct)}%
-                    </Text>
-                  ) : null}
-                  <StatusPill estado={
-                    estadoPorEmpresa[p.empresaId] ?
-                      estadoExpediente(estadoPorEmpresa[p.empresaId]) : null
-                  } />
-                </View>
-              </View>
-            ))
-          )}
-        </SectionCard>
-      </ScrollView>
+
+            <Card title="Empresas participantes">
+              {empresas.length === 0 ? <EmptyState message="Sin empresas participantes." /> : null}
+              {empresas.map(({ expediente, nivel, participante }) => {
+                const e = estadoNivel(nivel.clave);
+                return (
+                  <ListCard key={expediente.id} style={styles.empresa}
+                    onPress={() => navigation.navigate("DetalleEmpresa", { empresaId: expediente.empresaId, proyectoId })}>
+                    <EntityAvatar tipo="empresa" nombre={participante.empresaNombre} size={36} />
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{participante.empresaNombre || "Empresa"}</Text>
+                      <Text style={[typography.caption, { color: colors.textSubtle }]} numberOfLines={1}>
+                        {[participante.rut ? formatRut(participante.rut) : null, participante.perfilParticipacion].filter(Boolean).join(" · ")}
+                      </Text>
+                      <View style={styles.barra}>
+                        <View style={{ flex: 1 }}>
+                          <SegmentBar segments={[
+                            { value: nivel.aprobados, color: e.dot },
+                            { value: Math.max(nivel.aplicables - nivel.aprobados, 0), color: colors.border },
+                          ]} />
+                        </View>
+                        <Text style={[typography.bodyBold, { color: e.fg }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>{textoPorcentaje(nivel.pct)}</Text>
+                      </View>
+                      <View style={styles.pie}>
+                        <StatusBadge estado={e} />
+                        <Text style={[typography.caption, { color: colors.textSubtle }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                          {nivel.aprobados}/{plural(nivel.aplicables, "requerimiento")}
+                        </Text>
+                      </View>
+                    </View>
+                    <ChevronRight color={colors.textSubtle} size={18} />
+                  </ListCard>
+                );
+              })}
+            </Card>
+          </>
+        ) : null}
+      </ScreenBody>
     </View>
+  );
+
+}
+
+function Conteo({ entidad, n, singular, onPress }) {
+  const Icono = entityIcons[entidad];
+  const tono = entityColors[entidad];
+  return (
+    <TouchableOpacity style={styles.conteo} onPress={onPress} accessibilityLabel={`${n} ${singular}`}>
+      <View style={[styles.conteoIcono, { backgroundColor: tono.bg }]}><Icono color={tono.color} size={16} /></View>
+      <Text style={[typography.cardTitle, { color: colors.text }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>{n}</Text>
+      <Text style={[typography.label, { color: colors.textMuted }]} maxFontSizeMultiplier={MAX_FONT_SCALE} numberOfLines={1}>
+        {n === 1 ? singular : `${singular}s`}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  headerInfo: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  iconCircle: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  estadoRow: { flexDirection: "row" },
-  estadoPill: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+  conteos: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
+  conteo: {
+    flex: 1, minHeight: 80, alignItems: "center", justifyContent: "center", gap: 2, padding: spacing.sm,
+    backgroundColor: colors.surface, borderRadius: radius.card, borderWidth: 1, borderColor: colors.border,
   },
-  body: {
-    flex: 1,
-    marginTop: -radius.headerOverlap,
-    borderTopLeftRadius: radius.headerOverlap,
-    borderTopRightRadius: radius.headerOverlap,
-    backgroundColor: colors.bg,
-  },
-  bodyContent: { padding: spacing.lg },
-  mtLg: { marginTop: spacing.lg },
-  grid: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg },
-  activasPill: { backgroundColor: "#DCF5E7", borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
-  empresaRow: {
-    flexDirection: "row", alignItems: "center", gap: spacing.md,
-    paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  empresaAside: { alignItems: "flex-end", gap: spacing.xs },
+  conteoIcono: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  empresa: { marginBottom: 0, backgroundColor: colors.bg, borderWidth: 0, alignItems: "flex-start" },
+  barra: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  pie: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
 });

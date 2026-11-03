@@ -92,3 +92,6 @@ export function diasRestantes(valor) {
   hoy.setHours(0, 0, 0, 0);
   return Math.ceil((fecha - hoy) / (1000 * 60 * 60 * 24));
 }
+
+// Nombre del rediseño: mismo helper (dd/mm/aaaa o "—").
+export const formatDate = formatFecha;

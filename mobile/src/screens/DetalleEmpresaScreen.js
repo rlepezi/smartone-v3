@@ -1,276 +1,205 @@
 import React, { useMemo, useState } from "react";
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { ChevronRight } from "lucide-react-native";
+import { useAuth } from "../contexts/AuthContext";
 import { useMandante } from "../contexts/MandanteContext";
+import { can } from "../permissions/can";
 import { useAsync } from "../hooks/useAsync";
 import { empresaService } from "../services/empresaService";
-import { personasApi } from "../api/personas";
-import { colors, entityColors } from "../theme/colors";
-import { estadoExpediente } from "../theme/status";
+import { colors } from "../theme/colors";
+import { estadoNivel } from "../theme/status";
 import { spacing, radius } from "../theme/spacing";
-import { typography } from "../theme/typography";
+import { typography, MAX_FONT_SCALE } from "../theme/typography";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { ScreenBody } from "../components/ScreenBody";
+import { Card } from "../components/Card";
+import { DataGrid } from "../components/DataGrid";
+import { TabsParticipacion } from "../components/TabsParticipacion";
+import { ComplianceSummary } from "../components/ComplianceSummary";
+import { RequerimientosLista } from "../components/RequerimientosLista";
+import { StatusBadge } from "../components/StatusBadge";
+import { ListCard } from "../components/ListCard";
+import { EntityAvatar } from "../components/EntityAvatar";
+import { EmptyState } from "../components/EmptyState";
+import { formatDate } from "../utils/fechas";
 import { formatRut } from "../utils/formatRut";
 import { formatNombre } from "../utils/formatNombre";
-import { GradientHeader } from "../components/GradientHeader";
-import { SectionCard } from "../components/SectionCard";
-import { ProgressRow } from "../components/ProgressRow";
-import { ResultCounters } from "../components/ResultCounters";
-import { StatusPill } from "../components/StatusPill";
-import { InfoGrid } from "../components/InfoGrid";
-import { ReqRow } from "../components/ReqRow";
-import { ListRow } from "../components/ListRow";
-import { EmptyState } from "../components/EmptyState";
-import { ErrorState } from "../components/ErrorState";
-import { SkeletonCard } from "../components/Skeleton";
-import { nombresPerfiles } from "../utils/sujetosParticipacion";
-import { formatFecha } from "../utils/fechas";
+import { nivelDeResumen, resumenDeSujeto } from "../utils/complianceStatus";
+import { nombreEquipo } from "../utils/identificacionEquipo";
+import { plural } from "../utils/texto";
 
 export default function DetalleEmpresaScreen({ route, navigation }) {
-  const { empresaId } = route.params;
-  const { mandanteId } = useMandante();
+  const { empresaId, proyectoId: proyectoInicial } = route.params;
+  const { rol } = useAuth();
+  const conCumplimiento = can(rol, "ver_operacion");
+  const { mandanteId, umbralesDe } = useMandante();
 
   const base = useAsync(
-      () => empresaService.obtenerDetalle(empresaId), [empresaId],
+    ({ forzar } = {}) => empresaService.obtenerDetalle(empresaId, { mandanteId, umbralesDe, forzar, conCumplimiento }),
+    [empresaId, mandanteId, conCumplimiento],
   );
+  const participaciones = base.data?.participacionesActivas || [];
+  const [tab, setTab] = useState(null);
+  const activa = participaciones.find((p) => p.participacionId === tab) ||
+    participaciones.find((p) => p.proyectoId === proyectoInicial) || participaciones[0] || null;
+  const expediente = activa ? base.data.indice?.expedienteDe(empresaId, activa.proyectoId) : null;
+  const umbrales = umbralesDe(expediente?.mandanteId);
 
-  const [proyectoIdSeleccionado, setProyectoIdSeleccionado] = useState(null);
-  // GET /empresas/:id/resumen ya resuelve perfilNombre, evaluacion
-  // (avancePct/expedienteEstado) y personasCount/recursosCount POR
-  // Participación activa — no hace falta recalcularlo a mano.
-  const participacionesActivas = base.data?.resumen?.participacionesActivas || [];
-  const participacionActiva = participacionesActivas.find(
-      (p) => p.proyectoId === proyectoIdSeleccionado,
-  ) || participacionesActivas[0] || null;
+  const detalle = useAsync(async () => (activa ? empresaService.obtenerDetalleParticipacion({
+    expediente, participacionId: activa.participacionId, mandanteId: activa.mandanteId,
+  }) : null), [activa?.participacionId, expediente?.id]);
 
-  const participacionRaw = (base.data?.participaciones || []).find(
-      (p) => p.proyectoId === participacionActiva?.proyectoId,
-  );
-
-  const [filtroRol, setFiltroRol] = useState(null);
-
-  const detalle = useAsync(async () => {
-    if (!participacionActiva) return null;
-    return empresaService.obtenerDetalleParticipacion(
-        mandanteId, empresaId, participacionActiva.proyectoId,
-    );
-  }, [participacionActiva?.proyectoId, mandanteId]);
-
-  // Requisitos de nivel Empresa: sus instancias con la Evaluación vigente (nombre incluido).
-  const filasRequerimientos = useMemo(
-      () => detalle.data?.filasEmpresa || [], [detalle.data],
-  );
-
-  const avance = useMemo(() => {
-    let cumple = 0; let noCumple = 0; let pendiente = 0;
-    filasRequerimientos.forEach(({ evaluacion }) => {
-      const r = evaluacion?.resultado || "pendiente";
-      if (r === "cumple") cumple++;
-      else if (r === "no_cumple") noCumple++;
-      else pendiente++;
-    });
-    return { cumple, noCumple, pendiente };
-  }, [filasRequerimientos]);
-
-  // Contadores por Perfil de Recurso REAL (no hardcodeados, catálogo
-  // configurable por Mandante): una Persona con varios perfiles cuenta en
-  // cada uno de ellos; más un total de Máquinas.
-  const contadoresRol = useMemo(() => {
-    const sujetos = detalle.data?.sujetos || [];
-    const perfilesPorId = detalle.data?.perfilesPorId || {};
-    const porPerfil = {};
-    let maquinas = 0;
-    sujetos.forEach((a) => {
-      if (a.personaId) {
-        const ids = a.perfilRecursoIds.length ? a.perfilRecursoIds : ["sin-perfil"];
-        ids.forEach((id) => {
-          porPerfil[id] = (porPerfil[id] || 0) + 1;
-        });
-      } else if (a.recursoId) {
-        maquinas++;
-      }
-    });
-    const tiles = Object.entries(porPerfil).map(([id, count]) => ({
-      key: id, label: perfilesPorId[id]?.nombre || "Sin perfil", count,
-    }));
-    tiles.push({ key: "maquinas", label: "Máquinas", count: maquinas });
-    return tiles;
-  }, [detalle.data]);
-
-  const asignacionesFiltradas = useMemo(() => {
-    const sujetos = detalle.data?.sujetos || [];
-    if (!filtroRol) return sujetos;
-    if (filtroRol === "maquinas") return sujetos.filter((a) => a.recursoId);
-    return sujetos.filter((a) => a.perfilRecursoIds.includes(filtroRol));
-  }, [detalle.data, filtroRol]);
-
-  const nombresPersonas = useAsync(async () => {
-    const ids = [...new Set(asignacionesFiltradas.filter((a) => a.personaId).map((a) => a.personaId))];
-    const personas = await Promise.all(ids.map((id) => personasApi.obtener(id).catch(() => null)));
-    return Object.fromEntries(ids.map((id, i) => [id, personas[i]]).filter(([, p]) => p));
-  }, [asignacionesFiltradas.map((a) => a.personaId).join(",")]);
-
-  if (base.loading && !base.data) return <SkeletonCard height={320} />;
-  if (base.error && !base.data) return <ErrorState message={base.error.message} onRetry={base.reload} />;
-  if (!base.data) return null;
-
-  const { empresa } = base.data;
+  const empresa = base.data?.empresa;
+  const proyectosN = participaciones.length;
 
   return (
     <View style={styles.screen}>
-      <GradientHeader variant="detail" title="Empresa" onBack={() => navigation.goBack()}>
-        <Text style={[typography.cardTitle, { color: colors.onDark }]} numberOfLines={2}>
-          {formatNombre(empresa.razonSocial)}
-        </Text>
-        <Text style={[typography.mono, { color: colors.accent }]}>{formatRut(empresa.rut)}</Text>
-        {participacionActiva?.perfilNombre && (
-          <View style={styles.perfilPill}>
-            <Text style={[typography.caption, { color: colors.onDark }]}>
-              {participacionActiva.perfilNombre}
-            </Text>
-          </View>
-        )}
-      </GradientHeader>
-
-      <ScrollView
-        style={styles.body}
-        contentContainerStyle={styles.bodyContent}
-        refreshControl={<RefreshControl refreshing={base.refreshing} onRefresh={base.refresh} />}
-      >
-        {participacionesActivas.length === 0 && (
-          <EmptyState title="Sin participaciones" message="Esta empresa no tiene participaciones activas." />
-        )}
-
-        {participacionesActivas.length > 0 && (
+      <ScreenHeader
+        variant="detalle"
+        onBack={() => navigation.goBack()}
+        label="Empresa"
+        title={empresa?.razonSocial || "Empresa"}
+        subtitle={empresa?.nombreFantasia && empresa.nombreFantasia !== empresa.razonSocial ? empresa.nombreFantasia : null}
+        meta={empresa ? `${formatRut(empresa.rut)}${conCumplimiento ? ` · ${plural(proyectosN, "proyecto")}` : ""}` : null}
+      />
+      <ScreenBody estado={base}>
+        {empresa ? (
           <>
-            {participacionesActivas.length > 1 && (
-              <View style={styles.selector}>
-                {participacionesActivas.map((p) => (
-                  <TouchableOpacity
-                    key={p.proyectoId}
-                    onPress={() => setProyectoIdSeleccionado(p.proyectoId)}
-                    style={[styles.chip, p.proyectoId === participacionActiva?.proyectoId && styles.chipActivo]}
-                  >
-                    <Text style={{ color: p.proyectoId === participacionActiva?.proyectoId ? colors.onDark : colors.ink }}>
-                      {p.proyectoNombre}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            <SectionCard title="Cumplimiento">
-              <ProgressRow
-                pct={participacionActiva.evaluacion?.avancePct}
-                ratio={{ num: avance.cumple, den: participacionActiva.evaluacion?.evaluados || 0 }}
+            {conCumplimiento && participaciones.length > 0 ? (
+              <TabsParticipacion
+                items={participaciones.map((p) => ({ key: p.participacionId, label: p.proyectoCodigo || p.proyectoNombre || "Proyecto" }))}
+                value={activa?.participacionId}
+                onChange={setTab}
               />
-              <View style={styles.mt}>
-                <ResultCounters cumple={avance.cumple} noCumple={avance.noCumple} pendiente={avance.pendiente} />
-              </View>
-              {participacionActiva.evaluacion?.expedienteEstado && (
-                <View style={styles.mt}>
-                  <StatusPill estado={estadoExpediente(participacionActiva.evaluacion.expedienteEstado)} />
-                </View>
-              )}
-              {participacionRaw && (
-                <View style={styles.mt}>
-                  <InfoGrid
-                    items={[
-                      { label: "Inicio de contrato", value: formatFecha(participacionRaw.fechaInicio) },
-                      { label: "Fin de contrato", value: formatFecha(participacionRaw.fechaTermino) },
-                      ...(empresa.contacto?.nombre ?
-                        [{ label: "Contacto", value: empresa.contacto.nombre }] : []),
-                    ]}
-                  />
-                </View>
-              )}
-            </SectionCard>
+            ) : null}
 
-            <SectionCard title="Recursos asignados">
-              <View style={styles.grid}>
-                {contadoresRol.map((tile) => (
-                  <TouchableOpacity
-                    key={tile.key}
-                    style={[styles.tile, filtroRol === tile.key && styles.tileActivo]}
-                    onPress={() => setFiltroRol(filtroRol === tile.key ? null : tile.key)}
-                  >
-                    <Text style={[typography.cardTitle, { color: filtroRol === tile.key ? colors.onDark : colors.ink }]}>
-                      {tile.count}
-                    </Text>
-                    <Text style={[typography.caption, { color: filtroRol === tile.key ? colors.onDark : colors.muted }]}>
-                      {tile.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+            {conCumplimiento && activa ? (
+              <>
+                <Card>
+                  <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{activa.proyectoNombre || "Proyecto"}</Text>
+                  {expediente ? <ComplianceSummary nivel={nivelDeResumen(expediente.resumen, umbrales)} /> : (
+                    <EmptyState title="Sin expediente" message="Esta participación aún no tiene expediente abierto." />
+                  )}
+                  <DataGrid items={[
+                    { label: "Perfil de participación", value: activa.perfilNombre },
+                    { label: "Mandante", value: activa.mandanteNombre },
+                    { label: "Inicio de contrato", value: formatDate(activa.fechaInicio) },
+                    { label: "Fin de contrato", value: formatDate(activa.fechaTermino) },
+                  ]} />
+                </Card>
 
-              {asignacionesFiltradas.length === 0 ? (
-                <EmptyState message="Sin personas ni máquinas asignadas en este proyecto." />
-              ) : (
-                asignacionesFiltradas.map((a) => (
-                  <ListRow
-                    key={a.id}
-                    entity={a.personaId ? "personas" : "maquinas"}
-                    titulo={a.personaId ?
-                      formatNombre(nombresPersonas.data?.[a.personaId] ?
-                        `${nombresPersonas.data[a.personaId].nombre} ${nombresPersonas.data[a.personaId].apellido}` :
-                        a.personaId) :
-                      a.recursoId}
-                    subtituloMono={nombresPerfiles(a.perfilRecursoIds, detalle.data?.perfilesPorId)}
-                    onPress={() => navigation.navigate(
-                        a.personaId ? "DetallePersona" : "DetalleMaquinaria",
-                        a.personaId ? { personaId: a.personaId } : { recursoId: a.recursoId },
-                    )}
-                  />
-                ))
-              )}
-            </SectionCard>
+                <RecursosParticipacion
+                  key={`r-${activa.participacionId}`}
+                  detalle={detalle}
+                  expediente={expediente}
+                  umbrales={umbrales}
+                  onAbrir={(s) => navigation.navigate(s.personaId ? "DetallePersona" : "DetalleEquipo",
+                    s.personaId ? { personaId: s.personaId } : { recursoId: s.recursoId })}
+                />
 
-            <SectionCard title="Requerimientos de empresa">
-              {filasRequerimientos.length === 0 ? (
-                <EmptyState message="Este perfil no tiene requerimientos de empresa." />
-              ) : (
-                filasRequerimientos.map(({ requerimiento, evaluacion }, i) => (
-                  <ReqRow
-                    key={requerimiento.requerimientoId}
-                    numero={i + 1}
-                    nombre={requerimiento.nombre}
-                    evaluacion={evaluacion}
-                  />
-                ))
-              )}
-            </SectionCard>
+                <RequerimientosLista
+                  key={`q-${activa.participacionId}`}
+                  titulo="Requerimientos de empresa"
+                  filas={detalle.data?.filasEmpresa || (detalle.loading ? null : [])}
+                  cargando={detalle.loading}
+                  vacio="Este perfil no tiene requerimientos de empresa."
+                />
+              </>
+            ) : null}
+
+            {conCumplimiento && participaciones.length === 0 ? (
+              <Card>
+                <EmptyState title="Sin participaciones activas" message="Esta empresa no participa hoy en proyectos de este mandante." />
+              </Card>
+            ) : null}
+
+            <Card title="Datos de la empresa">
+              <DataGrid items={[
+                { label: "RUT", value: formatRut(empresa.rut) },
+                { label: "Giro", value: empresa.giro },
+                { label: "Contacto", value: empresa.contacto?.nombre },
+                { label: "Teléfono", value: empresa.contacto?.telefono },
+              ]} />
+            </Card>
           </>
-        )}
-      </ScrollView>
+        ) : null}
+      </ScreenBody>
     </View>
+  );
+}
+
+// Personas y Equipos de la participación: conteo por perfil de recurso (rol) más Equipos, y la
+// lista (filtrable tocando un conteo) con el nivel de cada uno en ESTE expediente.
+function RecursosParticipacion({ detalle, expediente, umbrales, onAbrir }) {
+  const [filtro, setFiltro] = useState(null);
+  const sujetos = useMemo(() => detalle.data?.sujetos || [], [detalle.data]);
+  const perfilesPorId = useMemo(() => detalle.data?.perfilesPorId || {}, [detalle.data]);
+  const fichas = detalle.data?.fichas || {};
+
+  const tiles = useMemo(() => {
+    const porPerfil = {};
+    let equipos = 0;
+    sujetos.forEach((s) => {
+      if (s.recursoId) { equipos += 1; return; }
+      (s.perfilRecursoIds.length ? s.perfilRecursoIds : ["sin-perfil"]).forEach((id) => { porPerfil[id] = (porPerfil[id] || 0) + 1; });
+    });
+    return [
+      ...Object.entries(porPerfil).map(([id, n]) => ({ key: id, label: perfilesPorId[id]?.nombre || "Sin perfil", n })),
+      { key: "equipos", label: "Equipos", n: equipos },
+    ];
+  }, [sujetos, perfilesPorId]);
+
+  const visibles = sujetos.filter((s) => !filtro || (filtro === "equipos" ? s.recursoId : s.perfilRecursoIds.includes(filtro)));
+
+  return (
+    <Card title="Recursos en este proyecto">
+      {detalle.loading && !detalle.data ? <EmptyState title="Cargando recursos..." /> : null}
+      {detalle.data ? (
+        <>
+          <View style={styles.tiles}>
+            {tiles.map((t) => {
+              const activo = filtro === t.key;
+              return (
+                <TouchableOpacity key={t.key} style={[styles.tile, activo && styles.tileActivo]}
+                  onPress={() => setFiltro(activo ? null : t.key)} accessibilityState={{ selected: activo }}>
+                  <Text style={[typography.cardTitle, { color: activo ? colors.onDark : colors.text }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>{t.n}</Text>
+                  <Text style={[typography.label, { color: activo ? colors.onDark : colors.textMuted }]} numberOfLines={2} maxFontSizeMultiplier={MAX_FONT_SCALE}>{t.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {visibles.length === 0 ? <EmptyState message="Sin personas ni equipos asignados en este proyecto." /> : null}
+          {visibles.map((s) => {
+            const ficha = fichas[s.personaId || s.recursoId];
+            const nombre = s.personaId ? formatNombre(ficha ? `${ficha.nombre} ${ficha.apellido}` : "Persona") : nombreEquipo(ficha);
+            const nivel = nivelDeResumen(resumenDeSujeto(expediente, s), umbrales);
+            return (
+              <ListCard key={s.id} style={styles.sujeto} onPress={() => onAbrir(s)} accessibilityLabel={nombre}>
+                <EntityAvatar tipo={s.personaId ? "persona" : "equipo"} nombre={nombre} tipoEquipo={ficha?.tipo} size={36} />
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={[typography.bodyBold, { color: colors.text }]} numberOfLines={2}>{nombre}</Text>
+                  <Text style={[typography.caption, { color: colors.textSubtle }]} numberOfLines={1}>
+                    {s.perfilRecursoIds.map((id) => perfilesPorId[id]?.nombre).filter(Boolean).join(", ") || (s.recursoId ? ficha?.tipo : "Sin perfil")}
+                  </Text>
+                  <StatusBadge estado={estadoNivel(nivel.clave)} />
+                </View>
+                <ChevronRight color={colors.textSubtle} size={18} />
+              </ListCard>
+            );
+          })}
+        </>
+      ) : null}
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  perfilPill: {
-    backgroundColor: "rgba(255,255,255,0.15)", borderRadius: radius.pill,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.xs, alignSelf: "flex-start",
-  },
-  body: {
-    flex: 1,
-    marginTop: -radius.headerOverlap,
-    borderTopLeftRadius: radius.headerOverlap,
-    borderTopRightRadius: radius.headerOverlap,
-    backgroundColor: colors.bg,
-  },
-  bodyContent: { padding: spacing.lg },
-  selector: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
-  chip: {
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  chipActivo: { backgroundColor: colors.primary, borderColor: colors.primary },
-  mt: { marginTop: spacing.md },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  tiles: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   tile: {
-    flexBasis: "47%", backgroundColor: entityColors.empresas.bg,
-    borderRadius: radius.card, padding: spacing.md, alignItems: "center",
+    flexGrow: 1, flexBasis: "45%", minHeight: 64, borderRadius: radius.button, padding: spacing.sm,
+    alignItems: "center", justifyContent: "center", backgroundColor: colors.bg,
   },
   tileActivo: { backgroundColor: colors.primary },
+  sujeto: { marginBottom: 0, backgroundColor: colors.bg, borderWidth: 0 },
 });
