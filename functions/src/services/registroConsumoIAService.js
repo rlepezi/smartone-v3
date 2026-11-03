@@ -9,6 +9,8 @@ const ORIGENES = {
   // Revisión en lote de un expediente (mismo motor de reglas, varios
   // requisitos en una pasada).
   REVISION_LOTE: "revision_lote",
+  // Datos de una empresa desde un documento de su carpeta (Nueva Empresa).
+  EXTRACCION_EMPRESA: "extraccion_empresa",
   PROBAR_CONEXION: "probar_conexion",
 };
 

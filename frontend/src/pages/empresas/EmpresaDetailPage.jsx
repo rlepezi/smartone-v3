@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Users, Truck, FileText, Plus } from "lucide-react";
+import { ArrowLeft, Users, Truck, FileText, Plus, X } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
 import { personaService } from "../../services/personaService";
@@ -36,6 +36,7 @@ import { UltimosEventos, HistorialEventos } from "../../components/shared/Evento
 import { GrupoRequerimientos } from "../../components/shared/RequerimientosLista";
 import { BotonesEdicion } from "../../components/shared/BotonesEdicion";
 import { EmpresaEdicionForm } from "../../components/empresas/EmpresaEdicionForm";
+import { CarpetasDeEmpresa, DocumentosCarpeta } from "../../components/empresas/CarpetasDeEmpresa";
 import { MandantesAsociadosPanel } from "../../components/empresas/MandantesAsociadosPanel";
 import { useEdicionInPlace } from "../../hooks/useEdicionInPlace";
 import { RecursosBloques } from "../../components/shared/RecursosBloques";
@@ -85,6 +86,8 @@ export const EmpresaDetailPage = () => {
   // Proyecto elegido en la pestaña Proyectos (null = se ven los de todos).
   const [proyectoSeleccionadoId, setProyectoSeleccionadoId] = useState(null);
   const [mostrandoNuevaParticipacion, setMostrandoNuevaParticipacion] = useState(false);
+  // Carpeta de la empresa cuyos documentos se ven en una ventana (vista de lectura).
+  const [carpetaVista, setCarpetaVista] = useState(null);
   const [empresa, setEmpresa] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -441,6 +444,23 @@ export const EmpresaDetailPage = () => {
                 {campoInfo("Teléfono", empresa.contacto?.telefono)}
               </div>
             ))}
+
+            <CarpetasDeEmpresa empresaId={empresa.id} vista={carpetaVista} onVer={setCarpetaVista} />
+            {carpetaVista && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setCarpetaVista(null)}>
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl h-[85vh] flex flex-col p-4 gap-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-carbon-dark truncate" title={carpetaVista.ruta}>Documentos de {carpetaVista.ruta}</h3>
+                    <button type="button" onClick={() => setCarpetaVista(null)} className="ml-auto p-1 rounded-lg hover:bg-slate-100" aria-label="Cerrar">
+                      <X className="w-4 h-4 text-slate-500" />
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <DocumentosCarpeta key={carpetaVista.id} carpeta={carpetaVista} />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {tarjetaCard("Participaciones", (
               participaciones.length === 0 ? (

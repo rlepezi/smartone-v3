@@ -10,6 +10,7 @@ export const ORIGEN_CONSUMO_IA = {
   prueba_reglas: "Probar reglas",
   revision_requerimiento: "Revisar con IA (expediente)",
   revision_lote: "Revisión en lote (expediente)",
+  extraccion_empresa: "Datos de empresa desde documento",
   probar_conexion: "Probar conexión",
 };
 

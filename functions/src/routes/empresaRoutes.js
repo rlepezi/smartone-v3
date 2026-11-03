@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const empresaController = require("../controllers/empresaController");
+const extraccionController =
+    require("../controllers/extraccionEmpresaController");
 const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 
 // Middleware de autenticación para todas las operaciones
@@ -49,6 +51,11 @@ router.delete(
     "/:id/mandantes/:mandanteId", requireRole(ROLES_GESTION_MANDANTES),
     empresaController.desasociarMandante,
 );
+// Nueva Empresa desde carpeta: extracción de datos con IA (solo superadmin).
+router.post("/extraccion-ia/estimar", requireRole(["superadmin"]),
+    extraccionController.estimar);
+router.post("/extraccion-ia", requireRole(["superadmin"]),
+    extraccionController.extraer);
 router.post("/", requireRole(ROLES_ESCRITURA), empresaController.create);
 router.put("/:id", requireRole(ROLES_ESCRITURA), empresaController.update);
 router.delete(

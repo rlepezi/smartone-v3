@@ -24,6 +24,7 @@ import { hoyISO } from "../../utils/fechas";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCarpetaWizard } from "../../hooks/useCarpetaWizard";
 import { DocumentacionWizard } from "./wizard/DocumentacionWizard";
+import { CarpetaWizardPanel } from "./wizard/CarpetaWizardPanel";
 import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
 import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
 import { limpiarCarpetasWizard } from "../../services/fuentes/carpetaLocal";
@@ -185,6 +186,8 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     return r?.ruta ? r : null;
   });
   const carpetaWizard = useCarpetaWizard(profile?.uid, sesionWizard);
+  // Vista previa de la carpeta local de la empresa, abierta mientras se avanza por los pasos.
+  const [verCarpeta, setVerCarpeta] = useState(false);
 
   const [ejecutando, setEjecutando] = useState(false);
   const [progreso, setProgreso] = useState(() => leerBorradorValido(mandanteFijo)?.progreso || null); // {participacionId, sujetosListo, expedienteId}
@@ -647,8 +650,11 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     }
   };
 
+  const carpetaLocal = repositorioWizard?.tipo === "local";
+  const panelCarpeta = verCarpeta && carpetaLocal;
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className={`${panelCarpeta ? "max-w-[112rem]" : "max-w-6xl"} mx-auto space-y-6`}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <button
@@ -681,8 +687,19 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
 
       <StepIndicator step={step} pasos={pasosVisibles} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <div className="lg:col-span-2 min-w-0 space-y-6">
+      <div className={panelCarpeta ? "grid grid-cols-1 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] gap-6 items-start" : ""}>
+      {panelCarpeta && (
+        <CarpetaWizardPanel
+          key={sesionWizard}
+          carpeta={carpetaWizard}
+          etiqueta={repositorioWizard.etiqueta}
+          mandanteId={mandanteEfectivo}
+          abrirCarpeta={step === 5 ? (repositorioWizard.mapeo?.carpetaPersonas || repositorioWizard.mapeo?.carpetaRecursos || null) : null}
+          onCerrar={() => setVerCarpeta(false)}
+        />
+      )}
+      <div className={`grid grid-cols-1 ${panelCarpeta ? "2xl:grid-cols-3" : "lg:grid-cols-3"} gap-6 items-start min-w-0`}>
+      <div className={`${panelCarpeta ? "2xl:col-span-2" : "lg:col-span-2"} min-w-0 space-y-6`}>
       <div
         data-asistente-ref={REF_PASO[step] || undefined}
         className={`bg-white p-6 rounded-2xl border border-gray-100 shadow-card scroll-mt-24 ${CLASE_RESALTADO}`}
@@ -714,6 +731,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             onCambiar={setRepositorioWizard}
             errorCarpeta={errorCarpeta}
             verificando={verificandoCarpeta}
+            proyectoId={proyectoSel?.id || null}
           />
         )}
         {step === 3 && (
@@ -860,7 +878,10 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
         documentacion={previewSeleccion}
         proyectoActualId={proyectoSel?.id}
         repositorio={empresaSel ? repositorioWizard : undefined}
+        carpetaAbierta={panelCarpeta}
+        onVerCarpeta={carpetaLocal ? () => setVerCarpeta((v) => !v) : null}
       />
+      </div>
       </div>
       {confirmacionMovimiento && (
         <ConfirmacionModal

@@ -91,7 +91,7 @@ const marcarBusqueda = (contenedor, termino) => {
 
 // Visor de solo lectura de un archivo de la carpeta del expediente (lo usan el modal de "Crear desde
 // carpeta" y el panel de documentos): .docx renderizado a HTML con docx-preview (import dinámico),
-// PDF en iframe, imágenes con zoom, planillas Excel/CSV como tabla (VistaPlanilla); el resto,
+// PDF en iframe, imágenes con zoom, planillas Excel (.xlsx, .xlsm, .xls) y CSV como tabla (VistaPlanilla); el resto,
 // "Abrir en pestaña nueva". En .docx, opcionalmente:
 // RUT válidos clickeables (`onRut`) y ubicación de la fila de `nombreBuscado`, con su RUT único como
 // sugerencia (`onSugerenciaRut`; nunca se rellena solo).
@@ -108,9 +108,8 @@ export const VisorArchivo = ({ archivo, nombreBuscado = "", onRut, onSugerenciaR
   const [pdfListo, setPdfListo] = useState(false);
   const nombre = archivo?.name || "";
   const esDocx = extensionDe(nombre) === "docx";
-  // Planillas: .xlsx/.xlsm (exceljs) y .csv; las .xls antiguas no se pueden leer en el navegador.
-  const esPlanilla = ["xlsx", "xlsm", "csv"].includes(extensionDe(nombre));
-  const esXlsAntiguo = extensionDe(nombre) === "xls";
+  // Planillas: .xlsx/.xlsm (exceljs), .xls antiguo (SheetJS) y .csv.
+  const esPlanilla = ["xlsx", "xlsm", "xls", "csv"].includes(extensionDe(nombre));
 
   // Otro archivo: zoom y búsqueda vuelven a cero.
   const [archivoPrevio, setArchivoPrevio] = useState(archivo);
@@ -238,11 +237,7 @@ export const VisorArchivo = ({ archivo, nombreBuscado = "", onRut, onSugerenciaR
         </div>
       ) : (
         <div className="m-auto text-center space-y-2 p-6">
-          <p className="text-xs text-slate-500">
-            {esXlsAntiguo
-              ? "Formato Excel antiguo (.xls): no se puede mostrar aquí. Ábralo en una pestaña nueva o guárdelo como .xlsx."
-              : "Vista previa no disponible para este formato."}
-          </p>
+          <p className="text-xs text-slate-500">Vista previa no disponible para este formato.</p>
           {url && (
             <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-carbon-dark hover:bg-slate-50">
               <ExternalLink className="w-3.5 h-3.5" /> Abrir en pestaña nueva

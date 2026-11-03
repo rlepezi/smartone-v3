@@ -2,42 +2,28 @@ import React, { useEffect, useRef, useState } from "react";
 import { HardHat, AlertCircle } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
-import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
-import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { OpcionesRadio } from "../shared/OpcionesRadio";
 import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
-import { storageService } from "../../services/storageService";
 import { formatRutDisplay, validateRut, cleanRut } from "../../utils/rutFormatters";
 import { EmpresaLogoUploader } from "../shared/EmpresaLogoUploader";
 import { aMayusculas } from "../../utils/texto";
-import { useMandanteContexto } from "../../hooks/useMandanteContexto";
-import { CampoMandante } from "../shared/CampoMandante";
+import { CarpetasDeEmpresa, DocumentosCarpeta } from "./CarpetasDeEmpresa";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 
-// Formulario de datos identitarios (crear / editar). Se usa en dos lugares:
-//   - EmpresaFormPage: solo para CREAR (pantalla propia).
-//   - el Detalle, como edición in-place de la pestaña Resumen (enDetalle=true): sin
-//     botones propios (Guardar/Cancelar viven en el encabezado del detalle,
-//     vinculados por `formId`) y sin los bloques de gestión que ahí ya tienen su
-//     pestaña.
+// Formulario de datos identitarios para EDITAR una Empresa, en el Detalle (edición in-place de la
+// pestaña Resumen, enDetalle=true): sin botones propios (Guardar/Cancelar viven en el encabezado
+// del detalle, vinculados por `formId`) y sin los bloques de gestión que ahí ya tienen su pestaña.
+// Crear una Empresa es NuevaEmpresaForm (página /empresas/nuevo y paso Empresa del wizard).
+// Muestra sus Carpetas de empresa; con "Ver documentos", el panel de documentos de esa carpeta queda a
+// la izquierda y un clic en un RUT o una razón social detectados lo copia al formulario.
 export const EmpresaEdicionForm = ({
   idEntidad: id, formId, enDetalle = false, onGuardado, onCancelar, onDirtyChange, onGuardandoChange,
 }) => {
   const { profile } = useAuth();
-  const esEdicion = Boolean(id);
   const puedeEscribir = ROLES_ESCRITURA.includes(profile?.rol);
   // El RUT no se edita después de creado, salvo superadmin.
-  const rutEditable = !esEdicion || profile?.rol === "superadmin";
-
-  // Mandante al que se asocia la Empresa al crearla (empresaMandantes): fijo, único o elegido.
-  // Solo en alta: después se gestiona en la pestaña "Mandantes" del detalle.
-  const contextoMandante = useMandanteContexto({ activo: !esEdicion });
-  const mandanteId = contextoMandante.mandanteId;
-  const rutRef = useRef(null);
-  // RUT ya registrado (409 RUT_EXISTENTE): se ofrece asociar la Empresa existente al Mandante.
-  const [rutExistente, setRutExistente] = useState(null);
-  const [asociando, setAsociando] = useState(false);
+  const rutEditable = profile?.rol === "superadmin";
 
   const [formData, setFormData] = useState({
     rut: "",
@@ -53,33 +39,12 @@ export const EmpresaEdicionForm = ({
 
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
-  const [cargandoRegistro, setCargandoRegistro] = useState(esEdicion);
+  const [cargandoRegistro, setCargandoRegistro] = useState(true);
   const [serverError, setServerError] = useState(null);
-
-  // Logo elegido ANTES de crear la Empresa (modo diferido, ver
-  // EmpresaLogoUploader.jsx): se guarda el archivo crudo + una
-  // previsualización local, y se sube recién al crear el registro y
-  // obtener su ID real.
-  const [logoPendiente, setLogoPendiente] = useState(null);
-  const [logoPreviewUrl, setLogoPreviewUrl] = useState(null);
-
-  const handleLogoSeleccionado = (archivo) => {
-    if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
-    setLogoPendiente(archivo);
-    setLogoPreviewUrl(URL.createObjectURL(archivo));
-  };
+  // Carpeta de la empresa cuyos documentos se muestran junto al formulario.
+  const [carpetaVista, setCarpetaVista] = useState(null);
 
   useEffect(() => {
-    // Libera la URL local al desmontar — evita una fuga de memoria si el
-    // usuario elige un logo y luego navega fuera sin llegar a guardar.
-    return () => {
-      if (logoPreviewUrl) URL.revokeObjectURL(logoPreviewUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!esEdicion) return;
     empresaService
       .obtenerPorId(id)
       .then((data) => {
@@ -97,7 +62,7 @@ export const EmpresaEdicionForm = ({
       })
       .catch((err) => setServerError(err.message || "No se pudo cargar la empresa."))
       .finally(() => setCargandoRegistro(false));
-  }, [id, esEdicion]);
+  }, [id]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -130,7 +95,6 @@ export const EmpresaEdicionForm = ({
     const newErrors = {};
     if (!formData.razonSocial.trim()) newErrors.razonSocial = "La razón social es obligatoria.";
     if (!formData.giro.trim()) newErrors.giro = "El giro es obligatorio.";
-    if (!esEdicion && !mandanteId) newErrors.mandanteId = "Seleccione el Mandante.";
     if (rutEditable) {
       if (!formData.rut.trim()) {
         newErrors.rut = "El RUT es obligatorio.";
@@ -182,56 +146,15 @@ export const EmpresaEdicionForm = ({
     };
 
     try {
-      if (esEdicion) {
-        if (!rutEditable) delete payload.rut;
-        await empresaService.actualizar(id, payload);
-      } else {
-        const nueva = await empresaService.crear({ ...payload, mandanteId });
-        if (logoPendiente) {
-          // Best-effort: la Empresa ya quedó creada — si la subida del
-          // logo falla, no se revierte la creación. No se usa
-          // setServerError acá porque estamos a punto de navegar fuera
-          // de esta pantalla (el banner nunca llegaría a verse).
-          try {
-            const { url } = await storageService.subirLogoEmpresa(nueva.id, logoPendiente);
-            await empresaService.actualizar(nueva.id, { logoUrl: url });
-          } catch (logoErr) {
-            console.error("Error al subir el logo de la nueva empresa:", logoErr);
-            window.alert(
-                "La Empresa se creó correctamente, pero no se pudo subir el logo. " +
-                "Puedes intentarlo de nuevo desde 'Editar'.",
-            );
-          }
-        }
-      }
+      if (!rutEditable) delete payload.rut;
+      await empresaService.actualizar(id, payload);
       onGuardado?.();
     } catch (err) {
-      if (err.codigo === "RUT_EXISTENTE") {
-        setRutExistente(err.detalle || {});
-      } else {
-        setServerError(err.message);
-      }
+      setServerError(err.message);
     } finally {
       setLoading(false);
     }
   };
-
-  // Asocia la Empresa ya registrada con ese RUT al Mandante elegido, en vez de duplicarla.
-  const asociarExistente = async () => {
-    setAsociando(true);
-    try {
-      await empresaService.asociarMandante(rutExistente.empresaId, mandanteId);
-      setRutExistente(null);
-      onGuardado?.();
-    } catch (err) {
-      setRutExistente(null);
-      setServerError(err.message || "No se pudo asociar la Empresa.");
-    } finally {
-      setAsociando(false);
-    }
-  };
-
-  const nombreMandanteElegido = getMandanteDisplayName(contextoMandante.mandante) || "el Mandante";
 
   // Aviso de cambios sin guardar: se compara con una foto del formulario tomada al
   // terminar de cargar.
@@ -260,8 +183,16 @@ export const EmpresaEdicionForm = ({
     );
   }
 
-  return (
+  // Valor copiado desde un documento de la carpeta (el RUT solo si es editable).
+  const copiar = (campo, valor) => {
+    if (campo === "rut" && !rutEditable) return;
+    setFormData((prev) => ({ ...prev, [campo]: campo === "rut" ? formatRutDisplay(valor) : aMayusculas(valor) }));
+    setErrors((prev) => ({ ...prev, [campo]: null }));
+  };
+
+  const formulario = (
     <div className="space-y-6">
+      <CarpetasDeEmpresa empresaId={id} vista={carpetaVista} onVer={setCarpetaVista} />
       {serverError && (
         <div className="flex items-center gap-3 p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-sm">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -277,21 +208,10 @@ export const EmpresaEdicionForm = ({
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Identificación de la Empresa</h3>
           </div>
 
-          {!esEdicion && (
-            <CampoMandante
-              contexto={contextoMandante}
-              error={errors.mandanteId}
-              ayuda="La Empresa quedará asociada a este Mandante."
-              focoRef={rutRef}
-              onChange={() => setErrors((prev) => ({ ...prev, mandanteId: null }))}
-            />
-          )}
-
           <EmpresaLogoUploader
-            empresaId={esEdicion ? id : undefined}
-            logoUrl={esEdicion ? formData.logoUrl : logoPreviewUrl}
+            empresaId={id}
+            logoUrl={formData.logoUrl}
             onUploaded={handleLogoSubido}
-            onArchivoSeleccionado={handleLogoSeleccionado}
             disabled={!puedeEscribir}
           />
 
@@ -311,7 +231,6 @@ export const EmpresaEdicionForm = ({
               ) : (
                 <>
                   <input
-                    ref={rutRef}
                     type="text"
                     name="rut"
                     value={formData.rut}
@@ -453,7 +372,7 @@ export const EmpresaEdicionForm = ({
           {puedeEscribir && (
             <button
               type="submit"
-              disabled={loading || (!esEdicion && !contextoMandante.modo) || contextoMandante.modo === "ninguno"}
+              disabled={loading}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all flex items-center gap-2 disabled:opacity-50"
             >
               {loading ? "Guardando..." : "Guardar Empresa"}
@@ -462,27 +381,17 @@ export const EmpresaEdicionForm = ({
         </div>
         )}
       </form>
-      {rutExistente && (
-        rutExistente.yaAsociada ? (
-          <ConfirmacionModal
-            titulo="La Empresa ya existe"
-            mensaje={`${rutExistente.razonSocial || "Una Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada y asociada a ${nombreMandanteElegido}.`}
-            textoConfirmar="Entendido"
-            textoCancelar="Cerrar"
-            onCancelar={() => setRutExistente(null)}
-            onConfirmar={() => setRutExistente(null)}
-          />
-        ) : (
-          <ConfirmacionModal
-            titulo="Ya existe una Empresa con este RUT"
-            mensaje={`${rutExistente.razonSocial || "Una Empresa"} (RUT ${formatRutDisplay(rutExistente.rut || "")}) ya está registrada. Puede asociarla a ${nombreMandanteElegido} en vez de crear un duplicado. Los datos ingresados en este formulario no se aplicarán.`}
-            textoConfirmar="Asociar Empresa existente"
-            ocupado={asociando}
-            onCancelar={() => setRutExistente(null)}
-            onConfirmar={asociarExistente}
-          />
-        )
-      )}
+    </div>
+  );
+
+  if (!carpetaVista) return formulario;
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      <div className="lg:sticky lg:top-4 h-[78vh] min-h-[28rem] flex flex-col">
+        <DocumentosCarpeta key={carpetaVista.id} carpeta={carpetaVista}
+          onRut={(r) => copiar("rut", r)} onRazonSocial={(t) => copiar("razonSocial", t)} />
+      </div>
+      <div className="min-w-0">{formulario}</div>
     </div>
   );
 };

@@ -15,6 +15,7 @@ class CarpetaEmpresaController {
     try {
       const data = await carpetaEmpresaService.listar({
         mandanteId: req.query.mandanteId, fuenteId: req.query.fuenteId,
+        empresaId: req.query.empresaId,
       }, req.user);
       res.status(200).json({data});
     } catch (error) {

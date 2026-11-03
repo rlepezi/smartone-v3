@@ -202,16 +202,22 @@ class CarpetaEmpresaService {
 
   /**
    * Carpetas de empresa de una fuente (o del Mandante), con empresa,
-   * proyecto y expediente para mostrar.
-   * @param {{mandanteId: ?string, fuenteId: ?string}} filtros Filtros.
+   * proyecto y expediente para mostrar. Con `empresaId` solo las de esa
+   * empresa: sin Mandante, en todos (superadmin y evaluador); los roles de
+   * Mandante, siempre solo en el suyo.
+   * @param {{mandanteId: ?string, fuenteId: ?string, empresaId: ?string}}
+   *     filtros Filtros.
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object[]>} Carpetas.
    */
-  async listar({mandanteId, fuenteId}, actor) {
+  async listar({mandanteId, fuenteId, empresaId = null}, actor) {
     this._exigirRol(actor, ROLES_LISTAN, "ver las carpetas de empresa");
-    const id = this._mandante(actor, mandanteId);
+    const porEmpresa = empresaId ? String(empresaId) : null;
+    const global = porEmpresa && !mandanteId &&
+      !ROLES_MANDANTE.includes(actor.rol);
+    const id = global ? null : this._mandante(actor, mandanteId);
     const carpetas = await carpetaEmpresaRepository.list({mandanteId: id,
-      fuenteId: fuenteId || null});
+      fuenteId: fuenteId || null, empresaId: porEmpresa});
     const [empresas, proyectos, expedientes] = await Promise.all([
       empresaRepository.getByIds([...new Set(carpetas.map((c) =>
         c.empresaId).filter(Boolean))]),
@@ -224,16 +230,21 @@ class CarpetaEmpresaService {
     const [e, p, x] = [porId(empresas), porId(proyectos), porId(expedientes)];
     // Avance "X de Y": sin expediente, Y son los requerimientos de Empresa
     // del Mandante (una lectura); con expediente, los que le aplican.
-    const idsMandante = carpetas.some((c) => !c.expedienteId) ?
-      ((await requerimientoRepository.list({mandanteId: id, estado: "activo",
-        tipoEntidad: "empresa"})) || []).map((r) => r.id) : [];
+    // Por Mandante (con empresaId pueden ser varios).
+    const sinExpediente = [...new Set(carpetas.filter((c) => !c.expedienteId)
+        .map((c) => c.mandanteId))];
+    const idsMandante = new Map(await Promise.all(sinExpediente.map(
+        async (m) => [m, ((await requerimientoRepository.list({mandanteId: m,
+          estado: "activo", tipoEntidad: "empresa"})) || [])
+            .map((r) => r.id)])));
     const idsExpediente = new Map(await Promise.all(carpetas
         .filter((c) => c.expedienteId).map(async (c) => [c.expedienteId,
           await this._idsEmpresaDeExpediente(c.expedienteId)])));
     return carpetas.map((c) => ({
       ...this.publica(c),
       avance: avanceMapeo(c.mapeo, c.expedienteId ?
-        idsExpediente.get(c.expedienteId) : idsMandante),
+        idsExpediente.get(c.expedienteId) : idsMandante.get(c.mandanteId) ||
+          []),
       empresaNombre: e.get(c.empresaId)?.razonSocial || null,
       proyectoNombre: p.get(c.proyectoId)?.nombre || null,
       proyectoCodigo: p.get(c.proyectoId)?.codigo || null,
@@ -581,6 +592,52 @@ class CarpetaEmpresaService {
       });
     }
     return {...this.publica(r.carpeta), empresaNombre: empresa.razonSocial};
+  }
+
+  /**
+   * Carpeta de empresa para una Empresa que se está CREANDO (Nueva Empresa
+   * desde carpeta): valida, sin escribir, que la fuente activa del Mandante
+   * sea local, que la ruta sea una carpeta del primer nivel, que su nombre
+   * corresponda a los datos de la empresa (validación estricta) y que no
+   * esté registrada. Devuelve el documento a crear: quien crea la Empresa lo
+   * escribe en el MISMO lote (create), así una carpeta registrada entre medio
+   * hace fallar todo.
+   * @param {Object} e Datos.
+   * @param {string} e.mandanteId Mandante.
+   * @param {*} e.ruta Carpeta elegida.
+   * @param {Object} e.empresa {razonSocial, nombreFantasia, rut}.
+   * @param {Object} e.actor Usuario autenticado.
+   * @return {Promise<{id: string, coleccion: string, datos: Object}>}
+   *     Carpeta a crear (sin empresaId ni fechas).
+   */
+  async prepararParaNuevaEmpresa({mandanteId, ruta, empresa, actor}) {
+    const fuente = await this._fuenteActiva(mandanteId);
+    if (fuente.tipo !== "local") {
+      throw new AppError(409, "La carpeta de SharePoint estará disponible " +
+          "cuando se conecte Microsoft Graph.");
+    }
+    const v = validarRutaCarpeta(ruta);
+    if (!v.ok) throw new AppError(400, v.error);
+    const coincide = validarCarpetaEmpresa(v.valor, empresa);
+    if (!coincide.valida) {
+      throw new AppError(400, mensajeCarpetaNoCoincide(v.valor, empresa,
+          coincide.terminosBuscados));
+    }
+    const id = idCarpeta(fuente.id, v.valor);
+    const actual = await carpetaEmpresaRepository.getById(id);
+    if (actual) {
+      const otra = await empresaRepository.getById(actual.empresaId)
+          .catch(() => null);
+      throw new AppError(409, `La carpeta «${v.valor}» ya está registrada a ` +
+          `${nombreEmpresa(otra)}.`);
+    }
+    const autor = await this._autor(actor);
+    return {id, coleccion: carpetaEmpresaRepository.COLLECTION, datos: {
+      mandanteId, fuenteId: fuente.id, ruta: v.valor, url: null,
+      proyectoId: null, expedienteId: null, carpetaPersonas: null,
+      carpetaRecursos: null, mapeo: {}, estadoMapeo: "sin_mapear",
+      analizadaAt: null, estado: "activa", createdBy: autor,
+      updatedBy: autor}};
   }
 
   /**
