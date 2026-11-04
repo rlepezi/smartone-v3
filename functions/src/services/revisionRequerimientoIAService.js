@@ -210,13 +210,16 @@ class RevisionRequerimientoIAService {
     evaluacionService.exigirInstanciaEvaluable(expediente, instancia);
     const req = await requerimientoRepository.getById(
         instancia.requerimientoId);
-    if (!req || estadoIADe(req) !== "habilitado") {
-      throw new AppError(409, "Este requerimiento no tiene la revisión IA " +
-          "habilitada.");
-    }
     // Revisión en lote: solo con Carpeta de empresa (los expedientes con la
-    // configuración anterior esperan la migración).
+    // configuración anterior esperan la migración) e IA habilitada. La
+    // individual (panel del requisito) también acepta "en_prueba": la
+    // propuesta nunca se guarda sola, la confirma el evaluador.
     const lote = payload?.lote === true;
+    const permitidos = lote ? ["habilitado"] : ["habilitado", "en_prueba"];
+    if (!req || !permitidos.includes(estadoIADe(req))) {
+      throw new AppError(409, "Este requerimiento no tiene la revisión IA " +
+          (lote ? "habilitada." : "habilitada ni en prueba."));
+    }
     const loteId = lote ? String(payload?.loteId || "") : null;
     if (lote) {
       this._exigirCarpetaEmpresa(expediente);

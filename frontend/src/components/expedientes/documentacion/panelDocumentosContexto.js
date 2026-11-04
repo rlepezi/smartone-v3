@@ -8,10 +8,12 @@ import { createContext, useContext } from "react";
 // datos que publica la planilla ({ instancia, pauta, propuesta, aplicada, puedeRevisar, acciones }) o
 // null; `abrirRequerimiento(datos | null)` lo abre (y abre el panel si está colapsado) o vuelve al
 // modo documentos; `actualizarRequerimiento(datos)` refresca los datos del que está abierto. Fuera de
-// ConPanelDocumentos son null: la planilla no muestra el ícono.
+// ConPanelDocumentos son null: la planilla no muestra el ícono. `pestanaRequerimiento` ("manual" | "ia")
+// es la pestaña del modo requerimiento; se mantiene al pasar de un requerimiento a otro.
 export const PanelDocumentosContexto = createContext({
   expandible: false, expandido: false, alternarExpandido: () => {}, archivoAbierto: null, informarArchivo: () => {},
   requerimientoActivo: null, abrirRequerimiento: null, actualizarRequerimiento: null,
+  pestanaRequerimiento: "manual", cambiarPestanaRequerimiento: () => {},
 });
 export const usePanelDocumentos = () => useContext(PanelDocumentosContexto);
 export const CLAVE_PANEL_EXPANDIDO = "smartone:panelDocumentos:expandido";

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HardHat, AlertCircle } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { empresaService } from "../../services/empresaService";
@@ -7,7 +7,6 @@ import { OPCIONES_ACTIVO_INACTIVO } from "../../utils/opcionesFormulario";
 import { formatRutDisplay, validateRut, cleanRut } from "../../utils/rutFormatters";
 import { EmpresaLogoUploader } from "../shared/EmpresaLogoUploader";
 import { aMayusculas } from "../../utils/texto";
-import { CarpetasDeEmpresa, DocumentosCarpeta } from "./CarpetasDeEmpresa";
 
 const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 
@@ -15,8 +14,7 @@ const ROLES_ESCRITURA = ["superadmin", "mandante_admin", "admin_comercial"];
 // pestaña Resumen, enDetalle=true): sin botones propios (Guardar/Cancelar viven en el encabezado
 // del detalle, vinculados por `formId`) y sin los bloques de gestión que ahí ya tienen su pestaña.
 // Crear una Empresa es NuevaEmpresaForm (página /empresas/nuevo y paso Empresa del wizard).
-// Muestra sus Carpetas de empresa; con "Ver documentos", el panel de documentos de esa carpeta queda a
-// la izquierda y un clic en un RUT o una razón social detectados lo copia al formulario.
+// Las carpetas de la empresa no se vinculan aquí (se ven en el Detalle, solo consulta).
 export const EmpresaEdicionForm = ({
   idEntidad: id, formId, enDetalle = false, onGuardado, onCancelar, onDirtyChange, onGuardandoChange,
 }) => {
@@ -41,8 +39,6 @@ export const EmpresaEdicionForm = ({
   const [loading, setLoading] = useState(false);
   const [cargandoRegistro, setCargandoRegistro] = useState(true);
   const [serverError, setServerError] = useState(null);
-  // Carpeta de la empresa cuyos documentos se muestran junto al formulario.
-  const [carpetaVista, setCarpetaVista] = useState(null);
 
   useEffect(() => {
     empresaService
@@ -94,7 +90,6 @@ export const EmpresaEdicionForm = ({
   const validateForm = () => {
     const newErrors = {};
     if (!formData.razonSocial.trim()) newErrors.razonSocial = "La razón social es obligatoria.";
-    if (!formData.giro.trim()) newErrors.giro = "El giro es obligatorio.";
     if (rutEditable) {
       if (!formData.rut.trim()) {
         newErrors.rut = "El RUT es obligatorio.";
@@ -183,16 +178,8 @@ export const EmpresaEdicionForm = ({
     );
   }
 
-  // Valor copiado desde un documento de la carpeta (el RUT solo si es editable).
-  const copiar = (campo, valor) => {
-    if (campo === "rut" && !rutEditable) return;
-    setFormData((prev) => ({ ...prev, [campo]: campo === "rut" ? formatRutDisplay(valor) : aMayusculas(valor) }));
-    setErrors((prev) => ({ ...prev, [campo]: null }));
-  };
-
-  const formulario = (
+  return (
     <div className="space-y-6">
-      <CarpetasDeEmpresa empresaId={id} vista={carpetaVista} onVer={setCarpetaVista} />
       {serverError && (
         <div className="flex items-center gap-3 p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-sm">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -247,7 +234,7 @@ export const EmpresaEdicionForm = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Giro *</label>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Giro</label>
               <input
                 type="text"
                 name="giro"
@@ -381,17 +368,6 @@ export const EmpresaEdicionForm = ({
         </div>
         )}
       </form>
-    </div>
-  );
-
-  if (!carpetaVista) return formulario;
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-      <div className="lg:sticky lg:top-4 h-[78vh] min-h-[28rem] flex flex-col">
-        <DocumentosCarpeta key={carpetaVista.id} carpeta={carpetaVista}
-          onRut={(r) => copiar("rut", r)} onRazonSocial={(t) => copiar("razonSocial", t)} />
-      </div>
-      <div className="min-w-0">{formulario}</div>
     </div>
   );
 };

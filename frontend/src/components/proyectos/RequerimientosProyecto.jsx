@@ -5,6 +5,7 @@ import { RequerimientosLista } from "../shared/RequerimientosLista";
 import { ActionButton } from "../shared/ActionButton";
 import { PlanillaEvaluacion } from "../expedientes/PlanillaEvaluacion";
 import { BarraCumplimiento } from "./EmpresasParticipantesTable";
+import { IconoTipoEntidad } from "../shared/IconoTipoEntidad";
 
 const NIVELES = [
   { key: "empresa", label: "Empresa" },
@@ -96,7 +97,7 @@ export const RequerimientosProyecto = ({
                 if (items.length === 0) return null;
                 return (
                   <div key={key}>
-                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">{label}</p>
+                    <p className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2"><IconoTipoEntidad tipo={key} className="w-3.5 h-3.5 text-primary" /> {label}</p>
                     <RequerimientosLista
                       items={items}
                       renderEstado={(r) => {

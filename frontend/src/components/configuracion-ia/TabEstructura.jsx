@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDown, ArrowUp, Archive, ChevronDown, ChevronRight, Copy, Download, FolderSearch, FolderTree, Link2, Pencil, Plus,
   RotateCcw, ShieldAlert, Sparkles, Tag, Upload, X,
@@ -7,6 +8,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useMandanteContexto } from "../../hooks/useMandanteContexto";
 import { CampoMandante } from "../shared/CampoMandante";
 import { ErrorBanner } from "../shared/ErrorBanner";
+import { IconoTipoEntidad } from "../shared/IconoTipoEntidad";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { AlcancePanel } from "../revisiones-ia/AlcancePanel";
 import { plantillaEstructuraService } from "../../services/plantillaEstructuraService";
@@ -92,28 +94,70 @@ const ResultadoPrueba = ({ plan, secciones }) => {
 };
 
 // Selector buscable de requerimientos compatibles (nivel del nodo, mismo Mandante, no vinculados).
-const SelectorRequerimiento = ({ opciones, onElegir, onCerrar }) => {
+// Se cierra con la X, con Escape o con un clic fuera de él (`anclaRef`: el contenedor del botón
+// "Vincular", que ya alterna el selector por su cuenta). Se dibuja en el body, fijo bajo el botón,
+// para quedar por encima de las otras filas de la tabla (y seguirlo al desplazar).
+const ANCHO_SELECTOR = 288;
+const SelectorRequerimiento = ({ opciones, nivel, onElegir, onCerrar, anclaRef }) => {
   const [texto, setTexto] = useState("");
+  const cajaRef = useRef(null);
+  const cerrarRef = useRef(onCerrar);
+  useEffect(() => { cerrarRef.current = onCerrar; });
+  useEffect(() => {
+    const alPresionar = (e) => {
+      if (cajaRef.current?.contains(e.target) || anclaRef?.current?.contains(e.target)) return;
+      cerrarRef.current();
+    };
+    const alTeclear = (e) => { if (e.key === "Escape") cerrarRef.current(); };
+    document.addEventListener("mousedown", alPresionar);
+    document.addEventListener("keydown", alTeclear);
+    return () => {
+      document.removeEventListener("mousedown", alPresionar);
+      document.removeEventListener("keydown", alTeclear);
+    };
+  }, [anclaRef]);
+  useLayoutEffect(() => {
+    const ubicar = () => {
+      const caja = cajaRef.current;
+      const r = anclaRef?.current?.getBoundingClientRect();
+      if (!caja || !r) return;
+      caja.style.top = `${r.bottom + 4}px`;
+      caja.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - ANCHO_SELECTOR - 8))}px`;
+    };
+    ubicar();
+    window.addEventListener("scroll", ubicar, true);
+    window.addEventListener("resize", ubicar);
+    return () => {
+      window.removeEventListener("scroll", ubicar, true);
+      window.removeEventListener("resize", ubicar);
+    };
+  }, [anclaRef]);
   const t = texto.trim().toLowerCase();
-  const lista = opciones.filter((r) => !t || `${r.nombreCorto || ""} ${r.nombre}`.toLowerCase().includes(t)).slice(0, 12);
-  return (
-    <div className="absolute z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white shadow-dropdown p-2 space-y-1" onClick={(e) => e.stopPropagation()}>
+  const lista = opciones.filter((r) => !t || `${r.nombreCorto || ""} ${r.nombre}`.toLowerCase().includes(t));
+  return createPortal(
+    <div ref={cajaRef} style={{ width: ANCHO_SELECTOR }} className="fixed z-[70] rounded-xl border border-slate-200 bg-white shadow-dropdown p-2 space-y-1" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-1">
         <input autoFocus value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Buscar requerimiento" aria-label="Buscar requerimiento"
           className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-[11px] focus:outline-none focus:ring-2 focus:ring-primary/20" />
-        <button type="button" onClick={onCerrar} aria-label="Cerrar" className={BOTON_ICONO}><X className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={onCerrar} aria-label="Cerrar" title="Cerrar (Esc)"
+          className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-carbon-dark"><X className="w-4 h-4" /></button>
       </div>
-      <ul className="max-h-56 overflow-y-auto">
+      <p className="flex items-center gap-1.5 px-2 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        <IconoTipoEntidad tipo={nivel} className="w-3.5 h-3.5 text-primary" /> Requerimientos de {ETIQUETA_NIVEL[nivel]} ({opciones.length})
+      </p>
+      <ul className="max-h-64 overflow-y-auto">
         {lista.map((r) => (
           <li key={r.id}>
-            <button type="button" onClick={() => onElegir(r)} className="w-full text-left px-2 py-1 rounded-lg text-[11px] text-carbon-dark hover:bg-primary-lighter">
-              {r.nombreCorto || r.nombre}
+            <button type="button" onClick={() => onElegir(r)} className="w-full flex items-center gap-1.5 text-left px-2 py-1 rounded-lg text-[11px] text-carbon-dark hover:bg-primary-lighter">
+              <IconoTipoEntidad tipo={r.tipoEntidad} />
+              <span className="min-w-0 truncate" title={r.nombre}>{r.nombreCorto || r.nombre}</span>
             </button>
           </li>
         ))}
         {!lista.length && <li className="px-2 py-1 text-[11px] text-slate-400">Sin requerimientos compatibles.</li>}
       </ul>
-    </div>
+    </div>,
+    document.body,
   );
 };
 
@@ -121,6 +165,7 @@ const SelectorRequerimiento = ({ opciones, onElegir, onCerrar }) => {
 // inactivos por retiro, alias sugeridos pendientes y (superadmin) vincular / desvincular.
 const RequerimientosNodo = ({ nodoClave, nivel, guardado, activo, habilitado, vinculos, requerimientos, puedeEditar, ocupado, sugeridos, onVincular, onDesvincular, onVerSugeridos }) => {
   const [abierto, setAbierto] = useState(false);
+  const anclaRef = useRef(null);
   const activos = vinculos.filter((v) => v.nodoClave === nodoClave && v.estado === "activo");
   const inactivosPorRetiro = vinculos.filter((v) => v.nodoClave === nodoClave && v.estado === "inactivo" && v.motivoInactivo === "nodo_retirado").length;
   const porId = new Map(requerimientos.map((r) => [r.id, r]));
@@ -132,6 +177,7 @@ const RequerimientosNodo = ({ nodoClave, nivel, guardado, activo, habilitado, vi
         const r = porId.get(v.requerimientoId);
         return (
           <span key={v.requerimientoId} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary-lighter text-primary-dark">
+            {r && <IconoTipoEntidad tipo={r.tipoEntidad} className="w-3 h-3 shrink-0 text-primary/70" />}
             {r ? r.nombreCorto || r.nombre : "Requerimiento"}
             {puedeEditar && <button type="button" disabled={ocupado} onClick={() => onDesvincular(nodoClave, v.requerimientoId)} aria-label="Desvincular" className="text-primary/60 hover:text-red-600"><X className="w-3 h-3" /></button>}
           </span>
@@ -149,13 +195,15 @@ const RequerimientosNodo = ({ nodoClave, nivel, guardado, activo, habilitado, vi
         </button>
       )}
       {puedeEditar && guardado && activo && (
-        <button type="button" disabled={ocupado} onClick={() => setAbierto((v) => !v)} title={`Vincular un requerimiento de nivel ${ETIQUETA_NIVEL[nivel]}`}
-          className="inline-flex items-center gap-0.5 text-[10px] font-bold text-primary hover:underline disabled:opacity-40">
-          <Link2 className="w-3 h-3" /> Vincular
-        </button>
+        <span ref={anclaRef} className="inline-flex">
+          <button type="button" disabled={ocupado} onClick={() => setAbierto((v) => !v)} title={`Vincular un requerimiento de nivel ${ETIQUETA_NIVEL[nivel]}`}
+            aria-expanded={abierto} className="inline-flex items-center gap-0.5 text-[10px] font-bold text-primary hover:underline disabled:opacity-40">
+            <Link2 className="w-3 h-3" /> Vincular
+          </button>
+        </span>
       )}
       {abierto && (
-        <SelectorRequerimiento opciones={opciones} onCerrar={() => setAbierto(false)}
+        <SelectorRequerimiento opciones={opciones} nivel={nivel} anclaRef={anclaRef} onCerrar={() => setAbierto(false)}
           onElegir={(r) => { setAbierto(false); onVincular(nodoClave, r.id); }} />
       )}
     </span>

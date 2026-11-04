@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderOpen, PanelRightClose, X } from "lucide-react";
+import { ArrowLeft, FolderOpen, PanelRightClose } from "lucide-react";
 import { CLAVE_PANEL_ABIERTO } from "./estilos";
 import { PanelDocumentosContexto, CLAVE_PANEL_EXPANDIDO } from "./panelDocumentosContexto";
 
@@ -32,6 +32,8 @@ export const ConPanelDocumentos = ({ panel, children }) => {
   const [ancho, setAncho] = useState(esAncho);
   const [archivoAbierto, setArchivoAbierto] = useState(null);
   const [requerimientoActivo, setRequerimientoActivo] = useState(null);
+  // Pestaña del modo requerimiento: se mantiene al pasar de un requerimiento a otro.
+  const [pestanaRequerimiento, setPestanaRequerimiento] = useState("manual");
 
   useEffect(() => {
     const alCambiar = () => setAncho(esAncho());
@@ -64,7 +66,9 @@ export const ConPanelDocumentos = ({ panel, children }) => {
     requerimientoActivo,
     abrirRequerimiento,
     actualizarRequerimiento,
-  }), [ancho, expandido, archivoAbierto, requerimientoActivo, abrirRequerimiento, actualizarRequerimiento]);
+    pestanaRequerimiento,
+    cambiarPestanaRequerimiento: setPestanaRequerimiento,
+  }), [ancho, expandido, archivoAbierto, requerimientoActivo, abrirRequerimiento, actualizarRequerimiento, pestanaRequerimiento]);
 
   const botonAbrir = (
     <button type="button" onClick={() => cambiar(true)} aria-expanded={false}
@@ -72,13 +76,21 @@ export const ConPanelDocumentos = ({ panel, children }) => {
       <FolderOpen className="w-3.5 h-3.5" /> Documentos
     </button>
   );
-  const cabecera = (
+  // En pantallas angostas el panel ocupa todo el ancho: "Volver a la tabla" lo cierra.
+  const cabecera = ancho ? (
     <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white">
       <FolderOpen className="w-4 h-4 text-primary" />
       <span className="text-xs font-bold text-carbon-dark mr-auto">Documentos</span>
       <button type="button" onClick={() => cambiar(false)} aria-label="Ocultar documentos" aria-expanded
         className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-        {ancho ? <PanelRightClose className="w-4 h-4" /> : <X className="w-4 h-4" />}
+        <PanelRightClose className="w-4 h-4" />
+      </button>
+    </div>
+  ) : (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-white">
+      <button type="button" onClick={() => cambiar(false)} aria-expanded
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-primary hover:bg-primary-lighter">
+        <ArrowLeft className="w-3.5 h-3.5" /> Volver a la tabla
       </button>
     </div>
   );
@@ -92,7 +104,7 @@ export const ConPanelDocumentos = ({ panel, children }) => {
           {abierto && (
             <div className="fixed inset-0 z-[55] flex justify-end bg-black/30" onClick={() => cambiar(false)}>
               <aside role="dialog" aria-modal="true" aria-label="Documentos" onClick={(e) => e.stopPropagation()}
-                className="w-full max-w-md h-full bg-white shadow-dropdown flex flex-col">
+                className="w-full h-full bg-white shadow-dropdown flex flex-col">
                 {cabecera}
                 <div className="flex-1 min-h-0 flex flex-col">{panel}</div>
               </aside>

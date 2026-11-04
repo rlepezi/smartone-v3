@@ -6,11 +6,11 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   Paperclip,
   PieChart,
   Search,
-  Bot,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -448,11 +448,16 @@ export const PlanillaEvaluacion = ({
         setRespuestas((prev) => ({ ...prev, [activoId]: { ...prev[activoId], revisionIAId: undefined } }));
       },
       recargarPautas: () => setVersionPautas((v) => v + 1),
-      // Checklist manual: decisión del evaluador (deja de ser la propuesta IA aplicada).
-      aplicarChecklist: ({ resultado, observaciones }) => {
+      // Evaluación manual desde el panel (p. ej. "No cumple" por documento no encontrado): llena el
+      // resultado y agrega la observación a la fila; NO guarda.
+      marcarResultado: ({ resultado, observaciones }) => {
         if (!activoId) return;
         handleResultadoChange(activoId, resultado);
-        setRespuestas((prev) => ({ ...prev, [activoId]: { ...prev[activoId], observaciones, revisionIAId: undefined } }));
+        setRespuestas((prev) => {
+          const actual = (prev[activoId]?.observaciones || "").trim();
+          const nueva = !actual ? observaciones : actual.includes(observaciones) ? actual : `${actual}\n${observaciones}`;
+          return { ...prev, [activoId]: { ...prev[activoId], observaciones: nueva, revisionIAId: undefined } };
+        });
       },
     };
   });
@@ -1052,14 +1057,10 @@ export const PlanillaEvaluacion = ({
                   // "Cumple" sin documento: la justificación es obligatoria.
                   const conJustificacion = pideJustificacion(r.id);
                   const faltaJustificacion = conJustificacion && intentoGuardar && !(respuesta.observaciones || "").trim();
-                  // Ícono IA: en color con la IA habilitada; gris con reglas; gris claro sin reglas.
-                  const pauta = pautas?.[r.requerimientoId] || null;
-                  const iconoIA = pauta?.estadoIA === "habilitado"
-                    ? { clase: "text-primary hover:bg-primary-lighter", texto: "Validación IA disponible" }
-                    : pauta?.reglas?.length
-                      ? { clase: "text-slate-500 hover:bg-slate-100", texto: "Ver reglas de validación (IA no habilitada)" }
-                      : { clase: "text-slate-300 opacity-70 hover:bg-slate-50", texto: "Este requerimiento no tiene reglas de validación definidas" };
+                  // Ícono de evaluación (siempre habilitado): con un punto si la IA está activa.
+                  const iaActiva = pautas?.[r.requerimientoId]?.estadoIA === "habilitado";
                   const filaActiva = activoId === r.id;
+                  const propuestaPendiente = estadoIA.propuestas.has(r.id) && !respuesta.revisionIAId;
                   return (
                     <React.Fragment key={r.id}>
                     <tr data-asistente-ref={`planilla-item-${r.id}`} className={`align-top ${CLASE_RESALTADO} ${filaActiva ? "bg-primary-lighter/40" : ""}`}>
@@ -1080,6 +1081,7 @@ export const PlanillaEvaluacion = ({
                           )}
                         </div>
                         {respuesta.revisionIAId && <p className="mt-1 text-[10px] font-bold text-sage-darker">Propuesta IA aplicada</p>}
+                        {propuestaPendiente && <p className="mt-1 text-[10px] font-bold text-amber-700">Propuesta IA pendiente</p>}
                         {!r.requiereVencimiento && respuesta.fechaVencimiento && (
                           // El Requerimiento dejó de pedir vencimiento: la fecha registrada se conserva,
                           // pero ya no es obligatoria y las nuevas evaluaciones no la piden.
@@ -1166,15 +1168,15 @@ export const PlanillaEvaluacion = ({
                         {abrirRequerimiento && (
                           <button
                             type="button"
-                            title={iconoIA.texto}
-                            aria-label={`Revisión IA de ${r.nombreCorto || r.nombre}: ${iconoIA.texto}`}
+                            title="Evaluar requerimiento"
+                            aria-label={`Evaluar ${r.nombreCorto || r.nombre}${iaActiva ? " (IA activa)" : ""}`}
                             aria-pressed={filaActiva}
                             onClick={() => abrirRequerimiento(filaActiva ? null : datosPanelIA(r))}
-                            className={`relative p-1.5 rounded-lg ${iconoIA.clase} ${filaActiva ? "ring-2 ring-primary/30" : ""}`}
+                            className={`relative p-1.5 rounded-lg text-slate-500 hover:text-primary hover:bg-primary-lighter ${filaActiva ? "ring-2 ring-primary/30 text-primary" : ""}`}
                           >
-                            <Bot className="w-4 h-4" />
-                            {estadoIA.propuestas.has(r.id) && (
-                              <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white" aria-hidden="true" />
+                            <ClipboardCheck className="w-4 h-4" />
+                            {iaActiva && (
+                              <span title="IA activa" className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-sage-dark ring-2 ring-white" />
                             )}
                           </button>
                         )}

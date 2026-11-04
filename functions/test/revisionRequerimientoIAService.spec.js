@@ -137,10 +137,16 @@ describe("revisar", () => {
   it("rechaza requerimientos sin IA habilitada y roles de Mandante",
       async () => {
         requerimientoRepository.getById.mockResolvedValue({id: "r1",
-          estadoIA: "en_prueba"});
+          estadoIA: "en_definicion"});
         await expect(servicio.revisar("e1", {expedienteRequerimientoId: "i1",
           archivos: [{nombre: "a.jpg"}]}, EVALUADOR))
-            .rejects.toThrow(/habilitada/);
+            .rejects.toThrow(/habilitada ni en prueba/);
+        // En lote, "en_prueba" no basta.
+        requerimientoRepository.getById.mockResolvedValue({id: "r1",
+          estadoIA: "en_prueba"});
+        await expect(servicio.revisar("e1", {expedienteRequerimientoId: "i1",
+          archivos: [{nombre: "a.jpg"}], lote: true}, EVALUADOR))
+            .rejects.toThrow(/habilitada./);
         await expect(servicio.revisar("e1", {}, {uid: "x",
           rol: "mandante_admin"})).rejects.toThrow(/superadmin y evaluador/);
       });

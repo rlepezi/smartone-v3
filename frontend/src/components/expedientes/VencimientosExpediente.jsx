@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Building2, Users, Truck, RefreshCw, Eye, CalendarClock } from "lucide-react";
 import { formatFecha } from "../../utils/fechas";
+import { IconoTipoEntidad } from "../shared/IconoTipoEntidad";
 import { formatRutDisplay } from "../../utils/rutFormatters";
 import { textoVencimiento, CLASE_VENCIMIENTO, UMBRAL_PROXIMO_DIAS } from "../../utils/vencimientos";
 import { CLASE_RESALTADO, enfocarElemento } from "../../pages/acreditaciones/asistenteNavegacion";
@@ -85,7 +86,8 @@ export const VencimientosExpediente = ({ datos, puedeRenovar, onRenovar, onVer, 
       <div className="flex items-center gap-x-6 gap-y-2 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Tipo de sujeto">
           {TIPOS.map((t) => (
-            <button key={t.value || "todos"} type="button" aria-pressed={tipo === t.value} onClick={() => setTipo(t.value)} className={claseChip(tipo === t.value)}>
+            <button key={t.value || "todos"} type="button" aria-pressed={tipo === t.value} onClick={() => setTipo(t.value)} className={`${claseChip(tipo === t.value)} inline-flex items-center gap-1`}>
+              {t.value && <IconoTipoEntidad tipo={t.value} className="w-3.5 h-3.5 shrink-0" />}
               {t.label}
             </button>
           ))}

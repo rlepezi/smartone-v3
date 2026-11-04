@@ -1,30 +1,28 @@
 import { useState } from "react";
-import { BookmarkPlus, Bot, CheckCircle2, ChevronDown, CircleHelp, ClipboardCheck, FileCheck2, Loader2, RotateCcw, X, XCircle } from "lucide-react";
-import { patronService } from "../../../services/patronService";
-import { nombreSujetoPatron } from "../../../utils/loteRevision";
+import { Bot, CheckCircle2, ChevronDown, CircleHelp, FileCheck2, FileText, Loader2, RotateCcw, X, XCircle } from "lucide-react";
 import { revisionRequerimientoIAService } from "../../../services/revisionRequerimientoIAService";
 import { ESTADOS_IA_REQ, RESULTADOS_PROPUESTOS, SEVERIDADES } from "../../../utils/reglasIA";
 import { describirRegla } from "../../../utils/describirRegla";
 import { prepararPiezasIA } from "../../../utils/revisionIAArchivos";
-import { sugerenciaChecklist } from "../../../utils/checklistReglas";
 import { ReglasIAModal } from "./ReglasIAModal";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
-const CLASE_BOTON = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors disabled:opacity-50";
+const CLASE_BOTON = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 const RESULTADO = {
   cumple: { Icono: CheckCircle2, clase: "text-sage-darker", label: "Cumple" },
   no_cumple: { Icono: XCircle, clase: "text-red-600", label: "No cumple" },
   no_determinable: { Icono: CircleHelp, clase: "text-amber-600", label: "No determinable" },
 };
+// Estados IA con los que se puede pedir la revisión desde el panel (la propuesta nunca se guarda sola).
+const ESTADOS_REVISABLES = ["en_prueba", "habilitado"];
 
-// Título numerado de cada paso del modo requerimiento (orden de trabajo).
-const Paso = ({ numero, titulo, children = null }) => (
-  <p className="flex items-center gap-1.5 text-[11px] font-bold text-carbon-dark">
-    <span className="w-4 h-4 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center shrink-0">{numero}</span>
-    {titulo}
-    {children}
-  </p>
-);
+const PESTANAS_REQUERIMIENTO = [
+  { value: "manual", label: "Evaluación manual" },
+  { value: "ia", label: "Evaluación con IA" },
+];
+
+// Título de cada parte del flujo de evaluación (sin numeración).
+export const TituloPaso = ({ children }) => <p className="text-[11px] font-bold text-carbon-dark">{children}</p>;
 
 // Instrucción de una regla interpretativa: 2 líneas, expandible.
 const Instruccion = ({ texto }) => {
@@ -36,67 +34,143 @@ const Instruccion = ({ texto }) => {
   );
 };
 
-// Panel lateral en "modo requerimiento" (ícono IA de un requisito de la planilla): encabezado, las
-// reglas de validación como pauta (con un checklist que es solo ayuda visual en este navegador) y,
-// con la IA habilitada, "Revisar con IA" sobre el documento abierto en el visor. La propuesta se
-// aplica al formulario de la planilla (no guarda) o se descarta. El documento lo ubica el panel.
+// Panel lateral en "modo requerimiento" (ícono de cada requisito de la planilla): encabezado con el
+// nombre, el Estado IA y las pestañas [Evaluación manual] [Evaluación con IA]. El contenido de la
+// pestaña manual (ubicar y abrir el documento) lo arma PanelDocumentos; la pestaña IA es PestanaIA.
+export const EncabezadoRequerimiento = ({ instancia, pauta, pestana, onPestana, onCerrar }) => {
+  const estado = ESTADOS_IA_REQ[pauta?.estadoIA] || ESTADOS_IA_REQ.sin_reglas;
+  return (
+    <div className="border-b border-slate-100 bg-primary-lighter/20">
+      <div className="flex items-start gap-2 px-3 pt-3">
+        <div className="min-w-0 mr-auto">
+          <p className="text-xs font-bold text-carbon-dark" title={instancia.nombre}>{instancia.nombreCorto || instancia.nombre}</p>
+          <p className="flex flex-wrap items-center gap-1.5 mt-0.5">
+            <span className={`${CLASE_BADGE} ${estado.clase}`}>{estado.label}</span>
+            {pauta?.tipo && <span className="text-[10px] text-slate-500">{pauta.tipo.nombre} · {pauta.tipo.codigo}</span>}
+          </p>
+        </div>
+        <button type="button" onClick={onCerrar} aria-label="Volver a documentos" title="Volver a documentos" className="p-1 rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div role="tablist" aria-label="Tipo de evaluación" className="flex gap-1 px-3 mt-2">
+        {PESTANAS_REQUERIMIENTO.map((p) => {
+          const activa = pestana === p.value;
+          return (
+            <button key={p.value} type="button" role="tab" aria-selected={activa} onClick={() => onPestana(p.value)}
+              className={`px-3 py-1.5 -mb-px border-b-2 text-[11px] font-bold ${activa ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-carbon-dark"}`}>
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// Reglas de validación como checklist de apoyo para la evaluación manual (o visual): cada regla con
+// su casilla, solo ayuda en pantalla (no se guarda). Plegable: `abierto` / `onAlternar`; `checks`
+// ({ id: bool }) / `onCheck(id, valor)` los maneja quien lo usa. Con `onMarcar(resultado, faltantes)`
+// (quien puede evaluar): todas verificadas → "Marcar como Cumple"; alguna sin marcar → aviso con las
+// que faltan y "Marcar como No cumple". Solo llenan la fila (no guardan); `marcado` es el resultado
+// ya marcado desde aquí. Sin reglas no se muestra.
+export const ReglasApoyo = ({ reglas, ctx, abierto, onAlternar, checks, onCheck, onMarcar = null, marcado = null }) => {
+  if (!reglas?.length) return null;
+  const verificadas = reglas.filter((r) => checks[r.vinculoId || r.reglaId]).length;
+  const faltantes = reglas.filter((r) => !checks[r.vinculoId || r.reglaId]);
+  const todas = faltantes.length === 0;
+  return (
+    <div className="border-b border-slate-100 bg-white">
+      <button type="button" onClick={onAlternar} aria-expanded={abierto}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left text-[11px] font-bold text-carbon-dark hover:bg-slate-50">
+        Reglas de validación
+        <span className="font-normal text-slate-500">· {verificadas}/{reglas.length} verificadas</span>
+        <ChevronDown className={`w-3.5 h-3.5 ml-auto text-slate-400 transition-transform ${abierto ? "rotate-180" : ""}`} />
+      </button>
+      {abierto && (
+        <>
+          <ul className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+            {reglas.map((regla) => {
+              const id = regla.vinculoId || regla.reglaId;
+              return (
+                <li key={id} className="px-3 py-2 flex items-start gap-2">
+                  <input type="checkbox" checked={Boolean(checks[id])} onChange={(e) => onCheck(id, e.target.checked)}
+                    aria-label={`Verificado: ${regla.nombre}`} className="mt-0.5 w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary/30" />
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-carbon-dark">
+                      {regla.nombre}
+                      <span className={`${CLASE_BADGE} ${SEVERIDADES[regla.severidad]?.clase || ""}`}>{SEVERIDADES[regla.severidad]?.label || regla.severidad}</span>
+                    </p>
+                    {regla.tipo === "deterministica"
+                      ? <p className="text-[11px] text-slate-600">{describirRegla(regla, ctx)}</p>
+                      : <Instruccion texto={regla.instruccionIA || regla.nombre} />}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="px-3 pb-2 text-[10px] text-slate-400">Guía para revisar el documento: las casillas no se guardan; el resultado se marca en la fila.</p>
+        </>
+      )}
+      {onMarcar && (
+        <div className="px-3 pb-2">
+          {marcado ? (
+            <p className="text-[11px] font-bold text-sage-darker">
+              Marcado «{marcado === "cumple" ? "Cumple" : "No cumple"}» en la fila: revíselo y presione «Guardar Evaluación».
+            </p>
+          ) : todas ? (
+            <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-sage-lighter/60 border border-sage-light">
+              <span className="text-[11px] text-sage-darker">Cumple con todas las reglas.</span>
+              <button type="button" onClick={() => onMarcar("cumple", [])}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-sage-dark text-white text-[11px] font-bold hover:bg-sage-darker">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Marcar como Cumple
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200">
+              <p className="text-[11px] text-amber-800">
+                {faltantes.length === 1 ? "Falta verificar la regla" : `Faltan verificar ${faltantes.length} reglas`}: <b>{faltantes.map((r) => r.nombre).join(", ")}</b>.
+              </p>
+              <button type="button" onClick={() => onMarcar("no_cumple", faltantes)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl border border-red-200 bg-white text-[11px] font-bold text-red-700 hover:bg-red-50">
+                <XCircle className="w-3.5 h-3.5" /> Marcar como No cumple
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Pestaña "Evaluación con IA": Estado IA, el documento elegido en la pestaña manual (comparten la
+// selección), "Revisión IA" (con Estado IA en prueba o habilitado y un documento) y la propuesta con
+// sus motivos por regla. Confirmarla solo llena SI/NO/N/A y la observación de la fila (no guarda).
 //  - datos: { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones (ref: revisada, aplicar,
-//    descartada) }.
-//  - ctx: { tipoEntidad, sujeto, empresa, proyecto } para describir las reglas con datos reales.
-//  - archivoAbierto: { file, rutaRelativa } del visor, o null.
-//  - documento: { opciones: [{ ruta, nombre, candidato }], actual, onElegir, noEncontrado } | null.
-//  - carpeta: dónde está el documento (controles de carpeta del panel), entre el encabezado y las reglas.
-//  - recordar (Persona / Maquinaria): { carpetaEmpresaId, ambito, sujeto, ubicado(ruta), onRecordado }
-//    para "Recordar" el archivo elegido: aprende el patrón y la próxima vez se ubica solo.
-export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto, documento, puedeDefinirReglas, onCerrar, carpeta = null, recordar = null }) => {
+//    descartada, recargarPautas) }.
+//  - documento: { ruta, nombre, leer() → Promise<File | null> } | null.
+export const PestanaIA = ({ datos, expedienteId, documento, puedeDefinirReglas, onIrAManual }) => {
   const { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones } = datos;
   const reglas = pauta?.reglas || [];
   const estadoIA = pauta?.estadoIA || "sin_reglas";
   const estado = ESTADOS_IA_REQ[estadoIA] || ESTADOS_IA_REQ.sin_reglas;
-  const [checks, setChecks] = useState({});
-  const [propuestaVista, setPropuestaVista] = useState(null);
   const [revisando, setRevisando] = useState(false);
   const [error, setError] = useState(null);
   const [editandoReglas, setEditandoReglas] = useState(false);
-  const [recordado, setRecordado] = useState(null); // ruta del archivo recordado
-  const [recordando, setRecordando] = useState(false);
-  const recordarArchivo = async () => {
-    setRecordando(true);
-    setError(null);
-    try {
-      await patronService.confirmar({
-        carpetaEmpresaId: recordar.carpetaEmpresaId, ambito: recordar.ambito,
-        items: [{ requerimientoId: instancia.requerimientoId, nombreArchivo: archivoAbierto.file.name,
-          nombreSujeto: nombreSujetoPatron(recordar.ambito, recordar.sujeto) }],
-      });
-      setRecordado(archivoAbierto.rutaRelativa);
-      recordar.onRecordado?.();
-    } catch (err) {
-      setError(err.message || "No se pudo recordar el archivo.");
-    } finally {
-      setRecordando(false);
-    }
-  };
+  const revisable = ESTADOS_REVISABLES.includes(estadoIA);
+  const habilitarRevision = revisable && Boolean(documento) && puedeRevisar && !revisando;
+
   const cerrarReglas = () => {
     setEditandoReglas(false);
     acciones.current.recargarPautas?.();
   };
-
-  // Una propuesta nueva marca el checklist según su resultado (el evaluador puede cambiarlo).
-  if (propuesta && propuesta.id !== propuestaVista) {
-    setPropuestaVista(propuesta.id);
-    setChecks(Object.fromEntries((propuesta.resultadosReglas || [])
-      .map((r) => [r.vinculoId || r.reglaId, r.resultado === "cumple"])));
-  }
-  const resultadoDe = (regla) => (propuesta?.resultadosReglas || [])
-    .find((r) => (r.vinculoId && r.vinculoId === regla.vinculoId) || r.reglaId === regla.reglaId) || null;
-
   const revisar = async () => {
-    if (!archivoAbierto) return;
     setRevisando(true);
     setError(null);
     try {
-      const archivos = await prepararPiezasIA([{ file: archivoAbierto.file, rutaRelativa: archivoAbierto.rutaRelativa }]);
+      const file = await documento.leer();
+      if (!file) throw new Error("No se pudo leer el documento seleccionado.");
+      const archivos = await prepararPiezasIA([{ file, rutaRelativa: documento.ruta }]);
       const revision = await revisionRequerimientoIAService.revisar(expedienteId, {
         expedienteRequerimientoId: instancia.id, archivos, origen: "carpeta_local",
       });
@@ -118,187 +192,100 @@ export const PanelRequerimientoIA = ({ datos, ctx, expedienteId, archivoAbierto,
   };
 
   const propuesto = propuesta ? RESULTADOS_PROPUESTOS[propuesta.resultadoPropuesto?.resultado] : null;
-  const pasoCarpeta = carpeta ? 1 : 0;
-  const pasoReglas = pasoCarpeta + 1;
-  const pasoDocumento = pasoReglas + 1;
-  const pasoIA = pasoDocumento + 1;
-  const habilitado = estadoIA === "habilitado";
+  const nombreRegla = (r) => reglas.find((x) => (r.vinculoId && x.vinculoId === r.vinculoId) || x.reglaId === r.reglaId)?.nombre
+    || r.nombre || "Regla";
+  const motivoDeshabilitado = !revisable ? "Requiere Estado IA «En prueba» o «IA habilitada»."
+    : !documento ? "Elija el documento en «Evaluación manual»."
+      : !puedeRevisar ? "Solo superadmin y evaluador, con el expediente abierto a evaluación." : null;
 
   return (
-    <div className="border-b border-slate-100 bg-primary-lighter/20 max-h-[50%] overflow-y-auto">
-      <div className="p-3 space-y-2">
-        <div className="flex items-start gap-2">
-          <Bot className={`w-4 h-4 mt-0.5 shrink-0 ${habilitado ? "text-primary" : "text-slate-400"}`} />
-          <div className="min-w-0 mr-auto">
-            <p className="text-xs font-bold text-carbon-dark" title={instancia.nombre}>{instancia.nombreCorto || instancia.nombre}</p>
-            <p className="flex flex-wrap items-center gap-1.5 mt-0.5">
-              <span className={`${CLASE_BADGE} ${estado.clase}`}>{estado.label}</span>
-              {pauta?.tipo && <span className="text-[10px] text-slate-500">{pauta.tipo.nombre} · {pauta.tipo.codigo}</span>}
-              {puedeDefinirReglas && reglas.length > 0 && (
-                <button type="button" onClick={() => setEditandoReglas(true)} className="text-[10px] font-bold text-primary hover:underline">Editar reglas</button>
-              )}
-            </p>
-          </div>
-          <button type="button" onClick={onCerrar} aria-label="Volver a documentos" title="Volver a documentos" className="p-1 rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {carpeta && (
-          <div className="space-y-1.5">
-            <Paso numero={pasoCarpeta} titulo="Ubicar el documento" />
-            <div className="pl-5 space-y-1.5">{carpeta}</div>
-          </div>
-        )}
-
-        {propuesta && (
-          <div className="p-2.5 rounded-xl bg-white border border-slate-200 space-y-1.5">
-            <p className="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <span className="font-bold text-carbon-dark">Resultado propuesto:</span>
-              {propuesto && <span className={`${CLASE_BADGE} ${propuesto.clase}`}>{propuesto.label}</span>}
-            </p>
-            {propuesta.observacionesPropuestas && (
-              <p className="whitespace-pre-wrap text-[11px] text-slate-600">{propuesta.observacionesPropuestas}</p>
+    <div className="p-3 space-y-3">
+      <div className="space-y-1">
+        <TituloPaso>Estado IA</TituloPaso>
+        <p className="flex flex-wrap items-center gap-1.5">
+          <span className={`${CLASE_BADGE} ${estado.clase}`}>{estado.label}</span>
+          {puedeDefinirReglas && reglas.length > 0 && (
+            <button type="button" onClick={() => setEditandoReglas(true)} className="text-[10px] font-bold text-primary hover:underline">Editar reglas</button>
+          )}
+        </p>
+        {reglas.length === 0 && (
+          <p className="text-[11px] text-slate-500">
+            Sin reglas de validación.{" "}
+            {puedeDefinirReglas && (
+              <button type="button" onClick={() => setEditandoReglas(true)} className="font-bold text-primary hover:underline">Definir reglas</button>
             )}
-            {puedeRevisar && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                {aplicada
-                  ? <span className="text-[11px] font-bold text-sage-darker">Aplicada: revise la fila y presione «Guardar Evaluación».</span>
-                  : (
-                    <button type="button" onClick={() => acciones.current.aplicar(propuesta)} className={`${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`}>
-                      <FileCheck2 className="w-3.5 h-3.5" /> Aplicar propuesta
-                    </button>
-                  )}
-                <button type="button" onClick={descartar} className={`${CLASE_BOTON} border border-slate-200 bg-white text-slate-600 hover:bg-slate-50`}>Descartar</button>
-              </div>
-            )}
-          </div>
+          </p>
         )}
+        {estadoIA === "en_prueba" && (
+          <p className="text-[10px] text-slate-400">En prueba: la propuesta es de apoyo; el evaluador decide el resultado.</p>
+        )}
+      </div>
 
-        <details open className="rounded-xl bg-white border border-slate-200">
-          <summary className="flex items-center gap-1.5 px-2.5 py-2 cursor-pointer select-none">
-            <Paso numero={pasoReglas} titulo={`Revisar las reglas de validación${reglas.length > 0 ? ` (${reglas.length})` : ""}`} />
-            <ChevronDown className="w-3.5 h-3.5 ml-auto text-slate-400" />
-          </summary>
-          {reglas.length === 0 ? (
-            <p className="px-2.5 pb-2.5 text-[11px] text-slate-500">
-              Sin reglas de validación definidas.{" "}
-              {puedeDefinirReglas && (
-                <button type="button" onClick={() => setEditandoReglas(true)} className="font-bold text-primary hover:underline">Definir reglas</button>
-              )}
-            </p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {reglas.map((regla) => {
-                const id = regla.vinculoId || regla.reglaId;
-                const r = resultadoDe(regla);
-                const res = r ? RESULTADO[r.resultado] : null;
+      <div className="space-y-1">
+        <TituloPaso>Documento que leerá la IA</TituloPaso>
+        {documento ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-carbon-dark min-w-0" title={documento.ruta}>
+            <FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><b className="truncate">{documento.nombre}</b>
+          </p>
+        ) : (
+          <p className="text-[11px] text-slate-500">
+            Ningún documento seleccionado.{" "}
+            <button type="button" onClick={onIrAManual} className="font-bold text-primary hover:underline">Elegirlo en «Evaluación manual»</button>
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-1">
+        <button type="button" onClick={revisar} disabled={!habilitarRevision} title={motivoDeshabilitado || undefined}
+          className={`${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`}>
+          {revisando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : propuesta ? <RotateCcw className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+          {revisando ? "Revisando..." : propuesta ? "Volver a revisar" : "Revisión IA"}
+        </button>
+        {motivoDeshabilitado
+          ? <p className="text-[10px] text-slate-400">{motivoDeshabilitado}</p>
+          : <p className="text-[10px] text-slate-400">El costo se suma al gasto IA del mes.</p>}
+      </div>
+
+      {propuesta && (
+        <div className="p-2.5 rounded-xl bg-white border border-slate-200 space-y-2">
+          <p className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="font-bold text-carbon-dark">Propuesta de la IA:</span>
+            {propuesto && <span className={`${CLASE_BADGE} ${propuesto.clase}`}>{propuesto.label}</span>}
+          </p>
+          {(propuesta.resultadosReglas || []).length > 0 && (
+            <ul className="space-y-1">
+              {propuesta.resultadosReglas.map((r) => {
+                const res = RESULTADO[r.resultado];
                 return (
-                  <li key={id} className="px-2.5 py-2 flex items-start gap-2">
-                    <input type="checkbox" checked={Boolean(checks[id])} onChange={(e) => setChecks((c) => ({ ...c, [id]: e.target.checked }))}
-                      aria-label={`Verificado: ${regla.nombre}`} className="mt-0.5 w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary/30" />
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-carbon-dark">
-                        {regla.nombre}
-                        <span className={`${CLASE_BADGE} ${SEVERIDADES[regla.severidad]?.clase || ""}`}>{SEVERIDADES[regla.severidad]?.label || regla.severidad}</span>
-                      </p>
-                      {regla.tipo === "deterministica"
-                        ? <p className="text-[11px] text-slate-600">{describirRegla(regla, ctx)}</p>
-                        : <Instruccion texto={regla.instruccionIA || regla.nombre} />}
-                      {res && (
-                        <details className="text-[11px]">
-                          <summary className={`inline-flex items-center gap-1 font-bold cursor-pointer ${res.clase}`}>
-                            <res.Icono className="w-3.5 h-3.5" /> {res.label}
-                          </summary>
-                          {r.detalle && <p className="mt-0.5 text-slate-600">{r.detalle}</p>}
-                        </details>
-                      )}
-                    </div>
+                  <li key={r.vinculoId || r.reglaId} className="text-[11px]">
+                    <p className={`flex items-center gap-1 font-bold ${res?.clase || "text-slate-600"}`}>
+                      {res && <res.Icono className="w-3.5 h-3.5 shrink-0" />} {nombreRegla(r)}{res ? ` · ${res.label}` : ""}
+                    </p>
+                    {r.detalle && <p className="pl-[18px] text-slate-600">{r.detalle}</p>}
                   </li>
                 );
               })}
             </ul>
           )}
-          {reglas.length > 0 && (() => {
-            const sugerencia = sugerenciaChecklist(reglas, checks);
-            return (
-              <div className="px-2.5 pb-2.5 space-y-1.5">
-                {sugerencia ? (
-                  <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
-                    <span className="text-[11px] text-slate-600">
-                      Sugerencia: <b className={sugerencia.resultado === "cumple" ? "text-sage-darker" : "text-red-600"}>{sugerencia.texto}</b> · {sugerencia.observaciones}
-                    </span>
-                    {puedeRevisar && (
-                      <button type="button" onClick={() => acciones.current.aplicarChecklist(sugerencia)}
-                        className={`${CLASE_BOTON} ml-auto border border-primary/30 bg-white text-primary hover:bg-primary-lighter`}>
-                        <ClipboardCheck className="w-3.5 h-3.5" /> Aplicar a la fila
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-slate-400">Marque las reglas que verificó en el documento: se sugiere el resultado para la fila.</p>
+          {propuesta.observacionesPropuestas && (
+            <p className="whitespace-pre-wrap text-[11px] text-slate-600">{propuesta.observacionesPropuestas}</p>
+          )}
+          {puedeRevisar && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {aplicada
+                ? <span className="text-[11px] font-bold text-sage-darker">Confirmada en la fila: revísela y presione «Guardar Evaluación».</span>
+                : (
+                  <button type="button" onClick={() => acciones.current.aplicar(propuesta)} className={`${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`}>
+                    <FileCheck2 className="w-3.5 h-3.5" /> Confirmar en la fila
+                  </button>
                 )}
-                <p className="text-[10px] text-slate-400">El checklist no se guarda; «Aplicar a la fila» solo llena SI/NO y la observación: se guarda con «Guardar Evaluación».</p>
-              </div>
-            );
-          })()}
-        </details>
-
-        <div className="space-y-1">
-          <Paso numero={pasoDocumento} titulo="Abrir el documento" />
-          <p className="pl-5 text-[11px] text-slate-500">{archivoAbierto ? <>Abierto: <b className="text-carbon-dark">{archivoAbierto.file.name}</b></> : "Elíjalo en la lista de archivos de abajo."}</p>
+              <button type="button" onClick={descartar} className={`${CLASE_BOTON} border border-slate-200 bg-white text-slate-600 hover:bg-slate-50`}>Descartar</button>
+            </div>
+          )}
+          <p className="text-[10px] text-slate-400">Confirmar solo marca SI/NO/N/A y las observaciones de la fila; nada se guarda solo.</p>
         </div>
-        {documento && (
-          <div className="space-y-1 pl-5">
-            {documento.noEncontrado && (
-              <p className="text-[11px] text-amber-700">
-                {recordar ? "Sin documento ubicado: elíjalo en la lista y use «Recordar» para que la próxima vez se ubique solo."
-                  : "No se encontró automáticamente el documento de este requerimiento: elíjalo en la lista."}
-              </p>
-            )}
-            {documento.opciones.length > 1 && (
-              <label className="block text-[11px] text-slate-500">
-                Documento
-                <select value={documento.actual || ""} onChange={(e) => documento.onElegir(e.target.value)}
-                  className="mt-0.5 w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs text-carbon-dark">
-                  {!documento.actual && <option value="">Elija un archivo…</option>}
-                  {documento.opciones.map((o) => <option key={o.ruta} value={o.ruta}>{o.candidato ? "★ " : ""}{o.nombre}</option>)}
-                </select>
-              </label>
-            )}
-          </div>
-        )}
-
-        {recordar && puedeRevisar && archivoAbierto && (
-          <div className="pl-5">
-            {recordar.ubicado(archivoAbierto.rutaRelativa) ? (
-              <p className="text-[11px] text-sage-darker">Ubicado por patrón aprendido.</p>
-            ) : recordado === archivoAbierto.rutaRelativa ? (
-              <p className="text-[11px] text-sage-darker">Recordado: la próxima vez se ubicará solo (también en la revisión en lote).</p>
-            ) : (
-              <button type="button" onClick={recordarArchivo} disabled={recordando}
-                className={`${CLASE_BOTON} border border-primary/30 bg-white text-primary hover:bg-primary-lighter`}>
-                {recordando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookmarkPlus className="w-3.5 h-3.5" />}
-                Recordar este archivo para «{instancia.nombreCorto || instancia.nombre}»
-              </button>
-            )}
-          </div>
-        )}
-
-        {habilitado && puedeRevisar && (
-          <Paso numero={pasoIA} titulo="Revisar con IA y aplicar a la fila" />
-        )}
-        {habilitado && puedeRevisar && archivoAbierto && (
-          <div className="flex flex-wrap items-center gap-2 pl-5">
-            <button type="button" onClick={revisar} disabled={revisando} className={`${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`}>
-              {revisando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : propuesta ? <RotateCcw className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
-              {revisando ? "Revisando..." : propuesta ? "Volver a revisar" : "Revisar con IA"}
-            </button>
-            <span className="text-[10px] text-slate-400 truncate">Revisa «{archivoAbierto.file.name}». El costo se suma al gasto IA del mes.</span>
-          </div>
-        )}
-        {error && <p className="text-[11px] text-red-600">{error}</p>}
-      </div>
+      )}
+      {error && <p className="text-[11px] text-red-600">{error}</p>}
       {editandoReglas && (
         <ReglasIAModal requerimientoId={instancia.requerimientoId} nombre={instancia.nombre} onCerrar={cerrarReglas} />
       )}

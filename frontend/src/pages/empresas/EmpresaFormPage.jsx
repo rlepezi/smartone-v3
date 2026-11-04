@@ -1,4 +1,3 @@
-import React, { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { NuevaEmpresaForm } from "../../components/empresas/NuevaEmpresaForm";
@@ -9,13 +8,11 @@ import { NuevaEmpresaForm } from "../../components/empresas/NuevaEmpresaForm";
 export const EmpresaFormPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
-  // Con la carpeta de la empresa elegida, el formulario se ensancha (documentos a la izquierda).
-  const [ancho, setAncho] = useState(false);
 
   if (id) return <Navigate to={`/empresas/${id}?editar=1`} replace />;
 
   return (
-    <div className={`${ancho ? "max-w-7xl" : "max-w-4xl"} mx-auto space-y-6`}>
+    <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -34,7 +31,6 @@ export const EmpresaFormPage = () => {
         variante="completa"
         onCreada={() => navigate("/empresas")}
         onCancelar={() => navigate("/empresas")}
-        onAncho={setAncho}
       />
     </div>
   );

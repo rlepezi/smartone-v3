@@ -299,11 +299,11 @@ class EmpresaService {
     const {rut, razonSocial, nombreFantasia, giro, contacto, estado} =
         payload;
 
-    if (!rut || !razonSocial || !giro) {
+    if (!rut || !razonSocial) {
       throw new AppError(
           400,
-          "Faltan campos obligatorios: 'rut', 'razonSocial' y 'giro' " +
-          "son requeridos.",
+          "Faltan campos obligatorios: 'rut' y 'razonSocial' son " +
+          "requeridos.",
       );
     }
 
@@ -352,7 +352,7 @@ class EmpresaService {
       rut: rutNormalizado,
       razonSocial: aMayusculas(razonSocial),
       nombreFantasia: aMayusculas(nombreFantasia || razonSocial),
-      giro: giro.trim(),
+      giro: typeof giro === "string" && giro.trim() ? giro.trim() : null,
       contacto: contactoFinal,
       estado: estadoFinal,
       logoUrl: null,
@@ -511,7 +511,11 @@ class EmpresaService {
     if (updateData.nombreFantasia) {
       updateData.nombreFantasia = aMayusculas(updateData.nombreFantasia);
     }
-    if (updateData.giro) updateData.giro = updateData.giro.trim();
+    // Giro opcional: vacío se guarda como null.
+    if (updateData.giro !== undefined) {
+      updateData.giro = typeof updateData.giro === "string" &&
+        updateData.giro.trim() ? updateData.giro.trim() : null;
+    }
 
     if (updateData.contacto) {
       const contacto = updateData.contacto;

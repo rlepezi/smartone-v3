@@ -7,6 +7,7 @@ import { requerimientoService } from "../../../services/requerimientoService";
 import { mapeoRequerimientoService } from "../../../services/mapeoRequerimientoService";
 import { ReglasIARequerimiento } from "../../requerimientos/reglas-ia/ReglasIARequerimiento";
 import { ESTADOS_IA_REQ } from "../../../utils/reglasIA";
+import { IconoTipoEntidad } from "../../shared/IconoTipoEntidad";
 import { CLASE_INPUT } from "../estilos";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
@@ -78,7 +79,7 @@ export const ReglasPorRequerimiento = () => {
                   if (!lista.length) return null;
                   return (
                     <div key={g.entidad}>
-                      <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{g.label} ({g.lista.length})</p>
+                      <p className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400"><IconoTipoEntidad tipo={g.entidad} className="w-3.5 h-3.5 text-primary" /> {g.label} ({g.lista.length})</p>
                       <ul>
                         {lista.map((r) => {
                           const activo = r.id === elegido;

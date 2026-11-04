@@ -1,16 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Bot, HardHat } from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
+import { AlertCircle, HardHat } from "lucide-react";
 import { empresaService } from "../../services/empresaService";
-import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
-import { listarDirectorio, obtenerArchivo } from "../../services/fuentes/carpetaLocal";
-import { extraerTextoDocumento } from "../../utils/textoDocumento";
-import {
-  carpetasConPalabraClave, documentoPreferido, documentosParaAnalizar, nombreDesdeCarpeta, propuestaRazonSocial, propuestaRut, rutsCandidatos,
-} from "../../utils/datosEmpresaCarpeta";
-import { BloqueCarpetaEmpresa } from "./BloqueCarpetaEmpresa";
-import { useFuenteNuevaEmpresa } from "../../hooks/useFuenteNuevaEmpresa";
-import { PanelCarpetaEmpresa } from "./PanelCarpetaEmpresa";
 import { storageService } from "../../services/storageService";
 import { getMandanteDisplayName } from "../../utils/mandanteDisplay";
 import { formatRutDisplay, validateRut, cleanRut } from "../../utils/rutFormatters";
@@ -52,20 +42,13 @@ const ESTILOS = {
 // existe (409 RUT_EXISTENTE) no se duplica: "completa" ofrece asociar la Empresa al Mandante (o
 // avisa si ya lo está) y "compacta" ofrece usarla (asociándola si hace falta).
 // `onCreada(empresa)`: la Empresa creada o la existente que se usa (en "completa", tras asociar,
-// sin datos). `onCancelar`: botón Cancelar.
-// Nueva Empresa desde carpeta (solo superadmin, con fuente local autorizada): al elegir la carpeta se
-// proponen los datos (nombre de fantasía desde la carpeta; RUT jurídico y razón social desde el texto
-// de hasta 5 documentos; con IA, a pedido), cada uno con su origen, y el formulario se ensancha con
-// los documentos a la izquierda (`onAncho(true)`). Al guardar, la carpeta queda registrada a la
-// empresa en el mismo lote. Nada se guarda sin confirmar.
-export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFijo = null, onCreada, onCancelar, onAncho }) => {
+// sin datos). `onCancelar`: botón Cancelar. Las carpetas de empresa no se vinculan aquí.
+export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFijo = null, onCreada, onCancelar }) => {
   const completa = variante === "completa";
   const e = ESTILOS[completa ? "completa" : "compacta"];
   const contextoMandante = useMandanteContexto({ activo: completa });
   const mandanteId = completa ? contextoMandante.mandanteId : mandanteFijo;
   const rutRef = useRef(null);
-  const { profile } = useAuth();
-  const fuenteNE = useFuenteNuevaEmpresa(profile?.uid, mandanteId, profile?.rol === "superadmin");
 
   const [formData, setFormData] = useState(VACIO);
   const [errors, setErrors] = useState({});
@@ -74,83 +57,6 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
   // 409 RUT_EXISTENTE: Empresa ya registrada con ese RUT.
   const [rutExistente, setRutExistente] = useState(null);
   const [asociando, setAsociando] = useState(false);
-
-  // ── Carpeta de la empresa ──
-  const [carpeta, setCarpeta] = useState(null); // ruta en la fuente, o null
-  const [docInicial, setDocInicial] = useState(null);
-  const [origenes, setOrigenes] = useState({}); // campo → "Desde nombre de carpeta" | "Desde documento «X»" | "Extraído con IA"
-  const [analisis, setAnalisis] = useState(null); // { analizando } | { revisados, conTexto }
-  const [propuestaIA, setPropuestaIA] = useState(null); // { documento, conflictos, direccion, rutInvalido }
-  const [pestana, setPestana] = useState("datos"); // pantallas angostas
-  const formRef = useRef(formData);
-  useEffect(() => { formRef.current = formData; }, [formData]);
-  useEffect(() => { onAncho?.(Boolean(carpeta)); }, [carpeta, onAncho]);
-
-  // Propone un valor si el campo está vacío (o `forzar`), con su origen.
-  const aplicar = (campo, valor, origen, forzar = false) => {
-    if (!valor || (!forzar && String(formRef.current[campo] || "").trim())) return false;
-    const v = campo === "rut" ? formatRutDisplay(valor) : campo === "razonSocial" || campo === "nombreFantasia" ? aMayusculas(valor) : valor;
-    formRef.current = { ...formRef.current, [campo]: v };
-    setFormData((p) => ({ ...p, [campo]: v }));
-    setOrigenes((o) => ({ ...o, [campo]: origen }));
-    setErrors((p) => ({ ...p, [campo]: null }));
-    return true;
-  };
-
-  const elegirCarpeta = async (ruta) => {
-    const handle = fuenteNE.base.handle;
-    setCarpeta(ruta);
-    setPropuestaIA(null);
-    setPestana("datos");
-    const nombre = nombreDesdeCarpeta(ruta);
-    aplicar("nombreFantasia", nombre, "Desde nombre de carpeta");
-    setAnalisis({ analizando: true });
-    try {
-      const raiz = await listarDirectorio(handle, ruta);
-      // Archivos de la raíz y de las subcarpetas con palabra clave (certificado, escritura, F30...).
-      const archivos = [...(raiz?.archivos || [])];
-      for (const c of carpetasConPalabraClave(raiz?.carpetas)) {
-        archivos.push(...((await listarDirectorio(handle, c.ruta).catch(() => null))?.archivos || []));
-      }
-      setDocInicial(documentoPreferido(archivos)?.ruta || null);
-      const textos = [];
-      for (const d of documentosParaAnalizar(archivos)) {
-        const file = await obtenerArchivo(handle, d.ruta).catch(() => null);
-        const t = file ? await extraerTextoDocumento(file) : null;
-        if (t?.conTexto) textos.push({ texto: t.texto, documento: d.nombre });
-      }
-      const rut = propuestaRut(rutsCandidatos(textos));
-      if (rut) aplicar("rut", rut.rut, `Desde documento «${rut.documentos[0]}»`);
-      const rs = propuestaRazonSocial({ textos, rut: rut?.rut, nombreFantasia: nombre });
-      if (rs) aplicar("razonSocial", rs.razonSocial, `Desde documento «${rs.documento}»`);
-      setAnalisis({ revisados: documentosParaAnalizar(archivos).length, conTexto: textos.length, rut: Boolean(rut), razonSocial: Boolean(rs) });
-    } catch {
-      setAnalisis({ revisados: 0, conTexto: 0 });
-    }
-  };
-  const quitarCarpeta = () => {
-    setCarpeta(null);
-    setDocInicial(null);
-    setAnalisis(null);
-    setPropuestaIA(null);
-    setOrigenes({});
-  };
-
-  // Datos de la IA: completa los campos vacíos; si difieren de lo propuesto, se muestran ambos.
-  const alExtraerIA = (r, documento) => {
-    const campos = r.campos || {};
-    const conflictos = [];
-    ["razonSocial", "rut", "giro"].forEach((campo) => {
-      const valor = campos[campo]?.valor;
-      if (!valor || (campo === "rut" && !r.rutValido)) return;
-      const actual = String(formRef.current[campo] || "").trim();
-      const normal = (x) => String(x || "").replace(/[^0-9a-z]/gi, "").toLowerCase();
-      if (!actual) aplicar(campo, valor, "Extraído con IA");
-      else if (normal(actual) !== normal(valor)) conflictos.push({ campo, actual, ia: valor, confianza: campos[campo]?.confianza ?? null });
-    });
-    setPropuestaIA({ documento, conflictos, direccion: campos.direccion?.valor || null,
-      rutInvalido: campos.rut?.valor && !r.rutValido ? campos.rut.valor : null });
-  };
 
   // Logo elegido antes de crear (solo "completa"): se sube al obtener el ID real.
   const [logoPendiente, setLogoPendiente] = useState(null);
@@ -173,14 +79,11 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
         : name === "contactoTelefono" ? value.replace(/\D/g, "").slice(0, 11) : value;
     setFormData((prev) => ({ ...prev, [name]: valor }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: null }));
-    // Editado a mano: deja de ser una propuesta.
-    if (origenes[name]) setOrigenes((o) => { const n = { ...o }; delete n[name]; return n; });
   };
 
   const validateForm = () => {
     const nuevos = {};
     if (!formData.razonSocial.trim()) nuevos.razonSocial = "La razón social es obligatoria.";
-    if (!formData.giro.trim()) nuevos.giro = "El giro es obligatorio.";
     if (completa && !mandanteId) nuevos.mandanteId = "Seleccione el Mandante.";
     if (!formData.rut.trim()) nuevos.rut = "El RUT es obligatorio.";
     else if (!validateRut(formData.rut)) nuevos.rut = "El RUT ingresado no es válido.";
@@ -205,7 +108,7 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
         rut: cleanRut(formData.rut),
         razonSocial: formData.razonSocial.trim(),
         nombreFantasia: formData.nombreFantasia.trim() || formData.razonSocial.trim(),
-        giro: formData.giro.trim(),
+        giro: formData.giro.trim() || null,
         estado: completa ? formData.estado : "activo",
         contacto: hayContacto ? {
           nombre: formData.contactoNombre.trim() || null,
@@ -213,7 +116,6 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
           telefono: formData.contactoTelefono.trim() || null,
         } : null,
         mandanteId,
-        ...(carpeta ? { carpeta: { ruta: carpeta }, origenes } : {}),
       });
       if (completa && logoPendiente) {
         // Best-effort: la Empresa ya quedó creada; si el logo falla no se revierte (se navega fuera,
@@ -252,29 +154,8 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
     }
   };
 
-  // RUT existente con carpeta elegida: la carpeta se registra a la empresa existente (asociándola al
-  // Mandante si hace falta) en vez de crear otra.
-  const vincularCarpetaAExistente = async () => {
-    setAsociando(true);
-    try {
-      if (!rutExistente.yaAsociada) await empresaService.asociarMandante(rutExistente.empresaId, mandanteId);
-      await carpetaEmpresaService.registrar({ mandanteId, ruta: carpeta, empresaId: rutExistente.empresaId });
-      const empresa = completa ? null : await empresaService.obtenerPorId(rutExistente.empresaId);
-      setRutExistente(null);
-      onCreada?.(empresa);
-    } catch (err) {
-      setRutExistente(null);
-      setServerError(err.message || "No se pudo vincular la carpeta.");
-    } finally {
-      setAsociando(false);
-    }
-  };
-
   const nombreMandante = getMandanteDisplayName(contextoMandante.mandante) || "el Mandante";
   const rutTexto = rutExistente ? `${rutExistente.razonSocial || (completa ? "Una Empresa" : "La Empresa")} (RUT ${formatRutDisplay(rutExistente.rut || "")})` : "";
-  const chip = (campo) => origenes[campo] && (
-    <span className="ml-1.5 inline-flex items-center px-1.5 py-px rounded-full bg-primary-lighter text-primary text-[10px] font-bold align-middle">{origenes[campo]}</span>
-  );
   const conError = (campo) => `${e.input} ${errors[campo] ? (completa ? "border-red-400 bg-red-50/30" : "border-red-400") : "border-gray-200"}`;
   const banner = serverError && (
     <div className={completa ? "flex items-center gap-3 p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-sm" : "flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-xs"}>
@@ -286,22 +167,21 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
   const camposIdentificacion = (
     <div className={e.grid}>
       <div>
-        <label className={e.label}>RUT *{chip("rut")}</label>
+        <label className={e.label}>RUT *</label>
         <input ref={rutRef} type="text" name="rut" value={formData.rut} onChange={handleChange} placeholder="76.123.456-7" maxLength={12} className={conError("rut")} />
         {errors.rut && <p className={e.error}>{errors.rut}</p>}
       </div>
       <div>
-        <label className={e.label}>Giro *{chip("giro")}</label>
-        <input type="text" name="giro" value={formData.giro} onChange={handleChange} placeholder="Ej: Construcción y obras civiles" className={conError("giro")} />
-        {errors.giro && <p className={e.error}>{errors.giro}</p>}
+        <label className={e.label}>Giro</label>
+        <input type="text" name="giro" value={formData.giro} onChange={handleChange} placeholder="Ej: Construcción y obras civiles" className={`${e.input} border-gray-200`} />
       </div>
       <div className="md:col-span-2">
-        <label className={e.label}>Razón Social *{chip("razonSocial")}</label>
+        <label className={e.label}>Razón Social *</label>
         <input type="text" name="razonSocial" value={formData.razonSocial} onChange={handleChange} placeholder="Constructora Ejemplo S.A." className={conError("razonSocial")} />
         {errors.razonSocial && <p className={e.error}>{errors.razonSocial}</p>}
       </div>
       <div className={completa ? "" : "md:col-span-2"}>
-        <label className={e.label}>Nombre Fantasía{chip("nombreFantasia")}</label>
+        <label className={e.label}>Nombre Fantasía</label>
         <input type="text" name="nombreFantasia" value={formData.nombreFantasia} onChange={handleChange} placeholder="Constructora Ejemplo" className={`${e.input} border-gray-200`} />
       </div>
       {completa && (
@@ -313,71 +193,7 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
     </div>
   );
 
-  const ETIQUETAS = { razonSocial: "Razón social", rut: "RUT", giro: "Giro" };
-  const bloqueCarpeta = (
-    <>
-      <BloqueCarpetaEmpresa fuenteNE={fuenteNE} ruta={carpeta} onElegir={elegirCarpeta} onQuitar={quitarCarpeta} compacto={!completa} />
-      {carpeta && analisis && (
-        <p className="text-[11px] text-slate-500">
-          {analisis.analizando ? "Revisando los documentos de la carpeta..."
-            : `Se revisaron ${analisis.revisados} documentos (${analisis.conTexto} con texto). ${analisis.rut ? "" : "No hay un RUT de empresa claro: elíjalo en el visor. "}${analisis.razonSocial ? "" : "La razón social no se propuso: cópiela desde el documento."}`}
-        </p>
-      )}
-      {propuestaIA && (
-        <div className="p-3 rounded-xl border border-sky-200 bg-sky-50 space-y-1.5 text-[11px] text-sky-900">
-          <p className="flex items-center gap-1.5 font-bold"><Bot className="w-3.5 h-3.5" /> Datos de la IA desde «{propuestaIA.documento}»</p>
-          {propuestaIA.conflictos.map((c) => (
-            <div key={c.campo} className="flex flex-wrap items-center gap-2">
-              <span>{ETIQUETAS[c.campo]}: actual <b>{c.actual}</b> · IA <b>{c.ia}</b>{c.confianza !== null ? ` (${Math.round(c.confianza * 100)}%)` : ""}</span>
-              <button type="button" onClick={() => { aplicar(c.campo, c.ia, "Extraído con IA", true); setPropuestaIA((p) => ({ ...p, conflictos: p.conflictos.filter((x) => x.campo !== c.campo) })); }}
-                className="font-bold text-primary hover:underline">Usar el de la IA</button>
-              <button type="button" onClick={() => setPropuestaIA((p) => ({ ...p, conflictos: p.conflictos.filter((x) => x.campo !== c.campo) }))}
-                className="font-bold text-slate-500 hover:underline">Mantener el actual</button>
-            </div>
-          ))}
-          {propuestaIA.rutInvalido && <p className="text-amber-800">RUT leído «{propuestaIA.rutInvalido}» con dígito verificador inválido: no se propone.</p>}
-          {propuestaIA.direccion && <p>Dirección: {propuestaIA.direccion} (informativa, no se guarda).</p>}
-          {!propuestaIA.conflictos.length && !propuestaIA.rutInvalido && <p>Los campos vacíos se completaron con lo leído.</p>}
-        </div>
-      )}
-    </>
-  );
-  // Con carpeta: documentos a la izquierda y formulario a la derecha (pestañas en pantallas angostas).
-  const conPanel = (formulario) => (!carpeta || !fuenteNE.base.handle ? formulario : (
-    <div className="space-y-3">
-      <div className="lg:hidden inline-flex p-1 rounded-xl bg-slate-100" role="tablist">
-        {[["documentos", "Documentos"], ["datos", "Datos de la empresa"]].map(([k, t]) => (
-          <button key={k} type="button" role="tab" aria-selected={pestana === k} onClick={() => setPestana(k)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold ${pestana === k ? "bg-white text-primary shadow-sm" : "text-slate-500"}`}>{t}</button>
-        ))}
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        <div className={`${pestana === "documentos" ? "" : "hidden"} lg:block lg:sticky lg:top-4 h-[78vh]`}>
-          <PanelCarpetaEmpresa
-            key={`${carpeta}|${docInicial || ""}`}
-            handle={fuenteNE.base.handle}
-            ruta={carpeta}
-            inicial={docInicial}
-            mandanteId={mandanteId}
-            onRut={(r, doc) => aplicar("rut", r, `Desde documento «${doc}»`, true)}
-            onRazonSocial={(t, doc) => aplicar("razonSocial", t, `Desde documento «${doc}»`, true)}
-            onIA={alExtraerIA}
-          />
-        </div>
-        <div className={`${pestana === "datos" ? "" : "hidden"} lg:block min-w-0`}>{formulario}</div>
-      </div>
-    </div>
-  ));
-
-  const modalExistente = rutExistente && carpeta ? (
-    <ConfirmacionModal
-      titulo="Ya existe una Empresa con este RUT"
-      mensaje={`Ya existe ${rutTexto} con este RUT. Puede vincular la carpeta «${carpeta}» a esa empresa en vez de crear otra${rutExistente.yaAsociada ? "" : ` (queda además asociada a ${completa ? nombreMandante : "este Mandante"})`}.`}
-      textoConfirmar="Vincular la carpeta a esa empresa"
-      ocupado={asociando}
-      onCancelar={() => setRutExistente(null)} onConfirmar={vincularCarpetaAExistente}
-    />
-  ) : rutExistente && (completa && rutExistente.yaAsociada ? (
+  const modalExistente = rutExistente && (completa && rutExistente.yaAsociada ? (
     <ConfirmacionModal
       titulo="La Empresa ya existe"
       mensaje={`${rutTexto} ya está registrada y asociada a ${nombreMandante}.`}
@@ -399,10 +215,9 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
   ));
 
   if (!completa) {
-    return conPanel(
+    return (
       <form onSubmit={handleSubmit} className="p-4 rounded-xl border border-primary/20 bg-primary-lighter/40 space-y-3">
         {banner}
-        {bloqueCarpeta}
         {camposIdentificacion}
         <div className="flex items-center justify-end gap-2 pt-1">
           <button type="button" onClick={onCancelar} className="px-3 py-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900">Cancelar</button>
@@ -415,7 +230,7 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
     );
   }
 
-  return conPanel(
+  return (
     <div className="space-y-6">
       {banner}
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -428,7 +243,6 @@ export const NuevaEmpresaForm = ({ variante = "completa", mandanteId: mandanteFi
             contexto={contextoMandante} error={errors.mandanteId} ayuda="La Empresa quedará asociada a este Mandante." focoRef={rutRef}
             onChange={() => setErrors((prev) => ({ ...prev, mandanteId: null }))}
           />
-          {bloqueCarpeta}
           <EmpresaLogoUploader logoUrl={logoPreviewUrl} onArchivoSeleccionado={handleLogoSeleccionado} />
           {camposIdentificacion}
         </div>
