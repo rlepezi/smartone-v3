@@ -590,10 +590,13 @@ export const ExpedienteDetailPage = () => {
   // Cumplimiento Documental de la pestaña General: los contadores del Expediente completo.
   const dGeneral = desglose(expediente.resumen || resumenVacio());
 
+  // Etiqueta de Personas / Recursos: cuántos sujetos tiene el componente.
+  const etiquetaSujetos = (asignados, singular, plural) => (asignados.length
+    ? `${asignados.length} ${asignados.length === 1 ? singular : plural}` : `Sin ${plural}`);
   const componentes = [
-    { key: "empresa", nombre: "Empresa", Icono: Building2, d: dEmpresa },
-    { key: "persona", nombre: "Personas", Icono: Users, d: dPersonas },
-    { key: "recurso", nombre: "Recursos", Icono: Truck, d: dRecursos },
+    { key: "empresa", nombre: "Empresa", Icono: Building2, d: dEmpresa, etiqueta: `${dEmpresa.total} requisitos` },
+    { key: "persona", nombre: "Personas", Icono: Users, d: dPersonas, etiqueta: etiquetaSujetos(personasAsignadas, "persona", "personas") },
+    { key: "recurso", nombre: "Recursos", Icono: Truck, d: dRecursos, etiqueta: etiquetaSujetos(recursosAsignados, "maquinaria", "maquinarias") },
   ];
 
   const cambiarNivel = (key) => {
@@ -915,7 +918,7 @@ export const ExpedienteDetailPage = () => {
 
                   <div className="rounded-2xl border border-slate-100 p-5 space-y-3">
                     <h4 className="text-sm font-bold text-carbon-dark">Resumen por componente</h4>
-                    {componentes.map(({ key, nombre, Icono, d }) => (
+                    {componentes.map(({ key, nombre, Icono, d, etiqueta }) => (
                       <button
                         key={key}
                         type="button"
@@ -924,8 +927,9 @@ export const ExpedienteDetailPage = () => {
                       >
                         <EntityIconTile icon={Icono} />
                         <span className="text-xs font-bold text-carbon-dark">{nombre}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold whitespace-nowrap">
-                          {d.total} requisitos
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold whitespace-nowrap"
+                          title={key === "empresa" ? undefined : `${d.total} requisitos en total`}>
+                          {etiqueta}
                         </span>
                         <span className="ml-auto"><PuntosEstado d={d} /></span>
                         <BadgeAcreditacion pct={d.avancePct} umbrales={mandante?.umbralesAcreditacion} sinEvaluar={d.evaluados === 0} />

@@ -385,6 +385,10 @@ const ContenidoPanel = ({
   // Sin documento elegido, se preselecciona el ubicado por el mapeo (también al volver a abrir el
   // mismo requerimiento).
   if (listoParaUbicar && !seleccion && candidatos[0]) setSeleccion({ ruta: candidatos[0].ruta, manual: false });
+  // Carpeta elegida a mano (Empresa) con un solo archivo: ese es el documento (elegido a mano).
+  else if (listoParaUbicar && !seleccion && tipo === "empresa" && carpetaManual !== null && enLista.archivos.length === 1) {
+    setSeleccion({ ruta: enLista.archivos[0].ruta, manual: true });
+  }
   // "Ir al Mapeo documental": solo superadmin (los demás ven el aviso sin enlace).
   const enlaceMapeo = puedeDefinirReglas
     ? <>{" "}<Link to="/configuracion/ia?tab=mapeo" className="font-bold text-primary hover:underline">Ir al Mapeo documental</Link></>
@@ -430,7 +434,7 @@ const ContenidoPanel = ({
           No se encontró en la carpeta del expediente por los alias del mapeo.{activo ? " Elija la carpeta en el árbol." : puedeConfirmarUbicacion ? " Abra la carpeta correcta y confírmela." : ""}
         </p>
       )}
-      {resolEmpresa?.estado === "sin_mapeo" && (
+      {resolEmpresa?.estado === "sin_mapeo" && carpetaManual === null && !seleccion && (
         <p className="text-[11px] text-amber-700">Sin ubicación en el mapeo documental.{enlaceMapeo}</p>
       )}
       {activo && carpetaManual !== null && (
@@ -464,10 +468,10 @@ const ContenidoPanel = ({
       )}
       {esperandoSujeto && <p className="text-[11px] text-slate-400">Buscando el documento por el mapeo documental...</p>}
       {resolSujeto?.estado === "resuelta" && <p className="text-[11px] text-sage-darker">Documento ubicado por el mapeo documental.</p>}
-      {resolSujeto?.estado === "no_encontrada" && (
+      {resolSujeto?.estado === "no_encontrada" && !seleccion && (
         <p className="text-[11px] text-amber-700">No se encontró el documento por los alias del mapeo: elíjalo en la lista.</p>
       )}
-      {resolSujeto?.estado === "sin_mapeo" && (
+      {resolSujeto?.estado === "sin_mapeo" && !seleccion && (
         <p className="text-[11px] text-amber-700">Sin ubicación en el mapeo documental.{enlaceMapeo}</p>
       )}
       {resolSujeto?.estado === "sugerida" && <p className="text-[11px] text-amber-700">Varios archivos posibles: elija el correcto.</p>}
@@ -488,8 +492,11 @@ const ContenidoPanel = ({
     leer: async () => (archivoAbierto?.rutaRelativa === seleccion.ruta ? archivoAbierto.file
       : obtenerArchivo(carpeta.handle, seleccion.ruta)),
   } : null;
-  // Sin documento (búsqueda terminada y nada seleccionado): reglas a la vista y opción "No cumple".
-  const sinDocumento = Boolean(activo) && !seleccion && !resolviendo && !esperandoSujeto && (base === null || listoParaUbicar);
+  // Sin documento (búsqueda terminada, nada seleccionado y ningún archivo en la carpeta: sin carpeta,
+  // inexistente o vacía): opción "No cumple". Con archivos en la carpeta, aunque ninguno esté elegido,
+  // se evalúa con el checklist de reglas (que ofrece "Marcar como Cumple" al verificarlas todas).
+  const sinDocumento = Boolean(activo) && !seleccion && !resolviendo && !esperandoSujeto
+    && (base === null || listado === "no_existe" || (listoParaUbicar && enLista.archivos.length === 0));
   const NO_ENCONTRADO = "Documento no encontrado en la carpeta del expediente.";
   // Resultado marcado desde el panel (llena la fila; se guarda con "Guardar Evaluación"). Cumple: todas
   // las reglas verificadas. No cumple: las reglas que faltan (y si no hay documento, se dice).
@@ -502,6 +509,9 @@ const ContenidoPanel = ({
     setMarcado(resultado);
   };
   const hayReglas = (activo?.pauta?.reglas || []).length > 0;
+  // Todas las reglas verificadas en el checklist: se sugiere "Marcar como Cumple" (aunque no haya un
+  // documento elegido, p. ej. si lo revisó en el árbol) y no se ofrece "¿El documento no existe?".
+  const todasVerificadas = hayReglas && (activo?.pauta?.reglas || []).every((r) => checksReglas[r.vinculoId || r.reglaId]);
   // La pestaña IA solo se abre con reglas definidas: sin reglas se ve la manual (aunque la última
   // elegida haya sido la IA en otro requerimiento).
   const pestanaVisible = hayReglas ? pestanaRequerimiento : "manual";
@@ -523,7 +533,7 @@ const ContenidoPanel = ({
               {tipo === "empresa" ? controlesCarpetaEmpresa : controlesSujeto}
               {/* Sin documento (no encontrado o sin elegir) no hay nada que validar: "No cumple" aquí,
                   junto al aviso, con o sin reglas. */}
-              {sinDocumento && activo.puedeRevisar && (
+              {sinDocumento && !todasVerificadas && activo.puedeRevisar && (
                 marcado === "no_cumple" ? (
                   <p className="text-[11px] font-bold text-sage-darker">Marcado «No cumple» en la fila: revíselo y presione «Guardar Evaluación».</p>
                 ) : (
@@ -541,7 +551,7 @@ const ContenidoPanel = ({
             <ReglasApoyo reglas={activo.pauta?.reglas} ctx={{ tipoEntidad: tipo, sujeto, empresa, proyecto }}
               abierto={reglasAbiertas} onAlternar={() => setReglasAbiertas((v) => !v)}
               checks={checksReglas} onCheck={(id, v) => { setChecksReglas((c) => ({ ...c, [id]: v })); setMarcado(null); }}
-              onMarcar={activo.puedeRevisar && !sinDocumento ? marcar : null} marcado={marcado} />
+              onMarcar={activo.puedeRevisar && (!sinDocumento || todasVerificadas) ? marcar : null} marcado={marcado} />
             <div className="px-3 pt-2 pb-1 space-y-1">
               <TituloPaso>Abrir el documento</TituloPaso>
               <p className="text-[11px] text-slate-500 truncate" title={seleccion?.ruta}>
@@ -663,12 +673,24 @@ const ContenidoPanel = ({
       );
     }
   }
-  // Empresa en modo requerimiento sin carpeta resuelta: solo el árbol para elegirla (la lista de
-  // archivos y el filtro aparecen recién cuando se elige una).
+  // Empresa en modo requerimiento sin carpeta resuelta: el árbol desplegable de la carpeta. Al elegir
+  // un archivo, su carpeta queda como la del requerimiento y el archivo como el documento (con su
+  // vista previa).
   if (tipo === "empresa" && activo && base === null) {
     return conEncabezado(resolviendo
       ? <Mensaje><p>Buscando la ubicación en el mapeo documental...</p></Mensaje>
-      : <ArbolCarpetas handle={carpeta.handle} onElegir={(r) => { setCarpetaManual(r); setExplorarRaiz(false); }} />);
+      : (
+        <ArbolCarpetas
+          handle={carpeta.handle}
+          onElegirArchivo={(rutaArchivo) => {
+            setCarpetaManual(rutaArchivo.split("/").slice(0, -1).join("/"));
+            setExplorarRaiz(false);
+            setArchivo(null);
+            setSeleccion({ ruta: rutaArchivo, manual: true });
+            setVisor(rutaArchivo);
+          }}
+        />
+      ));
   }
   if (listado === "no_existe" && ruta === base) {
     return conEncabezado(
