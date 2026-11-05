@@ -30,8 +30,8 @@ const mensajeError = (mensaje) => (
 // identificación ya existe (409 IDENTIFICACION_EXISTENTE) se muestra esa Persona y se ofrece
 // crearle la relación con esta Empresa (pide Tipo de Relación y Tipo de Contrato, obligatorios
 // en un cambio de empresa); si ya la tiene, se usa directamente.
-// `inicial` (opcional): { nombre, apellido } para precargar (p. ej. "Crear desde carpeta"); el RUT
-// siempre se ingresa a mano. `documento` (opcional): carpeta para ver el listado o la cédula al lado
+// `inicial` (opcional): { nombre, apellido, rut?, cargo? } para precargar (p. ej. "Crear desde
+// carpeta"; con rut y cargo, "Crear" desde un listado del personal, que el usuario revisa). `documento` (opcional): carpeta para ver el listado o la cédula al lado
 // del formulario (ver LayoutModalDocumento); los RUT del documento solo se copian con un clic.
 export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar, inicial = null, documento = null }) => {
   const rutRef = useRef(null);
@@ -43,8 +43,8 @@ export const ModalCrearPersona = ({ empresaId, onCreada, onCerrar, inicial = nul
   const [relacionando, setRelacionando] = useState(false);
   const [errorRelacion, setErrorRelacion] = useState(null);
   const [formData, setFormData] = useState({
-    pais: "Chile", numeroIdentificacion: "", paisLibre: "",
-    nombre: inicial?.nombre || "", apellido: inicial?.apellido || "", cargo: "",
+    pais: "Chile", numeroIdentificacion: inicial?.rut ? formatRutDisplay(inicial.rut) : "", paisLibre: "",
+    nombre: inicial?.nombre || "", apellido: inicial?.apellido || "", cargo: inicial?.cargo || "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);

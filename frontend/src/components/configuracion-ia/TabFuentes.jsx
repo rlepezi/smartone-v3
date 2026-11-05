@@ -59,7 +59,7 @@ export const TabFuentes = () => {
             <CarpetaLocalCard key={`carpeta-${mandanteId}`} usuarioId={profile?.uid} mandanteId={mandanteId} mandanteNombre={mandanteNombre} fuentes={fuentes} esSuperadmin={esSuperadmin} onCambio={recargar} />
             <SharePointCard key={`${mandanteId}-${version}`} mandanteId={mandanteId} mandanteNombre={mandanteNombre} onCambio={recargar} />
           </div>
-          <CarpetasEmpresaLista mandanteId={mandanteId} fuenteId={activa?.id || null} version={version} />
+          <CarpetasEmpresaLista mandanteId={mandanteId} fuenteId={activa?.id || null} version={version} fuente={activa} />
         </>
       )}
     </div>

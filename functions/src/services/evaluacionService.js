@@ -213,19 +213,17 @@ class EvaluacionService {
 
   /**
    * Determina y valida el método de verificación de una Evaluación. La
-   * evidencia es opcional para cualquier resultado:
+   * evidencia y las observaciones son opcionales para cualquier resultado:
    *  - "pendiente": sin método.
    *  - con evidencia enlazada: "documental" (o el indicado).
-   *  - "cumple" sin evidencia: justificación (observaciones) obligatoria;
-   *    el método es opcional ("presencial" u "otro" si se indica, o null).
-   *  - "no_cumple" / "no_aplica" sin evidencia: el método puede ser null y
-   *    la justificación no es obligatoria.
+   *  - sin evidencia: el método es opcional ("presencial" u "otro" si se
+   *    indica, o null).
    * @param {{resultado: string, metodoVerificacion: ?string,
-   *     observaciones: ?string, tieneEvidencia: boolean}} datos Datos.
+   *     tieneEvidencia: boolean}} datos Datos.
    * @return {?string} Método final.
    */
   _resolverMetodoVerificacion({
-    resultado, metodoVerificacion, observaciones, tieneEvidencia,
+    resultado, metodoVerificacion, tieneEvidencia,
   }) {
     if (!RESULTADOS_RESUELTOS.includes(resultado)) return null;
 
@@ -248,15 +246,6 @@ class EvaluacionService {
           "El método 'documental' requiere evidencia enlazada a este " +
           "Requerimiento.",
       );
-    }
-    if (resultado === "cumple" && !tieneEvidencia) {
-      if (!(observaciones || "").trim()) {
-        throw new AppError(
-            400,
-            "Sin documento: la justificación (observaciones) es obligatoria " +
-            "para un resultado 'cumple'.",
-        );
-      }
     }
     return metodo;
   }
@@ -385,7 +374,7 @@ class EvaluacionService {
     const tieneEvidencia =
         await this._tieneEvidenciaDocumental(expedienteRequerimientoId);
     const metodoFinal = this._resolverMetodoVerificacion({
-      resultado, metodoVerificacion, observaciones, tieneEvidencia,
+      resultado, metodoVerificacion, tieneEvidencia,
     });
 
     let fechaVencimientoDate = null;
@@ -397,13 +386,8 @@ class EvaluacionService {
       }
       fechaVencimientoDate =
           this._parseFecha(fechaVencimiento, "fechaVencimiento");
-    } else if (instancia.requiereVencimiento && resultado === "cumple") {
-      throw new AppError(
-          400,
-          "Este Requerimiento exige fecha de vencimiento para un resultado " +
-          "'cumple'.",
-      );
     }
+    // Con vencimiento, la fecha es opcional (también para "cumple").
 
     // mandanteId SIEMPRE se deriva del Expediente — jamás del payload.
     const mandanteId = expediente.mandanteId;

@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Folder, Search } from "lucide-react";
 import { carpetaEmpresaService } from "../../../services/carpetaEmpresaService";
+import { proyectoService } from "../../../services/proyectoService";
 import { validarCarpetaEmpresa } from "../../../utils/carpetaEmpresa";
 import { CLASE_PRIMARIO } from "../estilos";
 
@@ -30,16 +31,63 @@ const Avance = ({ avance }) => {
   );
 };
 
-// Subcarpetas de primer nivel de la fuente, registradas o no como Carpetas de empresa. Las no
-// registradas se registran con una empresa del Mandante que pase la validación estricta: si coincide
-// una sola, se sugiere ("Registrar como …"); si ninguna o varias, se elige entre las que coinciden.
+// Relación de la Empresa con el proyecto que admite registrar su carpeta (como en el backend).
+const PARTICIPACION_VIGENTE = ["activa", "suspendida", "pendiente"];
+const CLASE_SELECT = "flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 text-[11px]";
+
+// Registro de una carpeta: la empresa (sugerida si coincide una sola) y el proyecto, obligatorio,
+// entre aquellos en que la empresa participa.
+const RegistroCarpeta = ({ ruta, candidatas, mandanteId, registrando, onRegistrar }) => {
+  const [elegida, setElegida] = useState(candidatas.length === 1 ? candidatas[0].id : "");
+  const [proyectoId, setProyectoId] = useState("");
+  const [proyectos, setProyectos] = useState({ empresaId: null, lista: null });
+  useEffect(() => {
+    if (!elegida) return undefined;
+    let vigente = true;
+    proyectoService.listar({ mandanteId, empresaId: elegida })
+      .then((l) => { if (vigente) setProyectos({ empresaId: elegida, lista: (l || []).filter((x) => PARTICIPACION_VIGENTE.includes(x.participacionEmpresa?.estado)) }); })
+      .catch(() => { if (vigente) setProyectos({ empresaId: elegida, lista: [] }); });
+    return () => { vigente = false; };
+  }, [elegida, mandanteId]);
+  const lista = proyectos.empresaId === elegida ? proyectos.lista : null;
+
+  return (
+    <div className="mt-2 ml-6 space-y-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      {candidatas.length === 1 ? (
+        <p className="text-[10px] text-slate-500 truncate" title={candidatas[0].razonSocial}>Empresa: <b className="text-carbon-dark">{candidatas[0].razonSocial}</b></p>
+      ) : (
+        <select value={elegida} onChange={(e) => { setElegida(e.target.value); setProyectoId(""); }} aria-label={`Empresa de ${ruta}`} className={`${CLASE_SELECT} w-full`}>
+          <option value="">Elija la empresa…</option>
+          {candidatas.map((e) => <option key={e.id} value={e.id}>{e.razonSocial}</option>)}
+        </select>
+      )}
+      {elegida && (lista === null ? <p className="text-[10px] text-slate-400">Cargando proyectos...</p> : lista.length === 0 ? (
+        <p className="text-[10px] text-amber-700">La empresa no participa en ningún proyecto: no se puede registrar la carpeta.</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          <select value={proyectoId} onChange={(e) => setProyectoId(e.target.value)} aria-label={`Proyecto de ${ruta}`} className={CLASE_SELECT}>
+            <option value="">Elija el proyecto…</option>
+            {lista.map((x) => <option key={x.id} value={x.id}>{x.codigo ? `${x.codigo} · ${x.nombre}` : x.nombre}</option>)}
+          </select>
+          <button type="button" disabled={!proyectoId || registrando} onClick={() => onRegistrar(ruta, elegida, proyectoId)} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>
+            {registrando ? "Registrando..." : "Registrar"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Subcarpetas de primer nivel de la fuente, registradas o no como carpetas. Las no registradas se
+// registran con una empresa del Mandante que pase la validación estricta (si coincide una sola, se
+// sugiere; si varias, se elige) y un proyecto en que participe: cada carpeta es de un proyecto y una
+// empresa.
 //  - subcarpetas: [{ nombre }] de la raíz (useCarpetaBase). carpetas: Carpetas de empresa de la
 //    fuente (con avance). empresas: las del Mandante.
 export const ListaCarpetasFuente = ({ subcarpetas, carpetas, empresas, mandanteId, seleccionada, onSeleccionar, onRegistrada }) => {
   const [filtro, setFiltro] = useState("todas");
   const [busqueda, setBusqueda] = useState("");
   const [registrando, setRegistrando] = useState(null);
-  const [elegidas, setElegidas] = useState({}); // ruta → empresaId elegida en el selector
   const [errores, setErrores] = useState({}); // ruta → mensaje
 
   const porRuta = new Map((carpetas || []).map((c) => [c.ruta.toLowerCase(), c]));
@@ -54,11 +102,11 @@ export const ListaCarpetasFuente = ({ subcarpetas, carpetas, empresas, mandanteI
     filtro === "todas" || (filtro === "registradas" && f.carpeta) || (filtro === "sin_registrar" && !f.carpeta) ||
     (filtro === "incompleto" && f.carpeta && f.carpeta.avance && f.carpeta.avance.ubicados < f.carpeta.avance.total)));
 
-  const registrar = async (ruta, empresaId) => {
+  const registrar = async (ruta, empresaId, proyectoId) => {
     setRegistrando(ruta);
     setErrores((e) => ({ ...e, [ruta]: null }));
     try {
-      await carpetaEmpresaService.registrar({ mandanteId, ruta, empresaId });
+      await carpetaEmpresaService.registrar({ mandanteId, ruta, empresaId, proyectoId });
       onSeleccionar(ruta);
       onRegistrada?.();
     } catch (err) {
@@ -92,7 +140,6 @@ export const ListaCarpetasFuente = ({ subcarpetas, carpetas, empresas, mandanteI
           {visibles.map(({ ruta, carpeta, enFuente }) => {
             const activa = seleccionada === ruta;
             const candidatas = carpeta ? [] : empresas.filter((e) => validarCarpetaEmpresa(ruta, e).valida);
-            const elegida = elegidas[ruta] || "";
             return (
               // Todo el recuadro elige la carpeta; los controles de registro no cambian la selección.
               <li key={ruta} role="button" tabIndex={0} aria-pressed={activa}
@@ -117,19 +164,9 @@ export const ListaCarpetasFuente = ({ subcarpetas, carpetas, empresas, mandanteI
                     </p>
                     <div className="pl-6 mt-auto"><Avance avance={carpeta.avance} /></div>
                   </>
-                ) : candidatas.length === 1 ? (
-                  <button type="button" disabled={registrando === ruta} onClick={(e) => { e.stopPropagation(); registrar(ruta, candidatas[0].id); }} className={`${CLASE_PRIMARIO} mt-2 ml-6 px-2.5 py-1 text-[11px]`}>
-                    {registrando === ruta ? "Registrando..." : `Registrar como ${candidatas[0].razonSocial}`}
-                  </button>
-                ) : candidatas.length > 1 ? (
-                  <div className="mt-2 ml-6 flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                    <select value={elegida} onChange={(e) => setElegidas((x) => ({ ...x, [ruta]: e.target.value }))} aria-label={`Empresa de ${ruta}`}
-                      className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
-                      <option value="">Elija la empresa…</option>
-                      {candidatas.map((e) => <option key={e.id} value={e.id}>{e.razonSocial}</option>)}
-                    </select>
-                    <button type="button" disabled={!elegida || registrando === ruta} onClick={() => registrar(ruta, elegida)} className={`${CLASE_PRIMARIO} px-2.5 py-1 text-[11px]`}>Registrar</button>
-                  </div>
+                ) : candidatas.length > 0 ? (
+                  <RegistroCarpeta ruta={ruta} candidatas={candidatas} mandanteId={mandanteId}
+                    registrando={registrando === ruta} onRegistrar={registrar} />
                 ) : (
                   <p className="mt-1.5 pl-6 text-[10px] text-slate-400">Ninguna empresa del Mandante coincide con el nombre de la carpeta.</p>
                 )}

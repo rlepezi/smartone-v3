@@ -117,7 +117,25 @@ class ProyectoController {
   }
 
   /**
-   * Actualiza un proyecto existente.
+   * Guarda, cambia o quita la carpeta raíz del proyecto
+   * ({repositorioDocumental: {tipo, ruta, url} | null}).
+   * @param {Object} req Petición Express.
+   * @param {Object} res Respuesta Express.
+   * @param {Function} next Siguiente middleware.
+   * @return {Promise<void>}
+   */
+  async actualizarRepositorioDocumental(req, res, next) {
+    try {
+      const data = await proyectoService.actualizarRepositorioDocumental(
+          req.params.id, req.body?.repositorioDocumental, req.user);
+      res.status(200).json({data});
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Actualiza un proyecto.
    * @param {Object} req Petición Express.
    * @param {Object} res Respuesta Express.
    * @param {Function} next Siguiente middleware.

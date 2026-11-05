@@ -65,6 +65,12 @@ function clasificarLegado({expediente, legado, fuente, empresa, carpeta = null,
   } else {
     const v = validarRutaCarpeta(legado.etiqueta);
     if (!v.ok) return r("ruta_invalida", v.error);
+    // La configuración anterior guardaba el nombre de una carpeta del primer
+    // nivel de la fuente: una ruta con subniveles no es de ese formato.
+    if (v.valor.includes("/")) {
+      return r("ruta_invalida", "Elija una carpeta del primer nivel de la " +
+          "fuente documental.");
+    }
     ruta = v.valor;
   }
   const v = validarCarpetaEmpresa(ruta, empresa);

@@ -19,6 +19,7 @@ import { ArbolCarpetas } from "./ArbolCarpetas";
 import { VisorArchivo } from "./VisorArchivo";
 import { EncabezadoRequerimiento, PestanaIA, ReglasApoyo, TituloPaso } from "./PanelRequerimientoIA";
 import { Toast } from "../../shared/Toast";
+import { AvisoFuenteLocal } from "../../shared/AvisoFuenteLocal";
 import { usePanelDocumentos } from "./panelDocumentosContexto";
 
 const IconoArchivo = ({ nombre }) => {
@@ -66,7 +67,7 @@ export const PanelDocumentos = (props) => {
 const ContenidoPanel = ({
   expedienteId, repositorio, tipo, sujeto, carpetaSujeto = null, puedeEditar,
   onIrADocumentacion, onCarpetaAsignada, empresa = null, carpeta,
-  proyecto = null, puedeDefinirReglas = false, origenCarpeta = null, puedeConfirmarUbicacion = false,
+  proyecto = null, puedeDefinirReglas = false, origenCarpeta = null, puedeConfirmarUbicacion = false, mandanteId = null,
 }) => {
   const {
     expandible, expandido, alternarExpandido, informarArchivo, archivoAbierto, requerimientoActivo, abrirRequerimiento,
@@ -328,16 +329,18 @@ const ContenidoPanel = ({
   // ── Modo requerimiento (ícono de un requisito de la planilla) ──
   // Ubica el documento: en Empresa, por los nodos del mapeo (override → alias); en Persona/Recurso, el
   // archivo del nodo de entidad dentro de su carpeta. Lo preselecciona SIN abrir la vista previa.
-  // Checklist de reglas (ayuda en pantalla), si está desplegado (null = automático: abierto cuando no
-  // hay documento) y el resultado ya marcado en la fila desde el panel ("cumple" | "no_cumple").
+  // Checklist de reglas (ayuda en pantalla), si está desplegado (al abrir un requerimiento, siempre
+  // desplegado) y el resultado ya marcado en la fila desde el panel ("cumple" | "no_cumple").
   const [checksReglas, setChecksReglas] = useState({});
-  const [reglasAbiertas, setReglasAbiertas] = useState(null);
+  const [reglasAbiertas, setReglasAbiertas] = useState(true);
   const [marcado, setMarcado] = useState(null);
   const [activoVisto, setActivoVisto] = useState(null);
+  const [resultadoVisto, setResultadoVisto] = useState(null);
   if (idActivo !== activoVisto) {
     setActivoVisto(idActivo);
+    setResultadoVisto(activo?.resultadoFila ?? null);
     setChecksReglas({});
-    setReglasAbiertas(null);
+    setReglasAbiertas(true);
     setMarcado(null);
     setSeleccion(null);
     setCarpetaManual(null);
@@ -367,6 +370,18 @@ const ContenidoPanel = ({
   const candidatos = !listoParaUbicar ? [] : tipo === "empresa"
     ? enLista.archivos.filter((a) => archivosMapeados.includes(a.ruta))
     : (resolSujeto?.estado === "resuelta" ? resolSujeto.archivos : []);
+  // Si el SI/NO/N/A de la fila cambia a algo distinto de lo marcado desde el panel (se deselecciona,
+  // o se elige NO o N/A), el checklist y el aviso "Marcado..." se limpian. Un SI elegido en la fila
+  // sin haber marcado desde aquí no los toca.
+  const resultadoFila = activo?.resultadoFila ?? null;
+  if (activoVisto === idActivo && resultadoFila !== resultadoVisto) {
+    setResultadoVisto(resultadoFila);
+    if (resultadoFila !== marcado && !(marcado === null && resultadoFila === "cumple")) {
+      setChecksReglas({});
+      setMarcado(null);
+    }
+  }
+
   // Sin documento elegido, se preselecciona el ubicado por el mapeo (también al volver a abrir el
   // mismo requerimiento).
   if (listoParaUbicar && !seleccion && candidatos[0]) setSeleccion({ ruta: candidatos[0].ruta, manual: false });
@@ -487,34 +502,28 @@ const ContenidoPanel = ({
     setMarcado(resultado);
   };
   const hayReglas = (activo?.pauta?.reglas || []).length > 0;
+  // La pestaña IA solo se abre con reglas definidas: sin reglas se ve la manual (aunque la última
+  // elegida haya sido la IA en otro requerimiento).
+  const pestanaVisible = hayReglas ? pestanaRequerimiento : "manual";
   const conEncabezado = (contenido) => {
     if (!activo) return contenido;
     return (
       <div className="flex flex-col h-full min-h-0">
-        <EncabezadoRequerimiento instancia={activo.instancia} pauta={activo.pauta} pestana={pestanaRequerimiento}
+        <EncabezadoRequerimiento instancia={activo.instancia} pauta={activo.pauta} pestana={pestanaVisible}
           onPestana={cambiarPestanaRequerimiento} onCerrar={() => abrirRequerimiento?.(null)} />
-        {pestanaRequerimiento === "ia" ? (
+        {pestanaVisible === "ia" ? (
           <div className="flex-1 min-h-0 overflow-y-auto">
             <PestanaIA key={idActivo} datos={activo} expedienteId={expedienteId} documento={documentoIA}
-              puedeDefinirReglas={puedeDefinirReglas} onIrAManual={() => cambiarPestanaRequerimiento("manual")} />
+              ctx={{ tipoEntidad: tipo, sujeto, empresa, proyecto }} onIrAManual={() => cambiarPestanaRequerimiento("manual")} />
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="p-3 space-y-1.5 border-b border-slate-100 max-h-[35%] overflow-y-auto">
               <TituloPaso>Ubicar el documento</TituloPaso>
               {tipo === "empresa" ? controlesCarpetaEmpresa : controlesSujeto}
-            </div>
-            <ReglasApoyo reglas={activo.pauta?.reglas} ctx={{ tipoEntidad: tipo, sujeto, empresa, proyecto }}
-              abierto={reglasAbiertas ?? sinDocumento} onAlternar={() => setReglasAbiertas(!(reglasAbiertas ?? sinDocumento))}
-              checks={checksReglas} onCheck={(id, v) => { setChecksReglas((c) => ({ ...c, [id]: v })); setMarcado(null); }}
-              onMarcar={activo.puedeRevisar ? marcar : null} marcado={marcado} />
-            <div className="px-3 pt-2 pb-1 space-y-1">
-              <TituloPaso>Abrir el documento</TituloPaso>
-              <p className="text-[11px] text-slate-500 truncate" title={seleccion?.ruta}>
-                {seleccion ? <>Seleccionado: <b className="text-carbon-dark">{nombreSeleccion}</b></> : "Ningún documento seleccionado."}
-              </p>
-              {/* Sin reglas: el "No cumple" por documento no encontrado va aquí (con reglas, en el checklist). */}
-              {sinDocumento && !hayReglas && activo.puedeRevisar && (
+              {/* Sin documento (no encontrado o sin elegir) no hay nada que validar: "No cumple" aquí,
+                  junto al aviso, con o sin reglas. */}
+              {sinDocumento && activo.puedeRevisar && (
                 marcado === "no_cumple" ? (
                   <p className="text-[11px] font-bold text-sage-darker">Marcado «No cumple» en la fila: revíselo y presione «Guardar Evaluación».</p>
                 ) : (
@@ -522,11 +531,22 @@ const ContenidoPanel = ({
                     <span className="text-[11px] text-red-800">¿El documento no existe?</span>
                     <button type="button" onClick={() => marcar("no_cumple")}
                       className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl border border-red-200 bg-white text-[11px] font-bold text-red-700 hover:bg-red-50">
-                      <XCircle className="w-3.5 h-3.5" /> Evaluar como No cumple
+                      <XCircle className="w-3.5 h-3.5" /> Marcar como No cumple
                     </button>
                   </div>
                 )
               )}
+            </div>
+            {/* El checklist marca Cumple / No cumple solo con un documento elegido. */}
+            <ReglasApoyo reglas={activo.pauta?.reglas} ctx={{ tipoEntidad: tipo, sujeto, empresa, proyecto }}
+              abierto={reglasAbiertas} onAlternar={() => setReglasAbiertas((v) => !v)}
+              checks={checksReglas} onCheck={(id, v) => { setChecksReglas((c) => ({ ...c, [id]: v })); setMarcado(null); }}
+              onMarcar={activo.puedeRevisar && !sinDocumento ? marcar : null} marcado={marcado} />
+            <div className="px-3 pt-2 pb-1 space-y-1">
+              <TituloPaso>Abrir el documento</TituloPaso>
+              <p className="text-[11px] text-slate-500 truncate" title={seleccion?.ruta}>
+                {seleccion ? <>Seleccionado: <b className="text-carbon-dark">{nombreSeleccion}</b></> : "Ningún documento seleccionado."}
+              </p>
             </div>
             <div className="flex-1 min-h-0 flex flex-col">{contenido}</div>
           </div>
@@ -581,10 +601,9 @@ const ContenidoPanel = ({
     return conEncabezado(
       <Mensaje>
         {carpeta.faltaRaiz ? (
-          <>
-            <p>La fuente documental del Mandante no está autorizada en este navegador.</p>
+          <AvisoFuenteLocal mandanteId={mandanteId}>
             <button type="button" onClick={onIrADocumentacion} className="font-bold text-primary hover:underline">Autorizarla en la pestaña Documentación</button>
-          </>
+          </AvisoFuenteLocal>
         ) : carpeta.permiso === "prompt" ? (
           <>
             <p>El navegador necesita que confirme el acceso a la fuente documental para abrir «{repositorio.ruta}».</p>

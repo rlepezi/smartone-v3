@@ -9,8 +9,6 @@ const MOTIVOS_NO_CONFIRMABLE = {
   ya_resuelta: "La propuesta ya fue confirmada o descartada.",
   requisito_inactivo: "El requisito ya no está activo.",
   revision_manual: "Requiere revisión manual: la IA no propone resultado.",
-  sin_fecha_vencimiento: "Cumple, pero falta la fecha de vencimiento " +
-    "obligatoria: complétela en la planilla.",
   evaluado_despues: "El requisito se evaluó después de la propuesta.",
 };
 
@@ -30,10 +28,6 @@ function motivoNoConfirmable(revision, expedienteId, instancia, vigente) {
   if (!instancia) return "requisito_inactivo";
   const p = revision.propuestaEvaluacion || {};
   if (!p.resultado) return "revision_manual";
-  if (p.resultado === "cumple" && instancia.requiereVencimiento &&
-      !p.fechaVencimiento) {
-    return "sin_fecha_vencimiento";
-  }
   const ms = (v) => aFecha(v)?.getTime() || 0;
   if (vigente && ms(vigente.createdAt) > ms(revision.createdAt)) {
     return "evaluado_despues";

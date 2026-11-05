@@ -1,11 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Search, Plus, AlertCircle, Calendar, Building2, IdCard } from "lucide-react";
+import { Search, Plus, AlertCircle, Calendar, FolderOpen } from "lucide-react";
 import { proyectoService } from "../../../services/proyectoService";
-import { formatRutDisplay } from "../../../utils/rutFormatters";
-import { estadoTarjetaProyecto, MENSAJE_NO_APLICA } from "./estadoTarjetaProyecto";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
-import { EntityIconTile } from "../../../components/shared/EntityIconTile";
 import { formatFecha } from "../../../utils/fechas";
 import { DateInput } from "../../../components/ui/DateInput";
 import { aMayusculas } from "../../../utils/texto";
@@ -101,20 +98,10 @@ const CrearProyectoInline = ({ mandanteId, onCreado, onCancelar }) => {
   );
 };
 
-// Relación actual de la Empresa con cada Proyecto (`participacionEmpresa`, calculada en el
-// backend): sin relación vigente = "Nueva"; pendiente = se completa la existente; activa (o
-// suspendida) = no aplica desde este wizard, se gestiona en el Detalle de la Empresa/Proyecto.
-const ESTADO_TARJETA = {
-  nueva: { label: "Nueva", className: "bg-sage-lighter text-sage-darker border-sage-light" },
-  pendiente: { label: "Pendiente", className: "bg-amber-50 text-amber-700 border-amber-200" },
-  no_aplica: { label: "No aplica", className: "bg-slate-100 text-slate-500 border-slate-200" },
-};
-
 // `mandanteId`: el Mandante elegido en el Paso 1 (o el fijo del actor) — única fuente; acá ya no
-// se elige ni se deduce.
-export const PasoProyecto = ({
-  mandanteId, proyectoId, onSeleccionar, empresaId, empresaSel, onCambiarEmpresa, avisoPerfil,
-}) => {
+// se elige ni se deduce. La Empresa se elige después: su situación en el Proyecto (nueva, pendiente
+// o ya participa) se muestra en el paso Empresa. `children`: la carpeta del proyecto, bajo la lista.
+export const PasoProyecto = ({ mandanteId, proyectoId, onSeleccionar, children = null }) => {
   const [proyectos, setProyectos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -125,13 +112,14 @@ export const PasoProyecto = ({
     if (!mandanteId) return;
     setLoading(true);
     setError(null);
-    proyectoService.listar({ mandanteId, empresaId })
+    proyectoService.listar({ mandanteId })
       .then((data) => setProyectos((data || []).filter((p) => !ESTADOS_PROYECTO_NO_ELEGIBLES.includes(p.estado))))
       .catch((err) => setError(err.message || "No se pudieron cargar los proyectos."))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { cargar(); }, [mandanteId, empresaId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { cargar(); }, [mandanteId]);
 
   const filtrados = proyectos.filter((p) => {
     const term = search.toLowerCase();
@@ -144,36 +132,12 @@ export const PasoProyecto = ({
     onSeleccionar(proyecto);
   };
 
-  const proyectoSeleccionado = proyectos.find((p) => p.id === proyectoId) || null;
-  const esPendiente = proyectoSeleccionado && estadoTarjetaProyecto(proyectoSeleccionado) === "pendiente";
-
   return (
     <div className="space-y-4">
-      {empresaSel && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-primary/30 bg-primary-lighter/40">
-          {empresaSel.logoUrl ? (
-            <img src={empresaSel.logoUrl} alt="" className="w-11 h-11 rounded-full object-contain border border-white flex-shrink-0 bg-white" />
-          ) : (
-            <EntityIconTile icon={Building2} />
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="text-[9px] font-bold text-primary-dark uppercase tracking-wider leading-none">Empresa seleccionada</p>
-            <p className="text-sm font-bold text-carbon-dark mt-1 truncate">{empresaSel.razonSocial}</p>
-            {empresaSel.rut && <p className="text-[11px] text-slate-500 font-mono">{formatRutDisplay(empresaSel.rut)}</p>}
-          </div>
-          {onCambiarEmpresa && (
-            <button type="button" onClick={onCambiarEmpresa} className="text-xs font-bold text-primary hover:text-primary-dark whitespace-nowrap">
-              Cambiar empresa
-            </button>
-          )}
-        </div>
-      )}
-
       <div>
         <h3 className="text-sm font-bold text-gray-900">Selecciona el Proyecto</h3>
         <p className="text-xs text-gray-500 mt-0.5">
-          Solo se muestran Proyectos vigentes (no finalizados, archivados ni suspendidos). Cada tarjeta indica la
-          situación de esta Empresa en el Proyecto.
+          Solo se muestran Proyectos vigentes del Mandante (no finalizados, archivados ni suspendidos).
         </p>
       </div>
 
@@ -204,57 +168,35 @@ export const PasoProyecto = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtrados.map((p) => {
-            const clave = estadoTarjetaProyecto(p);
-            const info = ESTADO_TARJETA[clave];
-            const deshabilitada = clave === "no_aplica";
             return (
               <button
                 key={p.id}
                 type="button"
-                disabled={deshabilitada}
-                title={deshabilitada ? MENSAJE_NO_APLICA : undefined}
-                onClick={() => { if (!deshabilitada) onSeleccionar(p); }}
+                onClick={() => onSeleccionar(p)}
                 className={`text-left p-4 rounded-xl border-2 transition-all ${
-                  deshabilitada
-                    ? "border-gray-100 bg-slate-50 opacity-60 cursor-not-allowed"
-                    : proyectoId === p.id ? "border-primary bg-primary-lighter" : "border-gray-100 hover:border-gray-200 bg-white"
+                  proyectoId === p.id ? "border-primary bg-primary-lighter" : "border-gray-100 hover:border-gray-200 bg-white"
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm font-bold text-carbon-dark">{p.nombre}</p>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${info.className}`}>
-                    {info.label}
-                  </span>
+                  {p.repositorioDocumental && (
+                    <span title="Tiene carpeta del proyecto" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap bg-primary-lighter text-primary border-primary/20">
+                      <FolderOpen className="w-3 h-3" /> Carpeta
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-400 font-mono">{p.codigo}</p>
                 <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3 h-3 text-slate-400 flex-shrink-0" />
                   {formatFecha(p.fechaInicio)} – {p.fechaTermino ? formatFecha(p.fechaTermino) : "sin término"}
                 </p>
-                {deshabilitada && (
-                  <p className="text-[11px] text-amber-700 mt-1.5">{MENSAJE_NO_APLICA}</p>
-                )}
               </button>
             );
           })}
         </div>
       )}
 
-      {esPendiente && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>Ya existe una participación pendiente para esta empresa en este proyecto — se completará en vez de crear una nueva.</span>
-        </div>
-      )}
-
-      {avisoPerfil && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-primary-lighter/60 border border-primary/20 text-primary-dark text-xs">
-          <IdCard className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>
-            Este proyecto tiene un único Perfil disponible: <strong>{avisoPerfil}</strong>, ya preseleccionado. Podrás revisar los requisitos en el siguiente paso.
-          </span>
-        </div>
-      )}
+      {children}
 
     </div>
   );

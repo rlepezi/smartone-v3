@@ -43,6 +43,12 @@ router.post(
 );
 router.post("/", requireRole(ROLES_ESCRITURA), proyectoController.create);
 router.put("/:id", requireRole(ROLES_ESCRITURA), proyectoController.update);
+// Carpeta raíz del proyecto en la fuente documental (opcional; null la quita).
+router.put(
+    "/:id/repositorio-documental",
+    requireRole(ROLES_ESCRITURA),
+    proyectoController.actualizarRepositorioDocumental,
+);
 router.delete(
     "/:id",
     requireRole(ROLES_ESCRITURA),

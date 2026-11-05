@@ -7,6 +7,7 @@ import {
 import { fuenteDocumentalService } from "../../services/fuenteDocumentalService";
 import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
+import { AvisoFuenteLocal } from "../shared/AvisoFuenteLocal";
 import { Tarjeta } from "./Tarjeta";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
 
@@ -201,6 +202,7 @@ export const CarpetaLocalCard = ({ usuarioId, mandanteId, mandanteNombre = null,
               {esSuperadmin && " Se registran en Mapeo documental."}
             </p>
           )}
+          {(!registro || registro.handle.name !== local.etiqueta) && <AvisoFuenteLocal nombre={local.etiqueta} />}
           {registro && registro.handle.name !== local.etiqueta && (
             <p className="text-[11px] text-amber-700">En este navegador está recordada «{registro.handle.name}», que no es la fuente.</p>
           )}

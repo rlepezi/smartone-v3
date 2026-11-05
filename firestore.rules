@@ -206,9 +206,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Carpetas de empresa (subcarpetas de la fuente documental del Mandante,
-    // con su mapeo): se leen dentro del propio Mandante; solo el backend
-    // escribe (validación estricta, find-or-create y vínculo en transacción).
+    // Carpetas (subcarpetas de la fuente documental del Mandante, cada una de
+    // un proyecto y una empresa): se leen dentro del propio Mandante; solo el
+    // backend escribe (validación estricta, find-or-create y vínculo en
+    // transacción).
+    match /carpetas/{docId} {
+      allow read: if puedeLeerDeMandante(resource.data.mandanteId);
+      allow write: if false;
+    }
+
+    // Histórico: colección anterior de carpetas de empresa (ya no se escribe).
     match /carpetasEmpresa/{docId} {
       allow read: if puedeLeerDeMandante(resource.data.mandanteId);
       allow write: if false;

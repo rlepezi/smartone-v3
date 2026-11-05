@@ -7,6 +7,7 @@ import { carpetaEmpresaService } from "../../../services/carpetaEmpresaService";
 import { repositorioDocumentalService } from "../../../services/repositorioDocumentalService";
 import { ConfirmacionModal } from "../../shared/ConfirmacionModal";
 import { Toast } from "../../shared/Toast";
+import { AvisoFuenteLocal } from "../../shared/AvisoFuenteLocal";
 import { SelectorCarpetaEmpresa } from "./SelectorCarpetaEmpresa";
 import { EstructuraDosNiveles } from "./EstructuraDosNiveles";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
@@ -119,6 +120,9 @@ export const CarpetaEmpresaExpediente = ({ expedienteId, usuarioId, mandanteId, 
                 <span className="inline-flex items-center gap-1 font-semibold text-amber-700"><ShieldAlert className="w-4 h-4" /> No se pudo abrir la carpeta</span>
               )}
             </div>
+          )}
+          {carpeta.faltaRaiz && local && fuente?.tipo === "local" && (
+            <AvisoFuenteLocal nombre={fuente.etiqueta} />
           )}
           {carpeta.faltaRaiz && local && fuente?.tipo === "local" && (
             <button type="button" onClick={base.autorizarFuente} className={CLASE_SECUNDARIO}>

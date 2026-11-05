@@ -6,9 +6,10 @@
 // Refs de los pasos y de cada persona o maquinaria del paso "Personas y Maquinarias".
 export const REF_PASO = {
   1: "paso-mandante",
-  2: "paso-empresa",
-  3: "paso-proyecto",
-  4: "paso-perfil",
+  2: "paso-proyecto",
+  3: "paso-carpeta",
+  4: "paso-empresa",
+  5: "paso-perfil",
 };
 export const REF_FECHA_INICIO = "fecha-inicio";
 export const refRecurso = (tipo, id) => `recurso-${tipo}-${id}`;

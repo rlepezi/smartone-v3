@@ -45,6 +45,7 @@ import { useEdicionInPlace } from "../../hooks/useEdicionInPlace";
 import { estadoPorCumplimiento, claseAnilloCumplimiento } from "../../utils/cumplimientoClases";
 import { KpiCard, KpiValor, TarjetaPanel, CampoInfo } from "../../components/shared/DetalleUI";
 import { DateInput } from "../../components/ui/DateInput";
+import { CarpetaProyecto } from "../../components/proyectos/CarpetaProyecto";
 
 const ESTADO_PROYECTO_MAP = ESTADOS_PROYECTO.reduce((acc, e) => {
   acc[e.value] = { label: e.label, className: "bg-slate-100 text-slate-600 border-slate-200" };
@@ -72,6 +73,9 @@ export const ProyectoDetailPage = () => {
   const puedeEscribir = ["superadmin", "mandante_admin"].includes(profile?.rol);
 
   const [proyecto, setProyecto] = useState(null);
+  // Carpeta del proyecto: guardado inmediato (endpoint propio, con Bitácora).
+  const [carpetaGuardando, setCarpetaGuardando] = useState(false);
+  const [carpetaError, setCarpetaError] = useState(null);
   const [mandanteNombre, setMandanteNombre] = useState("");
   const [mandanteLogoUrl, setMandanteLogoUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -755,6 +759,32 @@ export const ProyectoDetailPage = () => {
                   {barraRecurso("Maquinarias", Truck, maquinariasAcreditadas, maquinariasTotal)}
                 </div>
               )
+            ))}
+
+            {tarjetaSidebar("Carpeta del proyecto", (
+              <CarpetaProyecto
+                mandanteId={proyecto.mandanteId}
+                usuarioId={profile?.uid}
+                valor={proyecto.repositorioDocumental || null}
+                puedeEditar={puedeEscribir && proyecto.estado !== "archivado"}
+                puedeConfigurarBase={profile?.rol === "superadmin"}
+                guardando={carpetaGuardando}
+                error={carpetaError}
+                onCambiar={async (valor) => {
+                  setCarpetaGuardando(true);
+                  setCarpetaError(null);
+                  try {
+                    const actualizado = await proyectoService.actualizarRepositorioDocumental(proyecto.id,
+                      valor ? { tipo: valor.tipo, ruta: valor.ruta, url: valor.url || null } : null);
+                    setProyecto((p) => ({ ...p, repositorioDocumental: actualizado?.repositorioDocumental ?? null }));
+                  } catch (err) {
+                    setCarpetaError(err.message || "No se pudo guardar la carpeta del proyecto.");
+                    throw err;
+                  } finally {
+                    setCarpetaGuardando(false);
+                  }
+                }}
+              />
             ))}
 
             {tarjetaSidebar("Últimos Eventos", <UltimosEventos entidadId={proyecto.id} cargar={(limit) => proyectoService.obtenerEventos(proyecto.id, { limit })} />)}

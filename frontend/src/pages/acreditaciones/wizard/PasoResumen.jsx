@@ -7,7 +7,6 @@ import { nombresPerfiles } from "../../../services/participacionSujetoService";
 import { usePerfilesRecurso } from "../../../hooks/usePerfilesRecurso";
 import { CLASE_RESALTADO, REF_FECHA_INICIO } from "../asistenteNavegacion";
 import { DateInput } from "../../../components/ui/DateInput";
-import { textoRepositorio } from "../../../utils/repositorioDocumental";
 
 const ItemProgreso = ({ estado, label }) => {
   // estado: "pendiente" | "en_curso" | "hecho" | "error"
@@ -70,14 +69,16 @@ const DetalleModal = ({ titulo, onCerrar, children }) => (
   </div>
 );
 
-// Paso "Confirmación" (id 7, ver AcreditacionWizardPage): revisión y confirmación. Solo lectura
+// Paso "Confirmación" (id 9, ver AcreditacionWizardPage): revisión y confirmación. Solo lectura
 // hasta el diálogo final: los conteos salen de los mismos datos ya calculados en los pasos previos
 // (selección de Personas y Maquinarias, `preview` de Requerimientos, requisitos del Perfil). No
-// recalcula nada por su cuenta. `onIrAPaso` recibe el id interno del paso (2 Empresa … 5 Asignaciones).
+// recalcula nada por su cuenta. `onIrAPaso` recibe el id interno del paso (2 Proyecto, 3 Carpeta,
+// 4 Empresa, 5 Perfil, 6 Personas, 7 Maquinarias). `carpetaProyecto`: { tipo, ruta, url } o null.
 export const PasoResumen = ({
   empresaSel, proyectoSel, perfilSel, seleccion,
   fechaInicio, onFechaInicioChange, preview,
   ejecutando, progreso, errorEjecucion, onConfirmar, onIrAPaso, problemas = [], onCorregir, repositorio = null,
+  carpetaProyecto = null,
 }) => {
   const [detalle, setDetalle] = useState(null); // "personas" | "maquinarias" | "traslados" | "requisitos"
   const [confirmando, setConfirmando] = useState(false);
@@ -184,29 +185,32 @@ export const PasoResumen = ({
       {/* Bloque 1 — Datos de la acreditación */}
       <Tarjeta titulo="Datos de la acreditación">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <FichaDato icon={Building2} etiqueta="Empresa" valor={empresaSel?.razonSocial} secundario={empresaSel?.rut ? formatRutDisplay(empresaSel.rut) : null} onEditar={editar(2)} />
-          <FichaDato icon={FolderKanban} etiqueta="Proyecto" valor={proyectoSel?.nombre} secundario={proyectoSel?.codigo} onEditar={editar(3)} />
-          <FichaDato icon={IdCard} etiqueta="Perfil de Participación" valor={perfilSel?.nombre} onEditar={editar(4)} />
+          <FichaDato icon={Building2} etiqueta="Empresa" valor={empresaSel?.razonSocial} secundario={empresaSel?.rut ? formatRutDisplay(empresaSel.rut) : null} onEditar={editar(4)} />
+          <FichaDato icon={FolderKanban} etiqueta="Proyecto" valor={proyectoSel?.nombre} secundario={proyectoSel?.codigo} onEditar={editar(2)} />
+          <FichaDato icon={IdCard} etiqueta="Perfil de Participación" valor={perfilSel?.nombre} onEditar={editar(5)} />
         </div>
         <div className="pt-3 border-t border-slate-100 flex items-start gap-3">
           <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Documentación</p>
-            {repositorio ? (
-              <p className="text-sm font-bold text-carbon-dark truncate">
-                {textoRepositorio(repositorio)}
-                {repositorio.tipo === "sharepoint" && repositorio.url && (
-                  <a href={repositorio.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-[11px] font-bold text-primary hover:underline">Abrir</a>
+          <div className="min-w-0 flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[["Carpeta del proyecto", carpetaProyecto, 2], ["Carpeta de la empresa", repositorio, 3]].map(([etiqueta, carpeta, paso]) => (
+              <div key={etiqueta} className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mr-auto">{etiqueta}</p>
+                  <LinkEditar onClick={editar(paso)} />
+                </div>
+                {carpeta ? (
+                  <p className="text-sm font-bold text-carbon-dark truncate" title={carpeta.url || carpeta.ruta}>
+                    {carpeta.tipo === "sharepoint" ? "SharePoint" : "Carpeta local"}: {carpeta.ruta}
+                    {carpeta.tipo === "sharepoint" && carpeta.url && (
+                      <a href={carpeta.url} target="_blank" rel="noopener noreferrer" className="ml-2 text-[11px] font-bold text-primary hover:underline">Abrir</a>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-sm font-medium italic text-slate-400">Sin carpeta — puede vincularse después desde el expediente</p>
                 )}
-              </p>
-            ) : (
-              <>
-                <p className="text-sm font-medium italic text-slate-400">Sin vincular</p>
-                <p className="text-[11px] text-slate-500">Podrás vincularla después desde el expediente.</p>
-              </>
-            )}
+              </div>
+            ))}
           </div>
-          <LinkEditar onClick={editar(2)} />
         </div>
         <div className="pt-3 border-t border-slate-100">
           <label className="block text-xs font-semibold text-gray-700 mb-1">Fecha de inicio *</label>
@@ -226,7 +230,7 @@ export const PasoResumen = ({
       </Tarjeta>
 
       {/* Bloque 2 — Asignaciones */}
-      <Tarjeta titulo="Asignaciones" accion={<LinkEditar onClick={editar(5)} />}>
+      <Tarjeta titulo="Asignaciones" accion={<LinkEditar onClick={editar(6)} />}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {tarjetaAsignacion(
             "Personas", Users, personas, "personas",

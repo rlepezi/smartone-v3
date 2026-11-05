@@ -4,7 +4,6 @@ import { revisionRequerimientoIAService } from "../../../services/revisionRequer
 import { ESTADOS_IA_REQ, RESULTADOS_PROPUESTOS, SEVERIDADES } from "../../../utils/reglasIA";
 import { describirRegla } from "../../../utils/describirRegla";
 import { prepararPiezasIA } from "../../../utils/revisionIAArchivos";
-import { ReglasIAModal } from "./ReglasIAModal";
 
 const CLASE_BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
 const CLASE_BOTON = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
@@ -15,6 +14,8 @@ const RESULTADO = {
 };
 // Estados IA con los que se puede pedir la revisión desde el panel (la propuesta nunca se guarda sola).
 const ESTADOS_REVISABLES = ["en_prueba", "habilitado"];
+
+const VERIFICACIONES_EXISTENCIA = ["archivo_presente", "carpeta_presente"];
 
 const PESTANAS_REQUERIMIENTO = [
   { value: "manual", label: "Evaluación manual" },
@@ -37,8 +38,11 @@ const Instruccion = ({ texto }) => {
 // Panel lateral en "modo requerimiento" (ícono de cada requisito de la planilla): encabezado con el
 // nombre, el Estado IA y las pestañas [Evaluación manual] [Evaluación con IA]. El contenido de la
 // pestaña manual (ubicar y abrir el documento) lo arma PanelDocumentos; la pestaña IA es PestanaIA.
+// Sin reglas definidas la pestaña IA se ve pero no se puede abrir (las reglas se definen solo en la
+// configuración principal).
 export const EncabezadoRequerimiento = ({ instancia, pauta, pestana, onPestana, onCerrar }) => {
   const estado = ESTADOS_IA_REQ[pauta?.estadoIA] || ESTADOS_IA_REQ.sin_reglas;
+  const conReglas = (pauta?.reglas || []).length > 0;
   return (
     <div className="border-b border-slate-100 bg-primary-lighter/20">
       <div className="flex items-start gap-2 px-3 pt-3">
@@ -56,9 +60,11 @@ export const EncabezadoRequerimiento = ({ instancia, pauta, pestana, onPestana, 
       <div role="tablist" aria-label="Tipo de evaluación" className="flex gap-1 px-3 mt-2">
         {PESTANAS_REQUERIMIENTO.map((p) => {
           const activa = pestana === p.value;
+          const bloqueada = p.value === "ia" && !conReglas;
           return (
-            <button key={p.value} type="button" role="tab" aria-selected={activa} onClick={() => onPestana(p.value)}
-              className={`px-3 py-1.5 -mb-px border-b-2 text-[11px] font-bold ${activa ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-carbon-dark"}`}>
+            <button key={p.value} type="button" role="tab" aria-selected={activa} disabled={bloqueada}
+              onClick={() => onPestana(p.value)} title={bloqueada ? "Este requerimiento no tiene reglas de validación definidas." : undefined}
+              className={`px-3 py-1.5 -mb-px border-b-2 text-[11px] font-bold disabled:text-slate-300 disabled:cursor-not-allowed ${activa ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-carbon-dark"}`}>
               {p.label}
             </button>
           );
@@ -73,19 +79,28 @@ export const EncabezadoRequerimiento = ({ instancia, pauta, pestana, onPestana, 
 // ({ id: bool }) / `onCheck(id, valor)` los maneja quien lo usa. Con `onMarcar(resultado, faltantes)`
 // (quien puede evaluar): todas verificadas → "Marcar como Cumple"; alguna sin marcar → aviso con las
 // que faltan y "Marcar como No cumple". Solo llenan la fila (no guardan); `marcado` es el resultado
-// ya marcado desde aquí. Sin reglas no se muestra.
-export const ReglasApoyo = ({ reglas, ctx, abierto, onAlternar, checks, onCheck, onMarcar = null, marcado = null }) => {
-  if (!reglas?.length) return null;
-  const verificadas = reglas.filter((r) => checks[r.vinculoId || r.reglaId]).length;
-  const faltantes = reglas.filter((r) => !checks[r.vinculoId || r.reglaId]);
+// ya marcado desde aquí. Sin `checks` (pestaña IA) se muestran solo para leer. Sin reglas no se muestra.
+export const ReglasApoyo = ({ reglas: reglasPauta, ctx, abierto, onAlternar, checks = null, onCheck, onMarcar = null, marcado = null }) => {
+  if (!reglasPauta?.length) return null;
+  // Las de existencia (archivo, carpeta) primero: sin documento, las demás no se pueden revisar.
+  const reglas = [...reglasPauta].sort((a, b) => Number(VERIFICACIONES_EXISTENCIA.includes(b.verificacion))
+    - Number(VERIFICACIONES_EXISTENCIA.includes(a.verificacion)));
+  const conChecklist = Boolean(checks);
+  const verificadas = conChecklist ? reglas.filter((r) => checks[r.vinculoId || r.reglaId]).length : 0;
+  const faltantes = conChecklist ? reglas.filter((r) => !checks[r.vinculoId || r.reglaId]) : [];
   const todas = faltantes.length === 0;
   return (
     <div className="border-b border-slate-100 bg-white">
       <button type="button" onClick={onAlternar} aria-expanded={abierto}
         className="w-full flex items-center gap-1.5 px-3 py-2 text-left text-[11px] font-bold text-carbon-dark hover:bg-slate-50">
         Reglas de validación
-        <span className="font-normal text-slate-500">· {verificadas}/{reglas.length} verificadas</span>
-        <ChevronDown className={`w-3.5 h-3.5 ml-auto text-slate-400 transition-transform ${abierto ? "rotate-180" : ""}`} />
+        <span className="font-normal text-slate-500">
+          · {conChecklist ? `${verificadas}/${reglas.length} verificadas` : reglas.length}
+        </span>
+        <span className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 text-[11px] font-bold text-primary">
+          {abierto ? "Ocultar" : "Ver reglas"}
+          <ChevronDown className={`w-4 h-4 transition-transform ${abierto ? "rotate-180" : ""}`} />
+        </span>
       </button>
       {abierto && (
         <>
@@ -94,8 +109,8 @@ export const ReglasApoyo = ({ reglas, ctx, abierto, onAlternar, checks, onCheck,
               const id = regla.vinculoId || regla.reglaId;
               return (
                 <li key={id} className="px-3 py-2 flex items-start gap-2">
-                  <input type="checkbox" checked={Boolean(checks[id])} onChange={(e) => onCheck(id, e.target.checked)}
-                    aria-label={`Verificado: ${regla.nombre}`} className="mt-0.5 w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary/30" />
+                  {conChecklist && <input type="checkbox" checked={Boolean(checks[id])} onChange={(e) => onCheck(id, e.target.checked)}
+                    aria-label={`Verificado: ${regla.nombre}`} className="mt-0.5 w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary/30" />}
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-carbon-dark">
                       {regla.nombre}
@@ -109,7 +124,7 @@ export const ReglasApoyo = ({ reglas, ctx, abierto, onAlternar, checks, onCheck,
               );
             })}
           </ul>
-          <p className="px-3 pb-2 text-[10px] text-slate-400">Guía para revisar el documento: las casillas no se guardan; el resultado se marca en la fila.</p>
+          {conChecklist && <p className="px-3 pb-2 text-[10px] text-slate-400">Guía para revisar el documento: las casillas no se guardan; el resultado se marca en la fila.</p>}
         </>
       )}
       {onMarcar && (
@@ -147,23 +162,19 @@ export const ReglasApoyo = ({ reglas, ctx, abierto, onAlternar, checks, onCheck,
 // selección), "Revisión IA" (con Estado IA en prueba o habilitado y un documento) y la propuesta con
 // sus motivos por regla. Confirmarla solo llena SI/NO/N/A y la observación de la fila (no guarda).
 //  - datos: { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones (ref: revisada, aplicar,
-//    descartada, recargarPautas) }.
+//    descartada) }.
 //  - documento: { ruta, nombre, leer() → Promise<File | null> } | null.
-export const PestanaIA = ({ datos, expedienteId, documento, puedeDefinirReglas, onIrAManual }) => {
+export const PestanaIA = ({ datos, expedienteId, documento, ctx, onIrAManual }) => {
   const { instancia, pauta, propuesta, aplicada, puedeRevisar, acciones } = datos;
   const reglas = pauta?.reglas || [];
   const estadoIA = pauta?.estadoIA || "sin_reglas";
   const estado = ESTADOS_IA_REQ[estadoIA] || ESTADOS_IA_REQ.sin_reglas;
   const [revisando, setRevisando] = useState(false);
   const [error, setError] = useState(null);
-  const [editandoReglas, setEditandoReglas] = useState(false);
+  const [reglasAbiertas, setReglasAbiertas] = useState(true);
   const revisable = ESTADOS_REVISABLES.includes(estadoIA);
   const habilitarRevision = revisable && Boolean(documento) && puedeRevisar && !revisando;
 
-  const cerrarReglas = () => {
-    setEditandoReglas(false);
-    acciones.current.recargarPautas?.();
-  };
   const revisar = async () => {
     setRevisando(true);
     setError(null);
@@ -199,23 +210,15 @@ export const PestanaIA = ({ datos, expedienteId, documento, puedeDefinirReglas, 
       : !puedeRevisar ? "Solo superadmin y evaluador, con el expediente abierto a evaluación." : null;
 
   return (
+    <div>
+      {/* Las reglas que aplicará la IA, solo para leer. */}
+      <ReglasApoyo reglas={reglas} ctx={ctx} abierto={reglasAbiertas} onAlternar={() => setReglasAbiertas((v) => !v)} />
     <div className="p-3 space-y-3">
       <div className="space-y-1">
         <TituloPaso>Estado IA</TituloPaso>
         <p className="flex flex-wrap items-center gap-1.5">
           <span className={`${CLASE_BADGE} ${estado.clase}`}>{estado.label}</span>
-          {puedeDefinirReglas && reglas.length > 0 && (
-            <button type="button" onClick={() => setEditandoReglas(true)} className="text-[10px] font-bold text-primary hover:underline">Editar reglas</button>
-          )}
         </p>
-        {reglas.length === 0 && (
-          <p className="text-[11px] text-slate-500">
-            Sin reglas de validación.{" "}
-            {puedeDefinirReglas && (
-              <button type="button" onClick={() => setEditandoReglas(true)} className="font-bold text-primary hover:underline">Definir reglas</button>
-            )}
-          </p>
-        )}
         {estadoIA === "en_prueba" && (
           <p className="text-[10px] text-slate-400">En prueba: la propuesta es de apoyo; el evaluador decide el resultado.</p>
         )}
@@ -286,9 +289,7 @@ export const PestanaIA = ({ datos, expedienteId, documento, puedeDefinirReglas, 
         </div>
       )}
       {error && <p className="text-[11px] text-red-600">{error}</p>}
-      {editandoReglas && (
-        <ReglasIAModal requerimientoId={instancia.requerimientoId} nombre={instancia.nombre} onCerrar={cerrarReglas} />
-      )}
+    </div>
     </div>
   );
 };

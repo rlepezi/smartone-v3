@@ -2,7 +2,9 @@ const admin = require("firebase-admin");
 const {FieldValue} = require("firebase-admin/firestore");
 
 const db = admin.firestore();
-const COLLECTION = "carpetasEmpresa";
+// Colección "carpetas": cada carpeta asociada a un proyecto y una empresa. La
+// antigua "carpetasEmpresa" queda como histórico (sin copia).
+const COLLECTION = "carpetas";
 const COLECCION_EXPEDIENTES = "expedientes";
 
 /**

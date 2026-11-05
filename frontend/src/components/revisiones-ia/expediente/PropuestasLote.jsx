@@ -17,7 +17,6 @@ const MOTIVOS = {
   ya_resuelta: "Ya estaba confirmada o descartada",
   requisito_inactivo: "El requisito ya no está activo",
   revision_manual: "Requiere revisión manual",
-  sin_fecha_vencimiento: "Falta la fecha de vencimiento obligatoria",
   evaluado_despues: "Se evaluó después de la propuesta",
 };
 
@@ -157,7 +156,7 @@ export const PropuestasLote = ({ expedienteId, version = 0, puedeConfirmar, onCo
             </ul>
             <p className="text-[11px] text-slate-500">
               Se guardarán <b>{resumen.aplicables}</b> {resumen.aplicables === 1 ? "evaluación" : "evaluaciones"} con la observación de la IA.
-              {resumen.manuales > 0 && ` ${resumen.manuales} no se guardan: la IA no propone resultado.`} Si a una que cumple le falta la fecha de vencimiento obligatoria, queda pendiente para completarla en la planilla.
+              {resumen.manuales > 0 && ` ${resumen.manuales} no se guardan: la IA no propone resultado.`}
             </p>
             <div className="flex justify-end gap-2">
               <button type="button" disabled={aplicando} onClick={() => setConfirmando(false)} className={SECUNDARIO}>Cancelar</button>

@@ -35,6 +35,7 @@ import { EntityIconTile } from "../../components/shared/EntityIconTile";
 import { formatCatalogo } from "../../utils/formatCatalogo";
 import { mandanteService } from "../../services/mandanteService";
 import { formatRutDisplay } from "../../utils/rutFormatters";
+import { PatenteChip } from "../../components/shared/PatenteChip";
 import {
   porcentajeCumplimiento, sumarResumenes, resumenDeSujeto, evaluadosDe, resumenVacio, textoPorcentaje, nivelAcreditacion,
 } from "../../utils/cumplimientoCalculos";
@@ -789,11 +790,22 @@ export const ExpedienteDetailPage = () => {
         </div>
       )}
 
+      {/* Desde Nueva Acreditación: el expediente se creó, pero no se pudo guardar la carpeta del
+          proyecto (se configura en el Detalle del Proyecto). */}
+      {params.get("avisoProyecto") && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span className="mr-auto">El expediente se creó, pero no se pudo guardar la carpeta del proyecto. Configúrala en el Detalle del Proyecto.</span>
+          <Link to={`/proyectos/${params.get("avisoProyecto")}`} className="font-bold underline">Ir al Proyecto</Link>
+          <button type="button" aria-label="Cerrar aviso" onClick={() => { const p = new URLSearchParams(params); p.delete("avisoProyecto"); setParams(p, { replace: true }); }} className="p-1 rounded hover:bg-amber-100"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
       {/* Desde Nueva Acreditación: el expediente se creó, pero no se pudo guardar su carpeta. */}
       {params.get("aviso") === "repositorio" && (
         <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span className="mr-auto">El expediente se creó, pero no se pudo guardar la carpeta. Configúrala en la pestaña Documentación.</span>
+          <span className="mr-auto">El expediente se creó, pero no se pudo registrar ni vincular la carpeta de la empresa. Vincúlala en la pestaña Documentación.</span>
           <button type="button" onClick={() => cambiarNivel("documentacion")} className="font-bold underline">Ir a Documentación</button>
           <button type="button" aria-label="Cerrar aviso" onClick={() => { const p = new URLSearchParams(params); p.delete("aviso"); setParams(p, { replace: true }); }} className="p-1 rounded hover:bg-amber-100"><X className="w-3.5 h-3.5" /></button>
         </div>
@@ -1046,6 +1058,18 @@ export const ExpedienteDetailPage = () => {
                             <h3 className="text-base font-bold text-carbon-dark truncate">
                               {itemsActivos.find((i) => i.id === seleccionadoId)?.nombre}
                             </h3>
+                            {/* Identificador: RUT de la persona; en maquinaria, patente o N° de serie. */}
+                            {nivelActivo === "recurso" ? (
+                              <PatenteChip
+                                valor={itemsActivos.find((i) => i.id === seleccionadoId)?.busqueda}
+                                tipo={itemsActivos.find((i) => i.id === seleccionadoId)?.tipoIdentificacion}
+                                className="text-sm text-slate-500"
+                              />
+                            ) : itemsActivos.find((i) => i.id === seleccionadoId)?.busqueda && (
+                              <span className="font-mono text-sm text-slate-500 whitespace-nowrap">
+                                {itemsActivos.find((i) => i.id === seleccionadoId).busqueda}
+                              </span>
+                            )}
                             {/* Tipo de trabajador (Perfiles de persona) o tipo de maquinaria. */}
                             {itemsActivos.find((i) => i.id === seleccionadoId)?.subtitulo && (
                               <span className="px-2.5 py-0.5 rounded-full bg-primary-lighter border border-primary-light text-primary-dark text-[11px] font-bold whitespace-nowrap">

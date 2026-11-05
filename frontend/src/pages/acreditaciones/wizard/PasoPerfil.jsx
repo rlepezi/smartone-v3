@@ -171,7 +171,19 @@ export const PasoPerfil = ({ mandanteId, perfilId, onSeleccionar, empresaSel, pr
       </div>
 
       {(empresaSel || proyectoSel) && (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-col items-start gap-3">
+          {/* Mismo orden que el asistente: primero el Proyecto, debajo la Empresa. */}
+          {proyectoSel && (
+            <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <EntityIconTile icon={FolderKanban} />
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Proyecto</p>
+                <p className="text-xs font-bold text-carbon-dark mt-1">
+                  {proyectoSel.nombre} <span className="text-slate-400 font-mono font-normal">({proyectoSel.codigo})</span>
+                </p>
+              </div>
+            </div>
+          )}
           {empresaSel && (
             <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-100">
               {empresaSel.logoUrl ? (
@@ -184,17 +196,6 @@ export const PasoPerfil = ({ mandanteId, perfilId, onSeleccionar, empresaSel, pr
                 <p className="text-xs font-bold text-carbon-dark mt-1">
                   {empresaSel.razonSocial}
                   {empresaSel.rut && <span className="text-slate-400 font-mono font-normal"> · {formatRutDisplay(empresaSel.rut)}</span>}
-                </p>
-              </div>
-            </div>
-          )}
-          {proyectoSel && (
-            <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-100">
-              <EntityIconTile icon={FolderKanban} />
-              <div>
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Proyecto</p>
-                <p className="text-xs font-bold text-carbon-dark mt-1">
-                  {proyectoSel.nombre} <span className="text-slate-400 font-mono font-normal">({proyectoSel.codigo})</span>
                 </p>
               </div>
             </div>

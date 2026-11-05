@@ -1,16 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { FolderTree } from "lucide-react";
 import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
 import { ESTADOS_MAPEO } from "../../utils/estadosMapeo";
 import { Tarjeta } from "./Tarjeta";
+import { ArbolFuente } from "./ArbolFuente";
+import { crearFuenteDocumental } from "../../services/fuenteDocumental";
 
 const BADGE = "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap";
 
 // Carpetas de empresa de la fuente activa del Mandante (solo lectura): cada subcarpeta vinculada a
 // una empresa en un proyecto, con su expediente y el estado de su mapeo. `version` cambia cuando
-// cambian las fuentes (para recargar).
-export const CarpetasEmpresaLista = ({ mandanteId, fuenteId, version = 0 }) => {
+// cambian las fuentes (para recargar). Con SharePoint activo y conectado (`fuente`), arriba va el
+// árbol real bajo la carpeta base, con el conteo de registradas / sin registrar.
+export const CarpetasEmpresaLista = ({ mandanteId, fuenteId, version = 0, fuente = null }) => {
   const [carga, setCarga] = useState({ clave: null, lista: null, error: null });
   const clave = `${mandanteId}|${fuenteId || ""}|${version}`;
 
@@ -24,8 +27,14 @@ export const CarpetasEmpresaLista = ({ mandanteId, fuenteId, version = 0 }) => {
   }, [mandanteId, fuenteId, clave]);
 
   const actual = carga.clave === clave ? carga : null;
+  const conArbol = fuente?.tipo === "sharepoint" && fuente.estado === "activa" && fuente.estadoConexion === "conectada";
+  const proveedor = useMemo(() => (conArbol ? crearFuenteDocumental({ fuente, mandanteId }) : null), [conArbol, fuente, mandanteId]);
   return (
     <Tarjeta titulo="Carpetas de empresa" Icono={FolderTree}>
+      {proveedor && <ArbolFuente proveedor={proveedor} registradas={actual && !actual.error ? actual.lista : null} />}
+      {fuente?.tipo === "sharepoint" && fuente.estado === "activa" && !conArbol && (
+        <p className="text-xs text-amber-700">Pruebe la conexión de SharePoint para ver el árbol de carpetas de la fuente.</p>
+      )}
       {!fuenteId ? (
         <p className="py-4 text-center text-xs text-slate-400">Configure la fuente documental para ver sus carpetas de empresa.</p>
       ) : !actual ? (

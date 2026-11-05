@@ -4,7 +4,7 @@ const {aplicarDelta} = require("../utils/patronesMapeo");
 
 const db = admin.firestore();
 const COLLECTION = "patronesRequerimiento";
-const COLECCION_CARPETAS = "carpetasEmpresa";
+const COLECCION_CARPETAS = "carpetas";
 
 /**
  * Acceso a datos de los patrones aprendidos del mapeo documental (uno por

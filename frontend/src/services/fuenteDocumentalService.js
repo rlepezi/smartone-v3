@@ -1,4 +1,4 @@
-import { apiClient } from "../api/apiClient";
+import { apiBlob, apiClient } from "../api/apiClient";
 
 // Fuentes documentales por Mandante: la raíz del árbol de carpetas (una subcarpeta por empresa y
 // proyecto). Una sola activa por Mandante: SharePoint (superadmin y mandante_admin) o carpeta local
@@ -43,5 +43,30 @@ export const fuenteDocumentalService = {
   // "FUENTE_CON_CARPETAS".
   async guardarLocal(mandanteId, etiqueta) {
     return (await apiClient(`/fuentes-documentales/local/${encodeURIComponent(mandanteId)}`, { method: "PUT", body: { etiqueta } })).data;
+  },
+
+  // ── SharePoint (Microsoft Graph, solo lectura, a través del backend) ──
+  // Prueba de conexión paso a paso: con los datos del formulario (antes de guardar) o con la fuente
+  // guardada (fuenteId; sin clientSecret usa el guardado). → { ok, pasos: [{ clave, titulo, estado
+  // "ok" | "error" | "omitido", mensaje }] }.
+  async probarConexion(datos) {
+    return (await apiClient("/fuentes-documentales/sharepoint/probar-conexion", { method: "POST", body: datos })).data;
+  },
+
+  // Carpetas y archivos de una carpeta (itemId) o de la carpeta base: { carpeta, hijos: [{ id,
+  // driveId, nombre, tipo, tamano, modificado, rutaRelativa }] }.
+  async sharePointHijos(mandanteId, itemId = null) {
+    const q = new URLSearchParams({ mandanteId, ...(itemId ? { itemId } : {}) });
+    return (await apiClient(`/fuentes-documentales/sharepoint/hijos?${q}`)).data;
+  },
+
+  async sharePointItem(mandanteId, itemId) {
+    return (await apiClient(`/fuentes-documentales/sharepoint/items/${encodeURIComponent(itemId)}?mandanteId=${encodeURIComponent(mandanteId)}`)).data;
+  },
+
+  // Contenido (Blob). formato "pdf": vista previa de un documento de Office.
+  async sharePointContenido(mandanteId, itemId, { formato = null } = {}) {
+    const q = new URLSearchParams({ mandanteId, ...(formato ? { formato } : {}) });
+    return apiBlob(`/fuentes-documentales/sharepoint/items/${encodeURIComponent(itemId)}/contenido?${q}`);
   },
 };

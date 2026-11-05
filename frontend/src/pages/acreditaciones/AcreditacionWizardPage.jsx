@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Check, RotateCcw, Sparkles } from "lucide-react";
 import { useMandanteContexto } from "../../hooks/useMandanteContexto";
@@ -7,6 +7,7 @@ import { expedienteService } from "../../services/expedienteService";
 import { acreditacionService } from "../../services/acreditacionService";
 import { perfilParticipacionService } from "../../services/perfilParticipacionService";
 import { mandanteService } from "../../services/mandanteService";
+import { proyectoService } from "../../services/proyectoService";
 import { estadoTarjetaProyecto, MENSAJE_NO_APLICA } from "./wizard/estadoTarjetaProyecto";
 import { PasoMandante } from "./wizard/PasoMandante";
 import { PasoEmpresa } from "./wizard/PasoEmpresa";
@@ -23,7 +24,11 @@ import { ConfirmacionModal } from "../../components/shared/ConfirmacionModal";
 import { hoyISO } from "../../utils/fechas";
 import { useAuth } from "../../contexts/AuthContext";
 import { useCarpetaWizard } from "../../hooks/useCarpetaWizard";
-import { DocumentacionWizard } from "./wizard/DocumentacionWizard";
+import { PasoCarpetaEmpresa } from "./wizard/PasoCarpetaEmpresa";
+import { CarpetaProyecto } from "../../components/proyectos/CarpetaProyecto";
+import { esCarpetaDestacada } from "../../utils/carpetasSujetos";
+import { esPlanillaListado, personasDeListado } from "../../utils/listadoPersonal";
+import { leerPlanilla } from "../../utils/planillas";
 import { CarpetaWizardPanel } from "./wizard/CarpetaWizardPanel";
 import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
 import { carpetaEmpresaService } from "../../services/carpetaEmpresaService";
@@ -39,17 +44,26 @@ const nuevaSesionWizard = () => (typeof crypto !== "undefined" && crypto.randomU
 // `id` es el identificador interno y fijo de cada paso (lo usan `step`, los "Editar" del resumen y
 // el estado guardado). El número que ve el usuario es la posición dentro de los pasos VISIBLES: para
 // roles con Mandante fijo, o cuando hay un solo Mandante activo, el paso Mandante se omite y
-// Empresa pasa a ser el 1.
+// Proyecto pasa a ser el 1. Orden: Mandante → Proyecto (y su carpeta, opcional) → Carpeta de la
+// empresa (opcional; deduce la empresa) → Empresa → Perfil → Personas → Maquinarias →
+// Requerimientos → Confirmación.
 const PASOS = [
   { id: 1, label: "Mandante" },
-  { id: 2, label: "Empresa" },
-  { id: 3, label: "Proyecto" },
-  { id: 4, label: "Perfil" },
-  { id: 5, label: "Personas y Maquinarias" },
-  { id: 6, label: "Requerimientos" },
-  { id: 7, label: "Confirmación" },
+  { id: 2, label: "Proyecto" },
+  { id: 3, label: "Carpeta" },
+  { id: 4, label: "Empresa" },
+  { id: 5, label: "Perfil" },
+  { id: 6, label: "Personas" },
+  { id: 7, label: "Maquinarias" },
+  { id: 8, label: "Requerimientos" },
+  { id: 9, label: "Confirmación" },
 ];
-const PASO_CONFIRMACION = 7;
+const PASO_CONFIRMACION = 9;
+// Pasos de asignaciones y el tipo de cada uno.
+const PASO_PERSONAS = 6;
+const PASO_MAQUINARIAS = 7;
+const TIPO_DE_PASO = { [PASO_PERSONAS]: "persona", [PASO_MAQUINARIAS]: "recurso" };
+const PASO_DE_TIPO = { persona: PASO_PERSONAS, recurso: PASO_MAQUINARIAS };
 
 
 // El wizard se pierde por completo si el usuario navega a otra pantalla
@@ -65,11 +79,15 @@ const PASO_CONFIRMACION = 7;
 //  - v2: paso Mandante (los ids de paso cambiaron y el Mandante es obligatorio).
 //  - v3: relaciones de Empresa (bloque 3): la Empresa del paso 2 sale de las asociadas al
 //    Mandante y Personas/Maquinarias ya no traen empresaId propio.
-const BORRADOR_VERSION = 3;
+//  - v4: Proyecto antes que Empresa, paso Carpeta y carpeta del proyecto.
+//  - v5: Personas y Maquinarias en pasos separados.
+const BORRADOR_VERSION = 5;
 const STORAGE_KEY = `smartone.nuevaAcreditacionWizard.v${BORRADOR_VERSION}`;
 const STORAGE_KEYS_ANTERIORES = [
   "smartone.nuevaAcreditacionWizard",
   "smartone.nuevaAcreditacionWizard.v2",
+  "smartone.nuevaAcreditacionWizard.v3",
+  "smartone.nuevaAcreditacionWizard.v4",
 ];
 
 const leerEstadoGuardado = () => {
@@ -186,6 +204,17 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     return r?.ruta ? r : null;
   });
   const carpetaWizard = useCarpetaWizard(profile?.uid, sesionWizard);
+  // Carpeta del proyecto en el asistente: la que ya tiene el proyecto, o la elegida/cambiada aquí
+  // (`cambiada`: al confirmar se guarda en el proyecto). { valor, cambiada }.
+  const [carpetaProyecto, setCarpetaProyecto] = useState(() => leerBorradorValido(mandanteFijo)?.carpetaProyecto || { valor: null, cambiada: false });
+  // Relación de la Empresa elegida con el Proyecto (participacionEmpresa), pedida al elegirla.
+  const [relacionCargando, setRelacionCargando] = useState(false);
+  // Listado del personal (planilla) abierto en la vista de la carpeta durante el paso Personas:
+  // { ruta, nombre, personas } (ver listadoPersonal.js). No se guarda en el borrador.
+  const [listadoPersonal, setListadoPersonal] = useState(null);
+  // Se quitó u omitió la carpeta de la empresa: la del proyecto ya no se elige sola.
+  const [carpetaEmpresaDescartada, setCarpetaEmpresaDescartada] = useState(false);
+  const pedidoRelacion = useRef(0);
   // Vista previa de la carpeta local de la empresa, abierta mientras se avanza por los pasos.
   const [verCarpeta, setVerCarpeta] = useState(false);
 
@@ -209,13 +238,13 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
         version: BORRADOR_VERSION,
         step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido,
-        seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard,
+        seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard, carpetaProyecto,
       }));
     } catch {
       // sessionStorage lleno o bloqueado (modo privado) — no es crítico,
       // el wizard sigue funcionando en memoria para esta misma sesión.
     }
-  }, [step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido, seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard]);
+  }, [step, empresaSel, mandanteIdWizard, proyectoSel, perfilSel, perfilFijo, perfilSugerido, seleccion, fechaInicio, previewRequerimientos, progreso, sesionWizard, repositorioWizard, carpetaProyecto]);
 
   // Limpieza defensiva de carpetas temporales: las de este usuario de otras sesiones del asistente
   // (abandonadas) y las de más de 24 h.
@@ -247,7 +276,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     return () => { vigente = false; };
   }, [mandanteIdWizard]);
 
-  // Sidebar (pasos 3 y 4): requisitos del Perfil y avance estimado por reutilización de nivel
+  // Sidebar (pasos Perfil y Personas y Maquinarias): requisitos del Perfil y avance estimado por reutilización de nivel
   // Empresa. Se recalcula al cambiar de Perfil.
   useEffect(() => {
     if (!perfilSel?.id) {
@@ -271,7 +300,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   }, [perfilSel?.id, empresaSel?.id, fechaInicio]);
 
   useEffect(() => {
-    if (step !== 5 || !perfilSel?.id || !empresaSel?.id) {
+    if (!TIPO_DE_PASO[step] || !perfilSel?.id || !empresaSel?.id) {
       setPreviewSeleccion(null);
       return undefined;
     }
@@ -291,9 +320,37 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
 
   // Resumen informativo de traslados (paso Personas y Maquinarias): no bloquea; el traslado real
   // ocurre al confirmar.
-  const trasladosCount = seleccion.filter(
+  // Selección del paso de asignaciones actual (Personas o Maquinarias).
+  const seleccionPaso = seleccion.filter((s) => s.tipo === TIPO_DE_PASO[step]);
+  const trasladosCount = seleccionPaso.filter(
     (s) => s.participacionActiva && s.participacionActiva.proyectoId !== proyectoSel?.id,
   ).length;
+
+  // Vista de la carpeta en los pasos Personas / Maquinarias: marca la carpeta ya elegida para ese
+  // tipo o, si no hay, las sugeridas por su nombre ("personal", "trabajadores"; "maquinarias",
+  // "vehículos"…).
+  const tipoPaso = TIPO_DE_PASO[step] || null;
+  // Paso Personas: una planilla abierta en la vista se lee como listado del personal (nombre, RUT y
+  // cargo). Si no trae una tabla reconocible, no cambia el listado anterior.
+  const leerListadoPersonal = async (ruta, archivo) => {
+    if (step !== PASO_PERSONAS || !esPlanillaListado(archivo?.name)) return;
+    try {
+      const personas = personasDeListado(await leerPlanilla(archivo));
+      if (personas.length) setListadoPersonal({ ruta, nombre: archivo.name, personas });
+    } catch {
+      // Planilla ilegible: la vista ya muestra su error.
+    }
+  };
+  const rutaElegidaPaso = tipoPaso === "persona" ? repositorioWizard?.mapeo?.carpetaPersonas
+    : tipoPaso === "recurso" ? repositorioWizard?.mapeo?.carpetaRecursos : null;
+  const marcarCarpeta = !tipoPaso ? null : (ruta, nombre) => {
+    if (rutaElegidaPaso) {
+      return ruta === rutaElegidaPaso ? { texto: tipoPaso === "persona" ? "Carpeta del personal" : "Carpeta de maquinarias", clase: "bg-primary-lighter text-primary border-primary/20" } : null;
+    }
+    return esCarpetaDestacada(nombre, tipoPaso)
+      ? { texto: tipoPaso === "persona" ? "Sugerida para personas" : "Sugerida para maquinarias", clase: "bg-sage-lighter text-sage-darker border-sage-light" }
+      : null;
+  };
 
   // Mandante del flujo: el elegido en el Paso 1 o el fijo del actor (mandanteIdWizard ya lo trae).
   const mandanteEfectivo = mandanteIdWizard;
@@ -312,33 +369,33 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
       paso: 1, ref: REF_PASO[1], etiqueta: "Ir a Mandante",
       mensaje: `Falta seleccionar el Mandante (Paso ${numeroPaso(1)}).`,
     },
-    !empresaSel && {
-      paso: 2, ref: REF_PASO[2], etiqueta: "Ir a Empresa",
-      mensaje: `Falta seleccionar la Empresa (Paso ${numeroPaso(2)}).`,
-    },
     !proyectoSel && {
-      paso: 3, ref: REF_PASO[3], etiqueta: "Ir a Proyecto",
-      mensaje: `Falta seleccionar el Proyecto (Paso ${numeroPaso(3)}).`,
+      paso: 2, ref: REF_PASO[2], etiqueta: "Ir a Proyecto",
+      mensaje: `Falta seleccionar el Proyecto (Paso ${numeroPaso(2)}).`,
     },
-    proyectoNoAplica && { paso: 3, ref: REF_PASO[3], etiqueta: "Ir a Proyecto", mensaje: MENSAJE_NO_APLICA },
+    !empresaSel && {
+      paso: 4, ref: REF_PASO[4], etiqueta: "Ir a Empresa",
+      mensaje: `Falta seleccionar la Empresa (Paso ${numeroPaso(4)}).`,
+    },
+    proyectoNoAplica && { paso: 4, ref: REF_PASO[4], etiqueta: "Ir a Empresa", mensaje: MENSAJE_NO_APLICA },
     !perfilSel && {
-      paso: 4, ref: REF_PASO[4], etiqueta: "Ir a Perfil",
-      mensaje: `Falta elegir el Perfil de Participación (Paso ${numeroPaso(4)}).`,
+      paso: 5, ref: REF_PASO[5], etiqueta: "Ir a Perfil",
+      mensaje: `Falta elegir el Perfil de Participación (Paso ${numeroPaso(5)}).`,
     },
     !fechaInicio && {
       paso: PASO_CONFIRMACION, ref: REF_FECHA_INICIO, etiqueta: "Ir a la fecha",
       mensaje: "Falta la fecha de inicio.",
     },
     ...sinPerfil.map((s) => ({
-      paso: 5, ref: refRecurso(s.tipo, s.id), etiqueta: `Ir a ${s.nombre}`,
-      mensaje: `Falta el Perfil de Recurso de ${s.nombre} (Paso ${numeroPaso(5)}).`,
+      paso: PASO_DE_TIPO[s.tipo], ref: refRecurso(s.tipo, s.id), etiqueta: `Ir a ${s.nombre}`,
+      mensaje: `Falta el Perfil de Recurso de ${s.nombre} (Paso ${numeroPaso(PASO_DE_TIPO[s.tipo])}).`,
     })),
   ].filter(Boolean);
 
   // Único punto de navegación a un problema: vuelve al paso (sin perder datos) y, cuando el
   // elemento ya está en pantalla, hace scroll, lo resalta y le da foco.
   const irAProblema = (paso, ref) => {
-    if (paso === 5) setErroresPaso5(true);
+    if (TIPO_DE_PASO[paso]) setErroresPaso5(true);
     setStep(paso);
     enfocarElemento(ref);
   };
@@ -356,6 +413,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     carpetaEmpresaService.verificar({
       mandanteId: mandanteEfectivo, empresaId: empresaSel.id, proyectoId: proyectoSel?.id || null,
       ...(repositorioWizard.tipo === "sharepoint" ? { url: repositorioWizard.url } : { ruta: repositorioWizard.ruta }),
+      ...(repositorioWizard.esCarpetaProyecto ? { carpetaProyecto: { ruta: repositorioWizard.ruta, url: repositorioWizard.url || null } } : {}),
     })
       .then(() => { if (vigente) setVerificacion({ clave: claveVerificacion, error: null }); })
       .catch((err) => { if (vigente) setVerificacion({ clave: claveVerificacion, error: err.message || "No se pudo verificar la carpeta." }); });
@@ -364,8 +422,9 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claveVerificacion]);
 
-  // La carpeta vinculada (opcional) debe ser de la Empresa elegida: si no, no se avanza.
-  const carpetaNoCoincide = Boolean(empresaSel && repositorioWizard) && !validarCarpetaEmpresa(
+  // La carpeta elegida (opcional) debe ser de la Empresa elegida: si no, no se avanza. Sin carpeta
+  // no hay validación; tampoco con la carpeta del proyecto (su nombre es el del proyecto).
+  const carpetaNoCoincide = Boolean(empresaSel && repositorioWizard) && !repositorioWizard.esCarpetaProyecto && !validarCarpetaEmpresa(
     repositorioWizard.tipo === "local" ? repositorioWizard.etiqueta : carpetaDeUrlSharePoint(repositorioWizard.url),
     empresaSel,
   ).valida;
@@ -378,11 +437,13 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
 
   const puedeContinuar =
     step === 1 ? Boolean(mandanteEfectivo) :
-    step === 2 ? Boolean(empresaSel) && !carpetaNoCoincide && !errorCarpeta && !verificandoCarpeta :
-    step === 3 ? Boolean(proyectoSel) && !proyectoNoAplica && !errorCarpeta && !verificandoCarpeta :
-    step === 4 ? Boolean(perfilSel) :
-    step === 5 ? true :
-    step === 6 ? true : false;
+    step === 2 ? Boolean(proyectoSel) :
+    step === 3 ? !errorCarpeta && !verificandoCarpeta :
+    step === 4 ? Boolean(empresaSel) && !relacionCargando && !proyectoNoAplica && !carpetaNoCoincide && !errorCarpeta && !verificandoCarpeta :
+    step === 5 ? Boolean(perfilSel) :
+    step === 6 ? true :
+    step === 7 ? true :
+    step === 8 ? true : false;
 
   const handleAtras = () => {
     if (progreso?.participacionId) return; // ya se creó algo, no retrocede
@@ -394,11 +455,13 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   };
 
   const handleContinuar = () => {
-    if (step === 3 && proyectoNoAplica) return;
+    if (step === 4 && proyectoNoAplica) return;
     if (!puedeContinuar) return;
-    // Paso 5: no avanza con seleccionados sin perfil (sin seleccionados sí se puede continuar).
-    if (step === 5 && sinPerfil.length > 0) {
-      irAProblema(5, refRecurso(sinPerfil[0].tipo, sinPerfil[0].id));
+    // Pasos Personas y Maquinarias: no avanzan con seleccionados de su tipo sin perfil (sin
+    // seleccionados sí).
+    const sinPerfilPaso = sinPerfil.filter((s) => s.tipo === TIPO_DE_PASO[step]);
+    if (sinPerfilPaso.length > 0) {
+      irAProblema(step, refRecurso(sinPerfilPaso[0].tipo, sinPerfilPaso[0].id));
       return;
     }
     setErroresPaso5(false);
@@ -432,6 +495,9 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     setErrorEjecucion(null);
     carpetaWizard.olvidar();
     setRepositorioWizard(null);
+    setCarpetaProyecto({ valor: null, cambiada: false });
+    setCarpetaEmpresaDescartada(false);
+    setListadoPersonal(null);
     setSesionWizard(nuevaSesionWizard());
   };
 
@@ -455,53 +521,81 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     setPerfilSugerido(null);
     setSeleccion([]);
     setPreviewRequerimientos(null);
+    carpetaWizard.olvidar();
+    setRepositorioWizard(null);
+    setCarpetaProyecto({ valor: null, cambiada: false });
   };
 
-  const handleSeleccionarProyecto = async (proyecto) => {
-    if (estadoTarjetaProyecto(proyecto) === "no_aplica") return;
+  // Paso Proyecto. Otro Proyecto invalida la carpeta de la empresa, la Empresa y el Perfil (la
+  // situación de la Empresa depende del Proyecto); la carpeta del proyecto parte de la que ya tiene.
+  const handleSeleccionarProyecto = (proyecto) => {
+    if (proyecto?.id === proyectoSel?.id) return;
     setProyectoSel(proyecto);
-    // Cambiar de Proyecto invalida el Perfil ya elegido.
+    setCarpetaProyecto({ valor: proyecto?.repositorioDocumental || null, cambiada: false });
+    setEmpresaSel(null);
     setPerfilSel(null);
     setPerfilFijo(false);
     setPerfilSugerido(null);
-    try {
-      const pendiente = estadoTarjetaProyecto(proyecto) === "pendiente" ? proyecto.participacionEmpresa : null;
-      if (pendiente) {
-        // Se completa la Participación existente: su Perfil ya está definido.
-        const perfil = await perfilParticipacionService.obtenerPorId(pendiente.perfilParticipacionId);
-        setPerfilSel(perfil);
-        setPerfilFijo(true);
-        return;
-      }
-      const disponibles = await perfilParticipacionService.listar({ mandanteId: mandanteEfectivo, estado: "activo" });
-      if ((disponibles || []).length === 1) {
-        // Solo preselecciona: no bloquea (el usuario puede elegir otro en el paso Perfil).
-        setPerfilSel(disponibles[0]);
-        setPerfilSugerido(disponibles[0].nombre);
-      }
-    } catch (err) {
-      // Sin la preselección el paso Perfil se comporta como siempre (selección libre).
-      console.error("No se pudo preseleccionar el Perfil:", err);
-    }
+    carpetaWizard.olvidar();
+    setRepositorioWizard(null);
+    setVerCarpeta(false);
+    setCarpetaEmpresaDescartada(false);
+    setListadoPersonal(null);
   };
 
-  const handleSeleccionarEmpresa = (empresa) => {
+  // Paso Empresa (o la deducida desde la carpeta). Con el Proyecto ya elegido, se pide la relación
+  // de la Empresa con él (participacionEmpresa, misma regla del backend): ya participa → "No
+  // aplica"; pendiente → se completa con su Perfil (fijo); si no, el Perfil se preselecciona cuando
+  // el Mandante tiene uno solo.
+  const handleSeleccionarEmpresa = async (empresa) => {
     // Volver a elegir la misma Empresa no debe borrar el avance ya hecho.
     if (empresaSel?.id === empresa?.id) {
       setEmpresaSel(empresa);
       return;
     }
     setEmpresaSel(empresa);
-    // La carpeta vinculada se conserva: se vuelve a validar contra la nueva Empresa (si no es suya,
-    // se muestra la advertencia y no se puede continuar).
+    setPerfilSel(null);
     setPerfilFijo(false);
     setPerfilSugerido(null);
-    // Cambiar de Empresa invalida el Proyecto/Perfil ya elegidos — el
-    // Proyecto podría ya no ser válido para la nueva Empresa (si ya tiene
-    // una Participación activa ahí, PasoProyecto lo excluye de la lista).
-    setProyectoSel(null);
-    setPerfilSel(null);
-    // El Mandante NO se toca: se eligió en el Paso 1 y es independiente de la Empresa.
+    if (!empresa || !proyectoSel) return;
+    const pedido = ++pedidoRelacion.current;
+    setRelacionCargando(true);
+    try {
+      const lista = await proyectoService.listar({ mandanteId: mandanteEfectivo, empresaId: empresa.id });
+      if (pedido !== pedidoRelacion.current) return;
+      const relacion = (lista || []).find((x) => x.id === proyectoSel.id)?.participacionEmpresa || null;
+      const conRelacion = { ...proyectoSel, participacionEmpresa: relacion };
+      setProyectoSel(conRelacion);
+      const pendiente = estadoTarjetaProyecto(conRelacion) === "pendiente" ? relacion : null;
+      if (pendiente) {
+        // Se completa la Participación existente: su Perfil ya está definido.
+        const perfil = await perfilParticipacionService.obtenerPorId(pendiente.perfilParticipacionId);
+        if (pedido !== pedidoRelacion.current) return;
+        setPerfilSel(perfil);
+        setPerfilFijo(true);
+        return;
+      }
+      if (estadoTarjetaProyecto(conRelacion) === "no_aplica") return;
+      const disponibles = await perfilParticipacionService.listar({ mandanteId: mandanteEfectivo, estado: "activo" });
+      if (pedido !== pedidoRelacion.current) return;
+      if ((disponibles || []).length === 1) {
+        // Solo preselecciona: no bloquea (el usuario puede elegir otro en el paso Perfil).
+        setPerfilSel(disponibles[0]);
+        setPerfilSugerido(disponibles[0].nombre);
+      }
+    } catch (err) {
+      // Sin la relación ni la preselección el paso Perfil se comporta como siempre.
+      console.error("No se pudo consultar la relación de la Empresa con el Proyecto:", err);
+    } finally {
+      if (pedido === pedidoRelacion.current) setRelacionCargando(false);
+    }
+  };
+
+  // Paso Carpeta: al elegir una subcarpeta local se abre su vista previa al costado (la carpeta del
+  // proyecto no: se abre desde "Ver carpeta" del resumen).
+  const handleCambiarCarpetaEmpresa = (valor) => {
+    setRepositorioWizard(valor);
+    if (valor?.tipo === "local" && !valor.esCarpetaProyecto) setVerCarpeta(true);
   };
 
   // `confirmado`: el usuario ya aceptó la lista de asignaciones que se finalizarán al mover
@@ -612,9 +706,21 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     try {
       // Si la Participación pendiente ya tenía un Expediente en curso, se reutiliza.
       const expedienteId = pendiente?.expedienteId || (await expedienteService.crear({ participacionId })).id;
-      // Documentación elegida en el paso Empresa: se guarda en el expediente recién creado (escritura
-      // aparte, mismo endpoint y Bitácora que la pestaña Documentación). Si falla, el expediente NO
-      // se revierte: se avisa en su detalle.
+      // Carpetas: después de la participación y el expediente (el backend exige que la empresa
+      // participe en el proyecto para registrar su carpeta). Si algo falla, el expediente NO se
+      // revierte: se avisa en su detalle con el enlace para vincularla.
+      // 1) Carpeta del proyecto, si se eligió o cambió aquí.
+      let falloCarpetaProyecto = false;
+      if (carpetaProyecto.cambiada) {
+        try {
+          const v = carpetaProyecto.valor;
+          await proyectoService.actualizarRepositorioDocumental(proyectoSel.id, v ? { tipo: v.tipo, ruta: v.ruta, url: v.url || null } : null);
+        } catch {
+          falloCarpetaProyecto = true;
+        }
+      }
+      // 2) Carpeta de la empresa: se registra en `carpetas` (proyecto + empresa; la ya registrada se
+      // reutiliza) y se vincula al expediente, igual que "Vincular" desde el expediente.
       let falloRepositorio = false;
       if (repositorioWizard) {
         try {
@@ -637,7 +743,10 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
         }
       }
       limpiarEstadoGuardado();
-      navigate(`/expedientes/${expedienteId}${falloRepositorio ? "?aviso=repositorio" : ""}`);
+      const avisos = new URLSearchParams();
+      if (falloRepositorio) avisos.set("aviso", "repositorio");
+      if (falloCarpetaProyecto) avisos.set("avisoProyecto", proyectoSel.id);
+      navigate(`/expedientes/${expedienteId}${avisos.toString() ? `?${avisos}` : ""}`);
     } catch (err) {
       setProgreso({ participacionId, sujetosListo: true });
       setErrorEjecucion({
@@ -687,14 +796,17 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
 
       <StepIndicator step={step} pasos={pasosVisibles} />
 
-      <div className={panelCarpeta ? "grid grid-cols-1 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] gap-6 items-start" : ""}>
+      <div className={panelCarpeta ? "grid grid-cols-1 xl:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] gap-6 items-start" : ""}>
       {panelCarpeta && (
         <CarpetaWizardPanel
           key={sesionWizard}
           carpeta={carpetaWizard}
           etiqueta={repositorioWizard.etiqueta}
           mandanteId={mandanteEfectivo}
-          abrirCarpeta={step === 5 ? (repositorioWizard.mapeo?.carpetaPersonas || repositorioWizard.mapeo?.carpetaRecursos || null) : null}
+          abrirCarpeta={step === PASO_PERSONAS ? repositorioWizard.mapeo?.carpetaPersonas || null
+            : step === PASO_MAQUINARIAS ? repositorioWizard.mapeo?.carpetaRecursos || null : null}
+          marcar={marcarCarpeta}
+          onArchivo={leerListadoPersonal}
           onCerrar={() => setVerCarpeta(false)}
         />
       )}
@@ -713,45 +825,67 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
           />
         )}
         {step === 2 && (
+          <PasoProyecto
+            mandanteId={mandanteEfectivo}
+            proyectoId={proyectoSel?.id}
+            onSeleccionar={handleSeleccionarProyecto}
+          >
+            {proyectoSel && (
+              <section className="pt-5 mt-1 border-t border-slate-100 space-y-2">
+                <div>
+                  <h4 className="text-sm font-bold text-carbon-dark">Carpeta del proyecto (opcional)</h4>
+                  <p className="text-xs text-slate-500">La carpeta que contiene una subcarpeta por empresa. Con ella, en el paso siguiente se elige la de la empresa con un clic.</p>
+                </div>
+                <CarpetaProyecto
+                  key={proyectoSel.id}
+                  mandanteId={mandanteEfectivo}
+                  usuarioId={profile?.uid}
+                  valor={carpetaProyecto.valor}
+                  onCambiar={(valor) => setCarpetaProyecto({ valor, cambiada: true })}
+                  puedeConfigurarBase={profile?.rol === "superadmin"}
+                  onOmitir={() => setStep(3)}
+                />
+                {carpetaProyecto.cambiada && (
+                  <p className="text-[11px] text-slate-500">Se guardará en el proyecto al confirmar la acreditación.</p>
+                )}
+              </section>
+            )}
+          </PasoProyecto>
+        )}
+        {step === 3 && (
+          <PasoCarpetaEmpresa
+            key={`${sesionWizard}|${proyectoSel?.id || ""}`}
+            mandanteId={mandanteEfectivo}
+            usuarioId={profile?.uid}
+            puedeConfigurarBase={profile?.rol === "superadmin"}
+            proyectoId={proyectoSel?.id || null}
+            carpetaProyecto={carpetaProyecto.valor}
+            valor={repositorioWizard}
+            carpeta={carpetaWizard}
+            onCambiar={handleCambiarCarpetaEmpresa}
+            empresaSel={empresaSel}
+            onElegirEmpresa={handleSeleccionarEmpresa}
+            onOmitir={async () => { await carpetaWizard.olvidar(); setRepositorioWizard(null); setVerCarpeta(false); setCarpetaEmpresaDescartada(true); setStep(4); }}
+            autoProyecto={!carpetaEmpresaDescartada}
+            onDescartar={() => setCarpetaEmpresaDescartada(true)}
+            errorCarpeta={errorCarpeta}
+            verificando={verificandoCarpeta}
+          />
+        )}
+        {step === 4 && (
           <PasoEmpresa
             mandanteId={mandanteEfectivo}
             empresaId={empresaSel?.id}
             onSeleccionar={handleSeleccionarEmpresa}
-          />
-        )}
-        {step === 2 && empresaSel && (
-          <DocumentacionWizard
-            key={`${sesionWizard}|${empresaSel?.id || ""}`}
-            valor={repositorioWizard}
-            carpeta={carpetaWizard}
-            empresa={empresaSel}
-            usuarioId={profile?.uid}
-            mandanteId={mandanteEfectivo}
-            puedeConfigurarBase={profile?.rol === "superadmin"}
-            onCambiar={setRepositorioWizard}
-            errorCarpeta={errorCarpeta}
-            verificando={verificandoCarpeta}
             proyectoId={proyectoSel?.id || null}
-          />
-        )}
-        {step === 3 && (
-          <PasoProyecto
-            mandanteId={mandanteEfectivo}
-            empresaId={empresaSel?.id}
-            empresaSel={empresaSel}
-            proyectoId={proyectoSel?.id}
-            onSeleccionar={handleSeleccionarProyecto}
-            onCambiarEmpresa={progreso?.participacionId ? undefined : () => setStep(2)}
+            proyectoNombre={proyectoSel?.nombre || null}
             avisoPerfil={perfilSugerido}
+            avisoCarpeta={carpetaNoCoincide
+              ? `La carpeta «${repositorioWizard.etiqueta || repositorioWizard.ruta}» no corresponde a ${empresaSel?.razonSocial}. Elige otra empresa o cambia la carpeta en el paso anterior.`
+              : errorCarpeta ? `Carpeta de la empresa: ${errorCarpeta}` : null}
           />
         )}
-        {step === 3 && errorCarpeta && (
-          <p role="alert" className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
-            Carpeta de la empresa: {errorCarpeta}{" "}
-            <button type="button" onClick={() => setStep(2)} className="font-bold underline">Cambiarla en el paso Empresa</button>
-          </p>
-        )}
-        {step === 4 && (
+        {step === 5 && (
           <PasoPerfil
             mandanteId={mandanteEfectivo}
             perfilId={perfilSel?.id}
@@ -761,15 +895,19 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             proyectoSel={proyectoSel}
           />
         )}
-        {step === 5 && (
+        {TIPO_DE_PASO[step] && (
           <PasoAsignaciones
+            key={TIPO_DE_PASO[step]}
+            soloTipo={TIPO_DE_PASO[step]}
             mandanteId={mandanteEfectivo}
             empresaId={empresaSel?.id}
             proyectoSel={proyectoSel}
             seleccion={seleccion}
             onCambiarSeleccion={setSeleccion}
             mostrarErrores={erroresPaso5}
-            onIrAProblema={(ref) => irAProblema(5, ref)}
+            onIrAProblema={(ref) => irAProblema(step, ref)}
+            listado={TIPO_DE_PASO[step] === "persona" ? listadoPersonal : null}
+            onQuitarListado={() => setListadoPersonal(null)}
             carpeta={repositorioWizard?.tipo === "local" ? carpetaWizard : null}
             mapeo={repositorioWizard?.mapeo || null}
             onCambiarMapeo={(tipo, ruta) => setRepositorioWizard((r) => (r ? {
@@ -777,7 +915,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             } : r))}
           />
         )}
-        {step === 6 && (
+        {step === 8 && (
           <PasoRequerimientos
             empresaId={empresaSel?.id}
             perfilParticipacionId={perfilSel?.id}
@@ -805,13 +943,16 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             problemas={problemas}
             onCorregir={irAProblema}
             repositorio={repositorioWizard}
+            carpetaProyecto={carpetaProyecto.valor}
           />
         )}
       </div>
 
-      {step === 5 && seleccion.length > 0 && (
+      {TIPO_DE_PASO[step] && seleccionPaso.length > 0 && (
         <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-800 text-xs">
-          {seleccion.length} {seleccion.length === 1 ? "recurso será asignado" : "recursos serán asignados"} a {proyectoSel?.nombre}.
+          {seleccionPaso.length} {TIPO_DE_PASO[step] === "persona"
+            ? (seleccionPaso.length === 1 ? "persona será asignada" : "personas serán asignadas")
+            : (seleccionPaso.length === 1 ? "maquinaria será asignada" : "maquinarias serán asignadas")} a {proyectoSel?.nombre}.
           {trasladosCount > 0 && (
             <span> {trasladosCount} de ellas {trasladosCount === 1 ? "será trasladada" : "serán trasladadas"} desde otro proyecto.</span>
           )}
@@ -819,7 +960,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
         </div>
       )}
 
-      {step === 3 && proyectoNoAplica && (
+      {step === 4 && proyectoNoAplica && (
         <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
           {MENSAJE_NO_APLICA}
         </div>
@@ -839,12 +980,12 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
               type="button"
               onClick={handleContinuar}
               disabled={!puedeContinuar}
-              title={step === 2 && carpetaNoCoincide ? "La carpeta vinculada no corresponde a la empresa seleccionada" : undefined}
+              title={step === 4 && carpetaNoCoincide ? "La carpeta elegida no corresponde a la empresa seleccionada" : undefined}
               className="px-6 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-dark rounded-xl shadow-md shadow-primary/25 transition-all disabled:opacity-50"
             >
-              {step === 6 ? "Continuar →" : "Continuar"}
+              {step === 8 ? "Continuar →" : "Continuar"}
             </button>
-            {step === 6 && pendientesRequerimientos > 0 && (
+            {step === 8 && pendientesRequerimientos > 0 && (
               <p className="text-[11px] text-slate-400">
                 {pendientesRequerimientos} {pendientesRequerimientos === 1 ? "requerimiento quedará" : "requerimientos quedarán"} por evaluar en el expediente.
               </p>
@@ -871,10 +1012,10 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
         proyectoSel={proyectoSel}
         perfilSel={perfilSel}
         seleccion={seleccion}
-        mostrarExpediente={step >= 4 && step < 6}
+        mostrarExpediente={step >= 5 && step < 8}
         requisitosTotal={requisitosPerfil ? requisitosPerfil.length : null}
         reutilizadosEmpresa={previewEmpresa ? previewEmpresa.reutilizables : null}
-        mostrarDocumentacion={step === 5}
+        mostrarDocumentacion={Boolean(TIPO_DE_PASO[step])}
         documentacion={previewSeleccion}
         proyectoActualId={proyectoSel?.id}
         repositorio={empresaSel ? repositorioWizard : undefined}

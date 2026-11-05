@@ -10,6 +10,7 @@ import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { SelectorCarpeta } from "../../../components/expedientes/documentacion/SelectorCarpeta";
 import { CarpetaCabecera, CarpetaDetectadaLista } from "./CarpetaDetectadaBloque";
 import { useFilasDetectadas, contarPendientes } from "./carpetaDetectada";
+import { ListadoPersonal } from "./ListadoPersonal";
 import { perfilRecursoService } from "../../../services/perfilRecursoService";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
@@ -36,7 +37,15 @@ export const PasoAsignaciones = ({
   // Carpeta local vinculada en el paso Empresa (hook useCarpetaWizard) o null (sin carpeta o SharePoint),
   // su mapeo { carpetaPersonas, carpetaRecursos } y cómo cambiarlo.
   carpeta = null, mapeo = null, onCambiarMapeo,
+  // Paso de un solo tipo ("persona": Personas, "recurso": Maquinarias), sin pestañas. Sin él, las dos
+  // pestañas como antes.
+  soloTipo = null,
+  // Listado del personal leído de una planilla abierta en la vista de la carpeta: { ruta, nombre,
+  // personas: [{ nombre, apellido, nombreCompleto, rut, rutValido, cargo }] } | null.
+  listado = null, onQuitarListado,
 }) => {
+  // Persona del listado que se está creando (formulario prellenado).
+  const [crearDesdeListado, setCrearDesdeListado] = useState(null);
   const [personas, setPersonas] = useState([]);
   const [recursos, setRecursos] = useState([]);
   // Perfiles de Recurso activos del Mandante (persona y maquinaria).
@@ -51,7 +60,7 @@ export const PasoAsignaciones = ({
   const [panelAbierto, setPanelAbierto] = useState(null); // "persona" | "recurso" | null
   // Sub-pestañas del paso: Personas | Maquinarias (ambas quedan montadas: selección, buscador y
   // scroll se conservan al cambiar).
-  const [pestana, setPestana] = useState("persona");
+  const [pestana, setPestana] = useState(soloTipo || "persona");
   // Repositorio documental: subcarpetas de la carpeta del personal / maquinarias, sujetos de otras
   // empresas (solo informativo), creación desde carpeta y asignación manual de carpeta.
   const [detectadas, setDetectadas] = useState({ persona: null, recurso: null });
@@ -222,6 +231,7 @@ export const PasoAsignaciones = ({
     if (crearDesde?.tipo === "persona") seleccionarConCarpeta("persona", conEstado, crearDesde.fila.carpeta.ruta);
     else toggle("persona", conEstado);
     setCrearDesde(null);
+    setCrearDesdeListado(null);
   };
 
   const handleRecursoCreado = (recurso) => {
@@ -244,8 +254,9 @@ export const PasoAsignaciones = ({
     return [...seleccionados, ...resto.slice(0, Math.max(0, MAX_FILAS_CORTAS - seleccionados.length))];
   };
 
-  // Seleccionados sin Perfil de Recurso (bloquean "Continuar").
-  const sinPerfilAsignado = seleccion.filter((s) => !(s.perfilRecursoIds || []).length);
+  // Seleccionados sin Perfil de Recurso (bloquean "Continuar"); en un paso de un solo tipo, los de
+  // ese tipo.
+  const sinPerfilAsignado = seleccion.filter((s) => (!soloTipo || s.tipo === soloTipo) && !(s.perfilRecursoIds || []).length);
   // Lleva a la fila: sin búsqueda activa, para que la fila esté en la lista.
   const irAFila = (s) => {
     setPestana(s.tipo);
@@ -282,6 +293,22 @@ export const PasoAsignaciones = ({
         </div>
         {sinPerfiles(tipo) && (
           <CrearPerfilRecurso tipo={tipo} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
+        )}
+        {tipo === "persona" && listado && (
+          <ListadoPersonal
+            listado={listado}
+            personas={items}
+            estaSeleccionado={(id) => estaSeleccionado("persona", id)}
+            esSeleccionable={esSeleccionable}
+            onAlternar={(item) => toggle("persona", item)}
+            onSeleccionarTodas={(registradas) => onCambiarSeleccion((prev) => [
+              ...prev,
+              ...registradas.filter((p) => esSeleccionable(p) && !prev.some((s) => s.tipo === "persona" && s.id === p.id))
+                .map((p) => ({ ...armarItem("persona", p), carpetaRelativa: null })),
+            ])}
+            onCrear={(persona) => { setCrearDesde(null); setCrearDesdeListado(persona); setModalPersonaAbierto(true); }}
+            onQuitar={onQuitarListado}
+          />
         )}
         {carpetaLista && ruta && (
           <CarpetaDetectadaLista
@@ -378,14 +405,15 @@ export const PasoAsignaciones = ({
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-sm font-bold text-gray-900">Personas y Maquinarias</h3>
+        <h3 className="text-sm font-bold text-gray-900">{soloTipo === "persona" ? "Personas" : soloTipo === "recurso" ? "Maquinarias" : "Personas y Maquinarias"}</h3>
         <p className="text-xs text-gray-500 mt-0.5">
-          Selecciona las personas y maquinarias que participarán en {proyectoSel?.nombre || "el proyecto"}. Puedes
-          continuar sin asignar recursos y agregarlos posteriormente desde el proyecto.
+          Selecciona {soloTipo === "persona" ? "las personas" : soloTipo === "recurso" ? "las maquinarias" : "las personas y maquinarias"} que
+          participarán en {proyectoSel?.nombre || "el proyecto"}. Puedes continuar sin {soloTipo === "persona" ? "asignar personas" : soloTipo === "recurso" ? "asignar maquinarias" : "asignar recursos"} y
+          agregarlas posteriormente desde el proyecto.
         </p>
         <p className="flex items-start gap-1.5 text-[11px] text-slate-500 mt-2">
           <Info className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-px" />
-          Si una persona o maquinaria ya está activa en otro proyecto, podrás trasladarla a este proyecto antes de confirmar.
+          Si {soloTipo === "recurso" ? "una maquinaria" : soloTipo === "persona" ? "una persona" : "una persona o maquinaria"} ya está activa en otro proyecto, podrás trasladarla a este proyecto antes de confirmar.
         </p>
       </div>
 
@@ -416,7 +444,7 @@ export const PasoAsignaciones = ({
         <p className="text-xs text-slate-400 py-8 text-center">Cargando Personas y Maquinarias de la Empresa...</p>
       ) : (
         <div className="space-y-3">
-          <div className="flex gap-1 border-b border-slate-200" role="tablist" aria-label="Personas y Maquinarias">
+          <div className={`flex gap-1 border-b border-slate-200 ${soloTipo ? "hidden" : ""}`} role="tablist" aria-label="Personas y Maquinarias">
             {pestanas.map((p) => {
               const cantidad = seleccion.filter((x) => x.tipo === p.tipo).length;
               const pendientes = carpetaLista && rutaDe(p.tipo) ? contarPendientes(p.filas, (id) => estaSeleccionado(p.tipo, id)) : 0;
@@ -467,10 +495,12 @@ export const PasoAsignaciones = ({
         <ModalCrearPersona
           empresaId={empresaId}
           mandanteId={mandanteId}
-          inicial={crearDesde?.tipo === "persona" ? separarNombreApellido(crearDesde.fila.limpio.display) : null}
+          inicial={crearDesdeListado
+            ? { nombre: crearDesdeListado.nombre, apellido: crearDesdeListado.apellido, rut: crearDesdeListado.rut, cargo: crearDesdeListado.cargo }
+            : crearDesde?.tipo === "persona" ? separarNombreApellido(crearDesde.fila.limpio.display) : null}
           documento={documentoPara("persona")}
           onCreada={handlePersonaCreada}
-          onCerrar={() => { setModalPersonaAbierto(false); setCrearDesde(null); }}
+          onCerrar={() => { setModalPersonaAbierto(false); setCrearDesde(null); setCrearDesdeListado(null); }}
         />
       )}
       {modalRecursoAbierto && (

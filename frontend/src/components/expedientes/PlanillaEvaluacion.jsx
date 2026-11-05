@@ -146,7 +146,6 @@ export const PlanillaEvaluacion = ({
   // documentos: ConPanelDocumentos). Pauta = reglas activas y estado IA de cada requerimiento.
   const { requerimientoActivo, abrirRequerimiento, actualizarRequerimiento } = usePanelDocumentos();
   const [pautas, setPautas] = useState(null);
-  const [versionPautas, setVersionPautas] = useState(0); // recarga tras editar reglas desde el panel
   const accionesIA = useRef({});
 
   // Modo: normalmente se infiere de qué parámetro de ruta vino (personaId/recursoId), como en
@@ -184,7 +183,6 @@ export const PlanillaEvaluacion = ({
   const [error, setError] = useState(null);
   const [guardando, setGuardando] = useState(false);
   // Tras un intento de guardar, los campos obligatorios que falten muestran su error en el campo.
-  const [intentoGuardar, setIntentoGuardar] = useState(false);
   const [resultadoGuardado, setResultadoGuardado] = useState(null);
 
   // Búsqueda y filtro por resultado de la tabla (solo afecta qué filas se muestran, no las
@@ -362,7 +360,7 @@ export const PlanillaEvaluacion = ({
       .then((d) => { if (vigente) setPautas(d?.pautas || {}); })
       .catch(() => { if (vigente) setPautas({}); });
     return () => { vigente = false; };
-  }, [expedienteId, recargarSenal, abrirRequerimiento, versionPautas]);
+  }, [expedienteId, recargarSenal, abrirRequerimiento]);
   // Otro sujeto (o salir): el panel vuelve al modo documentos (el checklist se reinicia).
   useEffect(() => {
     abrirRequerimiento?.(null);
@@ -373,6 +371,7 @@ export const PlanillaEvaluacion = ({
   const propuestaActiva = activoId ? estadoIA.propuestas.get(activoId) || null : null;
   const aplicadaActiva = Boolean(propuestaActiva) && respuestas[activoId]?.revisionIAId === propuestaActiva?.id;
   const pautaActiva = instanciaActiva ? pautas?.[instanciaActiva.requerimientoId] || null : null;
+  const resultadoActivo = activoId ? respuestas[activoId]?.resultado || null : null;
   const datosPanelIA = (r) => {
     const propuesta = estadoIA.propuestas.get(r.id) || null;
     return {
@@ -381,14 +380,16 @@ export const PlanillaEvaluacion = ({
       propuesta,
       aplicada: Boolean(propuesta) && respuestas[r.id]?.revisionIAId === propuesta.id,
       puedeRevisar: puedeRevisarIA && !soloLectura,
+      // SI/NO/N/A marcado hoy en la fila (el panel limpia su checklist si cambia).
+      resultadoFila: respuestas[r.id]?.resultado || null,
       acciones: accionesIA,
     };
   };
-  // Mantiene al día el panel abierto (nueva propuesta, aplicada, pauta cargada).
+  // Mantiene al día el panel abierto (nueva propuesta, aplicada, pauta cargada, resultado de la fila).
   useEffect(() => {
     if (instanciaActiva && actualizarRequerimiento) actualizarRequerimiento(datosPanelIA(instanciaActiva));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propuestaActiva, aplicadaActiva, pautaActiva, soloLectura]);
+  }, [propuestaActiva, aplicadaActiva, pautaActiva, soloLectura, resultadoActivo]);
 
   // Precarga de "respuestas" (el formulario en memoria, por instancia) a partir de la evaluación
   // vigente de cada instancia — puro cálculo en cliente, sin red.
@@ -447,7 +448,6 @@ export const PlanillaEvaluacion = ({
         conPropuesta(activoId, null);
         setRespuestas((prev) => ({ ...prev, [activoId]: { ...prev[activoId], revisionIAId: undefined } }));
       },
-      recargarPautas: () => setVersionPautas((v) => v + 1),
       // Evaluación manual desde el panel (p. ej. "No cumple" por documento no encontrado): llena el
       // resultado y agrega la observación a la fila; NO guarda.
       marcarResultado: ({ resultado, observaciones }) => {
@@ -518,39 +518,14 @@ export const PlanillaEvaluacion = ({
   };
 
 
-  // La evidencia es opcional. Solo un "Cumple" sin documento exige una justificación; un "Cumple"
-  // de un requisito con vencimiento exige la fecha. Devuelve el motivo si falta algo.
-  const motivoInvalido = (instanciaId) => {
-    const respuesta = respuestas[instanciaId];
-    if (respuesta?.resultado !== "cumple") return null;
-    if (instanciaDe(instanciaId)?.requiereVencimiento && !respuesta.fechaVencimiento) {
-      return "Indica la fecha de vencimiento (obligatoria para Cumple).";
-    }
-    if (evidenciaDe(instanciaId)) return null;
-    if (!(respuesta.observaciones || "").trim()) {
-      return "Sin documento: la justificación (Observaciones) es obligatoria.";
-    }
-    return null;
-  };
-  const pideJustificacion = (instanciaId) =>
-    respuestas[instanciaId]?.resultado === "cumple" && !evidenciaDe(instanciaId);
-
+  // La evidencia, la fecha de vencimiento y las observaciones son opcionales.
   const handleGuardar = async () => {
-    setIntentoGuardar(true);
-    const modificadosTodos = items.filter((r) => esModificada(r.id));
+    const modificados = items.filter((r) => esModificada(r.id));
 
-    if (modificadosTodos.length === 0) {
+    if (modificados.length === 0) {
       setResultadoGuardado({ guardadas: 0, fallidas: [], sinCambios: true });
       return;
     }
-
-    // Las filas incompletas se reportan sin llamar a la API; el resto se guarda igual.
-    const invalidas = modificadosTodos
-      .map((r) => ({ r, motivo: motivoInvalido(r.id) }))
-      .filter((x) => x.motivo);
-    const modificados = modificadosTodos.filter((r) => !motivoInvalido(r.id));
-    // Los errores en el campo solo se mantienen mientras quede alguna fila incompleta.
-    setIntentoGuardar(invalidas.length > 0);
 
     setGuardando(true);
     setResultadoGuardado(null);
@@ -574,7 +549,7 @@ export const PlanillaEvaluacion = ({
       }),
     );
 
-    const fallidas = invalidas.map((x) => ({ nombre: x.r.nombre, motivo: x.motivo }));
+    const fallidas = [];
     let guardadas = 0;
     resultados.forEach((res, i) => {
       if (res.status === "fulfilled") {
@@ -1054,9 +1029,6 @@ export const PlanillaEvaluacion = ({
                   const respuesta = respuestas[r.id] || { resultado: null, observaciones: "", fechaVencimiento: "" };
                   const evidencia = evidenciaDe(r.id);
                   const resultado = resultadoDe(r.id);
-                  // "Cumple" sin documento: la justificación es obligatoria.
-                  const conJustificacion = pideJustificacion(r.id);
-                  const faltaJustificacion = conJustificacion && intentoGuardar && !(respuesta.observaciones || "").trim();
                   // Ícono de evaluación (siempre habilitado): con un punto si la IA está activa.
                   const iaActiva = pautas?.[r.requerimientoId]?.estadoIA === "habilitado";
                   const filaActiva = activoId === r.id;
@@ -1095,15 +1067,13 @@ export const PlanillaEvaluacion = ({
                         {r.requiereVencimiento && (
                           <div className="mt-2">
                             <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">
-                              Fecha vencimiento{respuesta.resultado === "cumple" ? " *" : ""}
+                              Fecha vencimiento
                             </label>
                             <DateInput
                               value={respuesta.fechaVencimiento}
                               disabled={soloLectura}
                               onChange={(e) => handleFechaVencimientoChange(r.id, e.target.value)}
-                              className={`px-2 py-1 rounded-lg border text-[11px] disabled:bg-slate-50 disabled:text-slate-400 ${
-                                respuesta.resultado === "cumple" && !respuesta.fechaVencimiento ? "border-amber-300 bg-amber-50/40" : "border-slate-200"
-                              }`}
+                              className="px-2 py-1 rounded-lg border border-slate-200 text-[11px] disabled:bg-slate-50 disabled:text-slate-400"
                             />
                           </div>
                         )}
@@ -1140,26 +1110,12 @@ export const PlanillaEvaluacion = ({
                           value={respuesta.observaciones}
                           disabled={soloLectura}
                           onChange={(e) => handleObservacionesChange(r.id, e.target.value)}
-                          placeholder={conJustificacion
-                            ? "Justificación obligatoria * (ej. verificado en terreno el …)"
-                            : "Si tienes algún comentario, escríbelo aquí"}
+                          placeholder="Si tienes algún comentario, escríbelo aquí"
                           rows={2}
-                          aria-invalid={faltaJustificacion}
-                          aria-label={conJustificacion ? "Justificación obligatoria" : "Observaciones"}
-                          title={conJustificacion ? "Justificación obligatoria: Cumple sin documento adjunto" : undefined}
-                          // Sin rótulo extra (no cambia el alto de la fila): obligatoria y vacía, en ámbar;
-                          // al intentar guardar sin ella, en rojo.
-                          className={`w-full px-2.5 py-1.5 rounded-lg border text-xs resize-y disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
-                            faltaJustificacion ? "border-red-400 bg-red-50/30"
-                              : conJustificacion && !(respuesta.observaciones || "").trim() ? "border-amber-300 bg-amber-50/50 placeholder:text-amber-700/70"
-                                : "border-slate-200"
-                          }`}
+                          aria-label="Observaciones"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs resize-y disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
                         />
-                        {faltaJustificacion && (
-                          <p className="mt-0.5 text-[10px] font-semibold text-red-500">La justificación es obligatoria.</p>
-                        )}
-                        {/* Con documento la verificación es documental. Solo un "Cumple" SIN documento pide
-                            cómo se verificó y una justificación; los demás resultados no la exigen. */}
+                        {/* Con documento la verificación es documental (las observaciones son opcionales). */}
                         {esResuelto(respuesta.resultado) && evidencia && (
                           <p className="mt-1 text-[10px] font-semibold text-slate-400">Verificación documental</p>
                         )}

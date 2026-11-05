@@ -270,15 +270,17 @@ describe("revisión en lote (E5)", () => {
         evaluacionService.crearEvaluacion.mockResolvedValue({id: "ev1"});
         const r = await servicio.confirmarLote("e1", ["a", "b", "c", "d", "z"],
             EVALUADOR);
-        expect(evaluacionService.crearEvaluacion).toHaveBeenCalledTimes(1);
+        // Un "cumple" sin fecha de vencimiento también se guarda (es opcional).
+        expect(evaluacionService.crearEvaluacion).toHaveBeenCalledTimes(2);
         expect(evaluacionService.crearEvaluacion).toHaveBeenCalledWith(
             expect.objectContaining({expedienteRequerimientoId: "i2",
               resultado: "no_cumple", revisionIAId: "a"}), EVALUADOR);
-        expect(r.aplicadas).toEqual([{revisionId: "a", evaluacionId: "ev1",
-          resultado: "no_cumple"}]);
+        expect(r.aplicadas).toEqual([
+          {revisionId: "a", evaluacionId: "ev1", resultado: "no_cumple"},
+          {revisionId: "b", evaluacionId: "ev1", resultado: "cumple"}]);
         expect(Object.fromEntries(r.omitidas.map((o) =>
-          [o.revisionId, o.motivo]))).toEqual({b: "sin_fecha_vencimiento",
-          c: "revision_manual", d: "ya_resuelta", z: "no_encontrada"});
+          [o.revisionId, o.motivo]))).toEqual({c: "revision_manual",
+          d: "ya_resuelta", z: "no_encontrada"});
         expect(evaluacionRepository.getByExpediente).toHaveBeenCalledWith("e1");
       });
 });

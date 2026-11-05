@@ -924,6 +924,31 @@
       ]
     },
     {
+      "collectionGroup": "carpetas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "fuenteId", "order": "ASCENDING"},
+        {"fieldPath": "ruta", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "carpetas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "mandanteId", "order": "ASCENDING"},
+        {"fieldPath": "empresaId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "carpetas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "fuenteId", "order": "ASCENDING"},
+        {"fieldPath": "estado", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "patronesRequerimiento",
       "queryScope": "COLLECTION",
       "fields": [

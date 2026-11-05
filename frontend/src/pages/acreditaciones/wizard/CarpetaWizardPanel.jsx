@@ -2,11 +2,14 @@ import { FolderOpen, KeyRound, X } from "lucide-react";
 import { PanelCarpetaEmpresa } from "../../../components/empresas/PanelCarpetaEmpresa";
 
 // Vista previa (solo consulta) de la carpeta local de la empresa elegida en el paso Empresa: queda
-// abierta mientras se avanza por los pasos. En pantallas anchas es una columna fija a la izquierda;
+// abierta mientras se avanza por los pasos. En pantallas anchas es una columna fija a la derecha;
 // en angostas, una ventana. No escribe nada ni usa IA.
 //  - carpeta: useCarpetaWizard (handle de la carpeta de la empresa y su permiso).
 //  - abrirCarpeta: subcarpeta a desplegar según el paso (p. ej. la del personal).
-export const CarpetaWizardPanel = ({ carpeta, etiqueta, mandanteId, abrirCarpeta = null, onCerrar }) => {
+//  - marcar(ruta, nombre): etiqueta de una carpeta en el árbol (sugerida para el personal o las
+//    maquinarias, o la ya elegida), o null.
+//  - onArchivo(ruta, archivo): documento abierto en la vista.
+export const CarpetaWizardPanel = ({ carpeta, etiqueta, mandanteId, abrirCarpeta = null, marcar = null, onArchivo = null, onCerrar }) => {
   let contenido;
   if (!carpeta.soportado) {
     contenido = <p className="m-auto p-6 text-xs text-slate-500">Este navegador no permite leer carpetas locales.</p>;
@@ -26,12 +29,12 @@ export const CarpetaWizardPanel = ({ carpeta, etiqueta, mandanteId, abrirCarpeta
   } else {
     contenido = (
       <PanelCarpetaEmpresa handle={carpeta.handle} ruta="" titulo={etiqueta} mandanteId={mandanteId}
-        sinIA abrirCarpeta={abrirCarpeta} />
+        sinIA abrirCarpeta={abrirCarpeta} marcar={marcar} onArchivo={onArchivo} />
     );
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex p-4 bg-black/40 xl:sticky xl:inset-auto xl:top-4 xl:z-auto xl:p-0 xl:bg-transparent" onClick={onCerrar}>
+    <div className="fixed inset-0 z-50 flex p-4 bg-black/40 xl:sticky xl:inset-auto xl:top-4 xl:z-auto xl:p-0 xl:bg-transparent xl:order-last" onClick={onCerrar}>
       <div className="w-full h-full xl:h-[82vh] flex flex-col gap-2 p-3 rounded-2xl bg-white border border-gray-100 shadow-xl xl:shadow-card"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">

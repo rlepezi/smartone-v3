@@ -48,6 +48,15 @@ export const proyectoService = {
     return res.data;
   },
 
+  // Carpeta raíz del Proyecto en la fuente documental: { tipo, ruta, url } o null para quitarla.
+  async actualizarRepositorioDocumental(id, repositorioDocumental) {
+    const res = await apiClient(`/proyectos/${id}/repositorio-documental`, {
+      method: "PUT",
+      body: { repositorioDocumental },
+    });
+    return res.data;
+  },
+
   // Cantidad de Expedientes no cerrados: se cierran al finalizar o archivar el Proyecto.
   async expedientesAbiertos(id) {
     const res = await apiClient(`/proyectos/${id}/expedientes-abiertos`);

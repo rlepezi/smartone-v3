@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/fuenteDocumentalController");
+const sharePoint = require("../controllers/sharePointController");
 const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 
 // Fuentes documentales (una sola activa por Mandante):
@@ -13,6 +14,18 @@ const {authMiddleware, requireRole} = require("../middlewares/authMiddleware");
 const ADMINISTRAN = requireRole(["superadmin", "mandante_admin"]);
 
 router.use(authMiddleware);
+
+// Conector SharePoint (Microsoft Graph, solo lectura). Probar la conexión:
+// quienes administran la fuente. Navegar y leer archivos: quienes consultan
+// la fuente activa (el service acota el Mandante y valida el rol).
+const NAVEGAN = requireRole(["superadmin", "evaluador", "mandante_admin",
+  "mandante_lector"]);
+router.post("/sharepoint/probar-conexion", ADMINISTRAN,
+    sharePoint.probarConexion);
+router.get("/sharepoint/hijos", NAVEGAN, sharePoint.listarHijos);
+router.get("/sharepoint/items/:itemId", NAVEGAN, sharePoint.obtenerItem);
+router.get("/sharepoint/items/:itemId/contenido", NAVEGAN,
+    sharePoint.contenido);
 
 router.get("/activa", requireRole(["superadmin", "evaluador",
   "mandante_admin", "mandante_lector"]), controller.activa);

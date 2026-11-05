@@ -140,8 +140,21 @@ jest.mock("../src/repositories/empresaRepository", () => ({
   getByIds: jest.fn(async () => []),
 }));
 jest.mock("../src/repositories/proyectoRepository", () => ({
-  getById: jest.fn(async (id) => ({id, nombre: `Proyecto ${id}`})),
+  // pX es de otro Mandante.
+  getById: jest.fn(async (id) => ({id, nombre: `Proyecto ${id}`,
+    mandanteId: id === "pX" ? "m2" : "m1"})),
   getByIds: jest.fn(async () => []),
+}));
+jest.mock("../src/repositories/participacionRepository", () => ({
+  // emp1 participa en p1 y p2 (pX también, aunque es de otro Mandante);
+  // emp2 solo en p1; en p3, emp1 tiene una participación finalizada.
+  list: jest.fn(async ({proyectoId, empresaId}) => [
+    {proyectoId: "p1", empresaId: "emp1", estado: "activa"},
+    {proyectoId: "p2", empresaId: "emp1", estado: "pendiente"},
+    {proyectoId: "pX", empresaId: "emp1", estado: "activa"},
+    {proyectoId: "p1", empresaId: "emp2", estado: "activa"},
+    {proyectoId: "p3", empresaId: "emp1", estado: "finalizada"},
+  ].filter((x) => x.proyectoId === proyectoId && x.empresaId === empresaId)),
 }));
 jest.mock("../src/repositories/expedienteRepository", () => ({
   getById: jest.fn(async (id) => mockDb.expedientes.get(id) || null),
@@ -183,6 +196,7 @@ const carpetas = require("../src/services/carpetaEmpresaService");
 const repositorio = require("../src/services/repositorioDocumentalService");
 const {
   idCarpeta, validarRutaCarpeta, validarUrlCarpeta, aplicarCambiosMapeo,
+  nombreDeRuta, claveIdCarpeta, referenciaCarpeta,
 } = require("../src/utils/carpetasEmpresa");
 
 const SUPER = {uid: "s1", rol: "superadmin"};
@@ -260,6 +274,66 @@ describe("Carpetas de empresa: vincular", () => {
   beforeEach(async () => {
     await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
         SUPER);
+  });
+
+  test("Nueva Acreditación: carpeta dentro de la del proyecto; la ya " +
+      "registrada para el proyecto y la empresa se reutiliza; la de otro " +
+      "proyecto se rechaza", async () => {
+    const ruta = "PLANTA NORTE/1. TECNORED";
+    const registrada = await carpetas.registrar({mandanteId: "m1", ruta,
+      empresaId: "emp1", proyectoId: "p1"}, SUPER);
+    expect(registrada.ruta).toBe(ruta);
+    const v = await carpetas.vincular({expedienteId: "e1",
+      ruta: "PLANTA NORTE / 1. tecnored"}, SUPER);
+    expect(v.id).toBe(registrada.id);
+    expect(mockDb.carpetas.size).toBe(1);
+    expect(mockDb.expedientes.get("e1").repositorioDocumental)
+        .toEqual({carpetaEmpresaId: registrada.id});
+    await carpetas.desvincular("e1", SUPER);
+    await expect(carpetas.vincular({expedienteId: "e3", ruta}, SUPER))
+        .rejects.toMatchObject({status: 400,
+          message: expect.stringContaining("Cada proyecto usa su propia")});
+    // La verificación previa (sin escribir) da el mismo rechazo.
+    await expect(carpetas.verificar({mandanteId: "m1", empresaId: "emp1",
+      proyectoId: "p2", ruta}, SUPER)).rejects.toMatchObject({status: 400,
+      message: expect.stringContaining("Cada proyecto usa su propia")});
+  });
+
+  test("la carpeta del proyecto como la de la empresa: no se valida por el " +
+      "nombre de la empresa", async () => {
+    const ruta = "17.B-BOSCH_Proyecto_Linea";
+    await expect(carpetas.vincular({expedienteId: "e1", ruta}, SUPER))
+        .rejects.toMatchObject({status: 400});
+    // Elegida en el asistente y aún sin guardar: verificar la acepta.
+    await expect(carpetas.verificar({mandanteId: "m1", empresaId: "emp1",
+      proyectoId: "p1", ruta, carpetaProyecto: {ruta}}, SUPER))
+        .resolves.toMatchObject({ruta});
+    // Guardada en el proyecto: vincular la acepta.
+    const repo = require("../src/repositories/proyectoRepository");
+    repo.getById.mockImplementation(async (id) => ({id,
+      nombre: `Proyecto ${id}`, mandanteId: "m1",
+      repositorioDocumental: id === "p1" ? {tipo: "local", ruta} : null}));
+    try {
+      const v = await carpetas.vincular({expedienteId: "e1", ruta}, SUPER);
+      expect(v).toMatchObject({ruta, empresaId: "emp1", proyectoId: "p1"});
+      // Otra carpeta con nombre ajeno sigue rechazándose.
+      await carpetas.desvincular("e1", SUPER);
+      await expect(carpetas.vincular({expedienteId: "e1",
+        ruta: "Otra carpeta"}, SUPER)).rejects.toMatchObject({status: 400});
+    } finally {
+      repo.getById.mockImplementation(async (id) => ({id,
+        nombre: `Proyecto ${id}`, mandanteId: id === "pX" ? "m2" : "m1"}));
+    }
+  });
+
+  test("con ruta anidada, la validación contra la empresa mira solo la " +
+      "carpeta, no la del proyecto", async () => {
+    await expect(carpetas.vincular({expedienteId: "e1",
+      ruta: "1. TECNORED/Documentos"}, SUPER)).rejects.toMatchObject({
+      status: 400});
+    const v = await carpetas.vincular({expedienteId: "e1",
+      ruta: "Contratos 2026/1. TECNORED"}, SUPER);
+    expect(v.ruta).toBe("Contratos 2026/1. TECNORED");
   });
 
   test("find-or-create: misma carpeta (sin distinguir mayúsculas), sin " +
@@ -422,11 +496,35 @@ describe("mapeo: en la Carpeta de empresa o en el expediente legado", () => {
 });
 
 describe("validaciones puras", () => {
-  test("ruta de la carpeta: relativa, un nivel, sin .. ni unidad", () => {
+  test("ID: SharePoint por su ruta completa en el sitio (homónimas en " +
+      "proyectos distintos no comparten ID); local por su ruta", () => {
+    const sitio = "https://acme.sharepoint.com/sites/x/Docs";
+    const a = claveIdCarpeta({ruta: "TECNORED", url: `${sitio}/P1/TECNORED`});
+    const b = claveIdCarpeta({ruta: "TECNORED", url: `${sitio}/P2/TECNORED/`});
+    expect(a).toBe("/sites/x/Docs/P1/TECNORED");
+    expect(b).toBe("/sites/x/Docs/P2/TECNORED");
+    expect(claveIdCarpeta({ruta: "P1/TECNORED", url: null}))
+        .toBe("P1/TECNORED");
+    expect(nombreDeRuta("P1/2. TECNORED")).toBe("2. TECNORED");
+    // Vía Graph: driveId + itemId (estables al renombrar), sin importar ruta.
+    const ref = referenciaCarpeta({tipoFuente: "sharepoint", ruta: "X",
+      driveId: "d1", itemId: "i9", rutaRelativa: "P1/2. TECNORED"});
+    expect(ref).toEqual({tipoFuente: "sharepoint", driveId: "d1",
+      itemId: "i9", nombre: "2. TECNORED", rutaRelativa: "P1/2. TECNORED"});
+    expect(claveIdCarpeta({ruta: "Otro nombre", url: null, referencia: ref}))
+        .toBe("graph:d1:i9");
+    expect(referenciaCarpeta({tipoFuente: "local", ruta: "P1/2. TECNORED"}))
+        .toEqual({tipoFuente: "local", driveId: null, itemId: null,
+          nombre: "2. TECNORED", rutaRelativa: "P1/2. TECNORED"});
+  });
+
+  test("ruta de la carpeta: relativa, con subniveles, sin .. ni unidad", () => {
     expect(validarRutaCarpeta("1. TECNORED").ok).toBe(true);
     expect(validarRutaCarpeta("C:\\Repo\\1. TECNORED").ok).toBe(false);
     expect(validarRutaCarpeta("../otra").ok).toBe(false);
-    expect(validarRutaCarpeta("a/b").ok).toBe(false);
+    // Con subniveles: la carpeta de una empresa dentro de la del proyecto.
+    expect(validarRutaCarpeta(" Proyecto X / 2. TECNORED ")).toMatchObject({
+      ok: true, valor: "Proyecto X/2. TECNORED"});
     expect(validarRutaCarpeta("").ok).toBe(false);
   });
 
@@ -468,14 +566,16 @@ describe("Entrega 2: mapeo documental", () => {
     await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
         SUPER);
   });
-  const registrar = (ruta = "1. TECNORED", empresaId = "emp1", actor = SUPER) =>
-    carpetas.registrar({mandanteId: "m1", ruta, empresaId}, actor);
+  const registrar = (ruta = "1. TECNORED", empresaId = "emp1", actor = SUPER,
+      proyectoId = "p1") =>
+    carpetas.registrar({mandanteId: "m1", ruta, empresaId, proyectoId}, actor);
 
-  test("registrar: sin proyecto ni expediente, find-or-create, validación " +
-      "estricta y empresa del Mandante", async () => {
+  test("registrar: con proyecto y sin expediente, find-or-create, " +
+      "validación estricta y empresa del Mandante", async () => {
     const c = await registrar();
     expect(c).toMatchObject({ruta: "1. TECNORED", empresaId: "emp1",
-      proyectoId: null, expedienteId: null, empresaNombre: "TECNORED S.A."});
+      proyectoId: "p1", expedienteId: null, empresaNombre: "TECNORED S.A.",
+      proyectoNombre: "Proyecto p1"});
     expect((await registrar()).id).toBe(c.id);
     expect(mockDb.carpetas.size).toBe(1);
     await expect(registrar("1. tecnored", "emp2")).rejects.toMatchObject({
@@ -488,8 +588,32 @@ describe("Entrega 2: mapeo documental", () => {
         expect.objectContaining({accion: "registrada"}));
   });
 
-  test("proyectoId null hasta vincular; al vincular toma el del " +
-      "expediente; otro proyecto se rechaza", async () => {
+  test("registrar exige un proyecto del Mandante en el que participe la " +
+      "empresa", async () => {
+    await expect(registrar("1. TECNORED", "emp1", SUPER, ""))
+        .rejects.toMatchObject({status: 400,
+          message: "Elija el proyecto de la carpeta."});
+    await expect(registrar("1. TECNORED", "emp1", SUPER, "pX"))
+        .rejects.toMatchObject({status: 400,
+          message: "El proyecto no es de este Mandante."});
+    await expect(registrar("1. TECNORED", "emp1", SUPER, "p3"))
+        .rejects.toMatchObject({status: 400,
+          message: expect.stringContaining("no participa en Proyecto p3")});
+    // Pendiente (acreditación en curso) sí admite registrar.
+    expect((await registrar("1. TECNORED", "emp1", SUPER, "p2")).proyectoId)
+        .toBe("p2");
+    expect(mockDb.carpetas.size).toBe(1);
+  });
+
+  test("la misma carpeta en otro proyecto se rechaza", async () => {
+    await registrar();
+    await expect(registrar("1. TECNORED", "emp1", SUPER, "p2"))
+        .rejects.toMatchObject({status: 400,
+          message: expect.stringContaining("Cada proyecto usa su propia")});
+  });
+
+  test("registrada con proyecto: el expediente de ese proyecto la vincula; " +
+      "el de otro proyecto se rechaza", async () => {
     const c = await registrar();
     const v = await carpetas.vincular({expedienteId: "e1",
       ruta: "1. TECNORED"}, SUPER);
@@ -630,7 +754,7 @@ describe("Entrega 3: patrones aprendidos", () => {
         SUPER);
   });
   const registrar = () => carpetas.registrar({mandanteId: "m1",
-    ruta: "1. TECNORED", empresaId: "emp1"}, SUPER);
+    ruta: "1. TECNORED", empresaId: "emp1", proyectoId: "p1"}, SUPER);
   const patron = (p, rid, ambito = "empresa", objetivo = "carpeta") =>
     mockDb.patrones.get(idPatron({mandanteId: "m1", ambito, objetivo,
       patron: p, requerimientoId: rid}));
@@ -758,45 +882,12 @@ describe("Entrega 3: patrones aprendidos", () => {
   });
 });
 
-describe("Nueva Empresa desde carpeta: preparar la carpeta", () => {
-  const EMPRESA = {razonSocial: "TECNORED S.A.", nombreFantasia: "TECNORED",
-    rut: "771042198"};
-  beforeEach(async () => {
-    await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
-        SUPER);
-  });
-  const preparar = (ruta, empresa = EMPRESA) =>
-    carpetas.prepararParaNuevaEmpresa({mandanteId: "m1", ruta, empresa,
-      actor: SUPER});
-
-  test("valida sin escribir: carpeta libre, sin proyecto ni expediente",
-      async () => {
-        const antes = mockDb.carpetas.size;
-        const r = await preparar("1. TECNORED");
-        expect(r.datos).toMatchObject({mandanteId: "m1", ruta: "1. TECNORED",
-          proyectoId: null, expedienteId: null, estado: "activa"});
-        expect(r.id).toBe(idCarpeta(r.datos.fuenteId, "1. TECNORED"));
-        expect(mockDb.carpetas.size).toBe(antes);
-      });
-
-  test("validación estricta, ruta inválida y carpeta ya registrada",
-      async () => {
-        await expect(preparar("9. OTRA")).rejects.toMatchObject({status: 400});
-        await expect(preparar("Repositorio/Tecnored"))
-            .rejects.toMatchObject({status: 400});
-        await carpetas.registrar({mandanteId: "m1", ruta: "1. TECNORED",
-          empresaId: "emp1"}, SUPER);
-        await expect(preparar("1. TECNORED")).rejects.toMatchObject({
-          status: 409, message: expect.stringContaining("TECNORED S.A.")});
-      });
-});
-
 describe("listar por empresa", () => {
   beforeEach(async () => {
     await fuentes.guardarLocal("m1", {etiqueta: "Repositorio Empresas"},
         SUPER);
     await carpetas.registrar({mandanteId: "m1", ruta: "1. TECNORED",
-      empresaId: "emp1"}, SUPER);
+      empresaId: "emp1", proyectoId: "p1"}, SUPER);
   });
 
   test("sin Mandante, las de la empresa en todos (superadmin); los roles " +

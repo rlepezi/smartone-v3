@@ -4,6 +4,8 @@ const fuenteDocumentalRepository =
     require("../repositories/fuenteDocumentalRepository");
 const empresaRepository = require("../repositories/empresaRepository");
 const proyectoRepository = require("../repositories/proyectoRepository");
+const participacionRepository =
+    require("../repositories/participacionRepository");
 const expedienteRepository = require("../repositories/expedienteRepository");
 const expedienteRequerimientoRepository =
     require("../repositories/expedienteRequerimientoRepository");
@@ -26,6 +28,7 @@ const {
 const {
   idCarpeta, validarRutaCarpeta, validarUrlCarpeta, aplicarCambiosMapeo,
   validarAsignaciones,
+  nombreDeRuta, claveIdCarpeta, referenciaCarpeta,
 } = require("../utils/carpetasEmpresa");
 const {validarRutaRelativa} = require("../utils/repositorioDocumental");
 const {fuenteActiva, aPublica} = require("../utils/fuentesDocumentales");
@@ -33,6 +36,9 @@ const {
   calcularEstadoMapeo, avanceMapeo, entradasMapeo, coberturaMapeo,
 } = require("../utils/carpetaExpediente");
 const {aFecha} = require("../utils/vencimientos");
+
+// Participación de la Empresa en el proyecto que admite registrar su carpeta.
+const PARTICIPACION_VIGENTE = ["activa", "suspendida", "pendiente"];
 
 // Crear o vincular Carpetas de empresa y editar su mapeo. mandante_admin es
 // el rol que hoy crea acreditaciones (además de superadmin).
@@ -113,6 +119,7 @@ class CarpetaEmpresaService {
       id: c.id, mandanteId: c.mandanteId, fuenteId: c.fuenteId, ruta: c.ruta,
       url: c.url || null, empresaId: c.empresaId, proyectoId: c.proyectoId,
       expedienteId: c.expedienteId || null,
+      referencia: c.referencia || null,
       carpetaPersonas: c.carpetaPersonas || null,
       carpetaRecursos: c.carpetaRecursos || null, mapeo,
       estadoMapeo: c.estadoMapeo || "sin_mapear", estado: c.estado,
@@ -272,9 +279,11 @@ class CarpetaEmpresaService {
    * @param {Object} fuente Fuente activa.
    * @param {{ruta: ?string, url: ?string}} payload Datos.
    * @param {Object} empresa Empresa.
+   * @param {?Object} [carpetaProyecto] Carpeta del proyecto: si la pedida
+   *     es esa, no se valida por el nombre de la empresa.
    * @return {{ruta: string, url: ?string}} Carpeta.
    */
-  _carpetaPedida(fuente, payload, empresa) {
+  _carpetaPedida(fuente, payload, empresa, carpetaProyecto = null) {
     let ruta;
     let url = null;
     if (fuente.tipo === "sharepoint") {
@@ -286,12 +295,53 @@ class CarpetaEmpresaService {
       if (!v.ok) throw new AppError(400, v.error);
       ruta = v.valor;
     }
-    const v = validarCarpetaEmpresa(ruta, empresa);
+    // La carpeta del proyecto usada como la de la empresa (toda la
+    // documentación de la empresa está en ella): su nombre es el del
+    // proyecto, no el de la empresa, así que no se valida por nombre.
+    if (this._esCarpetaProyecto({ruta, url, fuenteId: fuente.id},
+        carpetaProyecto)) {
+      return {ruta, url};
+    }
+    const v = validarCarpetaEmpresa(nombreDeRuta(ruta), empresa);
     if (!v.valida) {
-      throw new AppError(400, mensajeCarpetaNoCoincide(ruta, empresa,
-          v.terminosBuscados));
+      throw new AppError(400, mensajeCarpetaNoCoincide(nombreDeRuta(ruta),
+          empresa, v.terminosBuscados));
     }
     return {ruta, url};
+  }
+
+  /**
+   * ¿La carpeta pedida es la carpeta del proyecto (misma fuente y misma
+   * ruta, o misma URL en SharePoint)?
+   * @param {{ruta: string, url: ?string, fuenteId: string}} pedida Carpeta.
+   * @param {?Object} proyecto repositorioDocumental del proyecto (o la
+   *     elegida en el asistente, para verificar), o null.
+   * @return {boolean} true si es la del proyecto.
+   */
+  _esCarpetaProyecto(pedida, proyecto) {
+    if (!proyecto) return false;
+    if (proyecto.fuenteId && proyecto.fuenteId !== pedida.fuenteId) {
+      return false;
+    }
+    const url = (u) => String(u || "").trim().replace(/\/+$/, "")
+        .toLowerCase();
+    if (pedida.url || proyecto.url) {
+      return Boolean(pedida.url) && url(pedida.url) === url(proyecto.url);
+    }
+    const v = validarRutaCarpeta(proyecto.ruta);
+    return v.ok && v.valor.toLowerCase() === pedida.ruta.toLowerCase();
+  }
+
+  /**
+   * Carpeta raíz guardada del proyecto, o null.
+   * @param {?string} proyectoId Proyecto.
+   * @return {Promise<?Object>} repositorioDocumental.
+   */
+  async _carpetaDelProyecto(proyectoId) {
+    if (!proyectoId) return null;
+    const proyecto = await proyectoRepository.getById(proyectoId)
+        .catch(() => null);
+    return proyecto?.repositorioDocumental || null;
   }
 
   /**
@@ -339,7 +389,10 @@ class CarpetaEmpresaService {
    * la empresa en el proyecto (Nueva Acreditación, paso 1: el expediente
    * aún no existe). Mismas reglas que vincular.
    * @param {{mandanteId: string, empresaId: string, proyectoId: ?string,
-   *     ruta: ?string, url: ?string}} payload Datos (proyectoId opcional).
+   *     ruta: ?string, url: ?string, carpetaProyecto: ?Object}} payload Datos
+   *     (proyectoId opcional). carpetaProyecto: {ruta, url} elegida en el
+   *     asistente y aún no guardada en el proyecto (solo para verificar: al
+   *     vincular cuenta la guardada).
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<{ruta: string, url: ?string, existente: boolean,
    *     estadoMapeo: ?string}>} Carpeta disponible.
@@ -352,9 +405,13 @@ class CarpetaEmpresaService {
         String(payload?.empresaId || ""));
     if (!empresa) throw new AppError(404, "Empresa no encontrada.");
     const proyectoId = payload?.proyectoId ? String(payload.proyectoId) : null;
-    const {ruta, url} = this._carpetaPedida(fuente, payload, empresa);
+    const cp = payload?.carpetaProyecto;
+    const elegida = cp && typeof cp === "object" ? {ruta: cp.ruta || null,
+      url: cp.url || null, fuenteId: fuente.id} : null;
+    const {ruta, url} = this._carpetaPedida(fuente, payload, empresa,
+        elegida || await this._carpetaDelProyecto(proyectoId));
     const actual = await carpetaEmpresaRepository.getById(
-        idCarpeta(fuente.id, ruta));
+        idCarpeta(fuente.id, claveIdCarpeta({ruta, url})));
     const otroExpediente = actual?.expedienteId ?
       await expedienteRepository.getById(actual.expedienteId)
           .catch(() => null) : null;
@@ -385,12 +442,14 @@ class CarpetaEmpresaService {
     const fuente = await this._fuenteActiva(expediente.mandanteId);
     const empresa = await empresaRepository.getById(expediente.empresaId);
     if (!empresa) throw new AppError(404, "Empresa no encontrada.");
-    const {ruta, url} = this._carpetaPedida(fuente, payload, empresa);
+    const {ruta, url} = this._carpetaPedida(fuente, payload, empresa,
+        await this._carpetaDelProyecto(expediente.proyectoId));
     const autor = await this._autor(actor);
-    const id = idCarpeta(fuente.id, ruta);
+    const id = idCarpeta(fuente.id, claveIdCarpeta({ruta, url}));
     const r = await carpetaEmpresaRepository.vincular({
       id, expedienteId, autor,
       nueva: {mandanteId: expediente.mandanteId, fuenteId: fuente.id, ruta,
+        referencia: referenciaCarpeta({tipoFuente: fuente.tipo, ruta}),
         url, empresaId: expediente.empresaId,
         proyectoId: expediente.proyectoId, carpetaPersonas: null,
         carpetaRecursos: null, mapeo: {}, estadoMapeo: "sin_mapear",
@@ -538,12 +597,13 @@ class CarpetaEmpresaService {
   }
 
   /**
-   * Registra una subcarpeta de la fuente local como Carpeta de empresa, sin
-   * proyecto ni expediente (Mapeo documental): validación estricta contra la
-   * Empresa, que debe estar asociada al Mandante; find-or-create (registrar
-   * de nuevo la misma carpeta para la misma empresa no duplica).
-   * @param {{mandanteId: string, ruta: string, empresaId: string}} payload
-   *     Datos.
+   * Registra una subcarpeta de la fuente local como carpeta de un proyecto y
+   * una empresa, sin expediente (Mapeo documental): validación estricta
+   * contra la Empresa, que debe estar asociada al Mandante y participar en el
+   * proyecto (del mismo Mandante); find-or-create (registrar de nuevo la
+   * misma carpeta para la misma empresa y proyecto no duplica).
+   * @param {{mandanteId: string, ruta: string, empresaId: string,
+   *     proyectoId: string}} payload Datos.
    * @param {Object} actor Usuario autenticado.
    * @return {Promise<Object>} Carpeta registrada.
    */
@@ -566,15 +626,19 @@ class CarpetaEmpresaService {
     if (!empresa || !(delMandante || []).includes(empresaId)) {
       throw new AppError(400, "La empresa no está asociada a este Mandante.");
     }
-    const coincide = validarCarpetaEmpresa(ruta, empresa);
+    const coincide = validarCarpetaEmpresa(nombreDeRuta(ruta), empresa);
     if (!coincide.valida) {
-      throw new AppError(400, mensajeCarpetaNoCoincide(ruta, empresa,
-          coincide.terminosBuscados));
+      throw new AppError(400, mensajeCarpetaNoCoincide(nombreDeRuta(ruta),
+          empresa, coincide.terminosBuscados));
     }
+    const proyecto = await this._proyectoDeEmpresa(
+        String(payload?.proyectoId || ""), mandanteId, empresa);
+    const proyectoId = proyecto.id;
     const id = idCarpeta(fuente.id, ruta);
     const autor = await this._autor(actor);
     const r = await carpetaEmpresaRepository.crear(id, {mandanteId,
-      fuenteId: fuente.id, ruta, url: null, empresaId, proyectoId: null,
+      fuenteId: fuente.id, ruta, url: null, empresaId, proyectoId,
+      referencia: referenciaCarpeta({tipoFuente: "local", ruta}),
       expedienteId: null, carpetaPersonas: null, carpetaRecursos: null,
       mapeo: {}, estadoMapeo: "sin_mapear", analizadaAt: null, estado: "activa",
       createdBy: autor, updatedBy: autor});
@@ -584,60 +648,50 @@ class CarpetaEmpresaService {
       throw new AppError(400, `La carpeta «${ruta}» ya está registrada como ` +
           `${nombreEmpresa(otra)}.`);
     }
+    if (!r.creada && r.carpeta.proyectoId &&
+        r.carpeta.proyectoId !== proyectoId) {
+      const otro = await proyectoRepository.getById(r.carpeta.proyectoId)
+          .catch(() => null);
+      throw new AppError(400, `La carpeta «${ruta}» ya está registrada en ` +
+          `${otro?.nombre || "otro proyecto"}. Cada proyecto usa su propia ` +
+          "carpeta.");
+    }
     if (r.creada) {
       await bitacoraLogger.registrarEvento({
         mandanteId, entidad: "carpetasEmpresa", entidadId: id,
         accion: "registrada", actor,
-        detalle: {ruta, fuenteId: fuente.id, empresaId},
+        detalle: {ruta, fuenteId: fuente.id, empresaId, proyectoId},
       });
     }
-    return {...this.publica(r.carpeta), empresaNombre: empresa.razonSocial};
+    return {...this.publica(r.carpeta), empresaNombre: empresa.razonSocial,
+      proyectoNombre: proyecto.nombre || null};
   }
 
   /**
-   * Carpeta de empresa para una Empresa que se está CREANDO (Nueva Empresa
-   * desde carpeta): valida, sin escribir, que la fuente activa del Mandante
-   * sea local, que la ruta sea una carpeta del primer nivel, que su nombre
-   * corresponda a los datos de la empresa (validación estricta) y que no
-   * esté registrada. Devuelve el documento a crear: quien crea la Empresa lo
-   * escribe en el MISMO lote (create), así una carpeta registrada entre medio
-   * hace fallar todo.
-   * @param {Object} e Datos.
-   * @param {string} e.mandanteId Mandante.
-   * @param {*} e.ruta Carpeta elegida.
-   * @param {Object} e.empresa {razonSocial, nombreFantasia, rut}.
-   * @param {Object} e.actor Usuario autenticado.
-   * @return {Promise<{id: string, coleccion: string, datos: Object}>}
-   *     Carpeta a crear (sin empresaId ni fechas).
+   * Proyecto de la carpeta: obligatorio, del Mandante, y con la Empresa
+   * participando (participación activa, suspendida o pendiente).
+   * @param {string} proyectoId Proyecto pedido.
+   * @param {string} mandanteId Mandante.
+   * @param {Object} empresa Empresa.
+   * @return {Promise<Object>} Proyecto.
    */
-  async prepararParaNuevaEmpresa({mandanteId, ruta, empresa, actor}) {
-    const fuente = await this._fuenteActiva(mandanteId);
-    if (fuente.tipo !== "local") {
-      throw new AppError(409, "La carpeta de SharePoint estará disponible " +
-          "cuando se conecte Microsoft Graph.");
+  async _proyectoDeEmpresa(proyectoId, mandanteId, empresa) {
+    if (!proyectoId) {
+      throw new AppError(400, "Elija el proyecto de la carpeta.");
     }
-    const v = validarRutaCarpeta(ruta);
-    if (!v.ok) throw new AppError(400, v.error);
-    const coincide = validarCarpetaEmpresa(v.valor, empresa);
-    if (!coincide.valida) {
-      throw new AppError(400, mensajeCarpetaNoCoincide(v.valor, empresa,
-          coincide.terminosBuscados));
+    const proyecto = await proyectoRepository.getById(proyectoId)
+        .catch(() => null);
+    if (!proyecto || proyecto.mandanteId !== mandanteId) {
+      throw new AppError(400, "El proyecto no es de este Mandante.");
     }
-    const id = idCarpeta(fuente.id, v.valor);
-    const actual = await carpetaEmpresaRepository.getById(id);
-    if (actual) {
-      const otra = await empresaRepository.getById(actual.empresaId)
-          .catch(() => null);
-      throw new AppError(409, `La carpeta «${v.valor}» ya está registrada a ` +
-          `${nombreEmpresa(otra)}.`);
+    const participaciones = await participacionRepository.list({proyectoId,
+      empresaId: empresa.id});
+    if (!(participaciones || []).some((p) =>
+      PARTICIPACION_VIGENTE.includes(p.estado))) {
+      throw new AppError(400, `${nombreEmpresa(empresa)} no participa en ` +
+          `${proyecto.nombre || "el proyecto"}.`);
     }
-    const autor = await this._autor(actor);
-    return {id, coleccion: carpetaEmpresaRepository.COLLECTION, datos: {
-      mandanteId, fuenteId: fuente.id, ruta: v.valor, url: null,
-      proyectoId: null, expedienteId: null, carpetaPersonas: null,
-      carpetaRecursos: null, mapeo: {}, estadoMapeo: "sin_mapear",
-      analizadaAt: null, estado: "activa", createdBy: autor,
-      updatedBy: autor}};
+    return proyecto;
   }
 
   /**

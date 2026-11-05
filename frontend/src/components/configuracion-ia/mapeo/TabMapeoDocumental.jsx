@@ -8,6 +8,7 @@ import { fuenteDocumentalService } from "../../../services/fuenteDocumentalServi
 import { carpetaEmpresaService } from "../../../services/carpetaEmpresaService";
 import { empresaService } from "../../../services/empresaService";
 import { CampoMandante } from "../../shared/CampoMandante";
+import { AvisoFuenteLocal } from "../../shared/AvisoFuenteLocal";
 import { TabEstructura } from "../TabEstructura";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "../estilos";
 import { ListaCarpetasFuente } from "./ListaCarpetasFuente";
@@ -151,6 +152,7 @@ const MapeoDocumental = ({ usuarioId, esSuperadmin }) => {
             {!base.soportado && <span className="text-slate-500">Este navegador no permite leer carpetas locales (use Chrome o Edge).</span>}
             {base.error && <span className="text-red-600">{base.error}</span>}
           </div>
+          {!autorizada && !base.coincideFuente && <AvisoFuenteLocal nombre={local.etiqueta} />}
           {actual?.error && <p role="alert" className="text-xs text-red-600">{actual.error}</p>}
           {autorizada && (
             <div className="space-y-4">

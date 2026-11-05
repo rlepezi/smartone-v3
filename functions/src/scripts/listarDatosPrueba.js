@@ -117,7 +117,7 @@ async function main() {
       `${d.rut || "—"}`],
     ["expedientes", "Expedientes", (d) => `${d.codigo || ""} · ` +
       `${empresa(d.empresaId)} · ${d.estado || ""}`],
-    ["carpetasEmpresa", "Carpetas registradas y mapeos", (d) => `${d.ruta}` +
+    ["carpetas", "Carpetas registradas y mapeos", (d) => `${d.ruta}` +
       ` · ${empresa(d.empresaId)} · ${nUbicaciones(d.mapeo)} ubicaciones · ` +
       `${d.estadoMapeo || "sin_mapear"}${d.expedienteId ? " · con " +
         "expediente" : ""}`, true],

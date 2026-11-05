@@ -25,8 +25,9 @@ function idCarpeta(fuenteId, ruta) {
 }
 
 /**
- * Ruta de una Carpeta de empresa local: el nombre de una subcarpeta de
- * primer nivel de la fuente (relativa, sin "..", sin unidad ni "/").
+ * Ruta de una carpeta local, relativa a la fuente (sin "..", sin unidad ni
+ * "/" inicial). Puede tener subniveles: la de una empresa dentro de la
+ * carpeta de su proyecto ("Proyecto X/Empresa Y").
  * @param {*} valor Nombre recibido.
  * @return {{ok: boolean, error: ?string, valor: ?string}} Resultado.
  */
@@ -37,11 +38,71 @@ function validarRutaCarpeta(valor) {
     return {ok: false, error: "Indique la carpeta de la empresa.",
       valor: null};
   }
-  if (r.valor.includes("/")) {
-    return {ok: false, error: "Elija una carpeta del primer nivel de la " +
-        "fuente documental.", valor: null};
-  }
   return r;
+}
+
+/**
+ * Nombre de la carpeta: el último tramo de su ruta (con la ruta anidada, la
+ * validación contra la Empresa mira solo la carpeta, no la del proyecto).
+ * @param {?string} ruta Ruta relativa.
+ * @return {string} Nombre.
+ */
+function nombreDeRuta(ruta) {
+  const tramos = String(ruta || "").split("/").filter(Boolean);
+  return tramos[tramos.length - 1] || "";
+}
+
+/**
+ * Referencia común de una carpeta de la fuente documental (en `carpetas` y
+ * en `proyectos.repositorioDocumental`): {tipoFuente, driveId, itemId,
+ * nombre, rutaRelativa}. En SharePoint, driveId + itemId la identifican de
+ * forma estable (no cambian al renombrar); nombre y ruta son para mostrar.
+ * Se agrega junto a los campos de siempre (ruta, url, fuenteId), que el
+ * código sigue leyendo.
+ * @param {Object} c Datos.
+ * @param {string} c.tipoFuente "local" | "sharepoint".
+ * @param {string} c.ruta Ruta relativa (local) o nombre (SharePoint por
+ *     URL).
+ * @param {?string} [c.driveId] Biblioteca (SharePoint vía Graph).
+ * @param {?string} [c.itemId] Item (SharePoint vía Graph).
+ * @param {?string} [c.rutaRelativa] Ruta relativa a la carpeta base
+ *     (SharePoint vía Graph).
+ * @return {Object} Referencia.
+ */
+function referenciaCarpeta({tipoFuente, ruta, driveId = null, itemId = null,
+  rutaRelativa = null}) {
+  const local = tipoFuente === "local";
+  return {
+    tipoFuente: local ? "local" : "sharepoint",
+    driveId: local ? null : driveId || null,
+    itemId: local ? null : itemId || null,
+    nombre: nombreDeRuta(rutaRelativa || ruta),
+    // SharePoint pegado por URL (sin Graph) aún no tiene la ruta relativa a
+    // la carpeta base: queda null hasta elegirla desde el árbol.
+    rutaRelativa: local ? ruta : rutaRelativa || null,
+  };
+}
+
+/**
+ * Clave del ID de una carpeta: en SharePoint vía Graph, driveId + itemId
+ * (estables al renombrar); por URL, la ruta completa dentro del sitio (dos
+ * carpetas homónimas en proyectos distintos no comparten ID); local, la ruta.
+ * @param {{ruta: string, url: ?string, referencia: ?Object}} carpeta
+ *     Carpeta.
+ * @return {string} Clave.
+ */
+function claveIdCarpeta({ruta, url, referencia = null}) {
+  if (referencia?.driveId && referencia?.itemId) {
+    return `graph:${referencia.driveId}:${referencia.itemId}`;
+  }
+  if (!url) return ruta;
+  try {
+    const u = new URL(url);
+    const camino = u.searchParams.get("id") || decodeURIComponent(u.pathname);
+    return camino.replace(/\\/g, "/").replace(/\/+$/, "") || ruta;
+  } catch (e) {
+    return ruta;
+  }
 }
 
 /**
@@ -209,6 +270,8 @@ function validarAsignaciones({mapeo, carpetaPersonas, carpetaRecursos},
 }
 
 module.exports = {
-  idCarpeta, validarRutaCarpeta, validarUrlCarpeta, aplicarCambiosMapeo,
+  idCarpeta, validarRutaCarpeta, nombreDeRuta, claveIdCarpeta,
+  referenciaCarpeta,
+  validarUrlCarpeta, aplicarCambiosMapeo,
   validarAsignaciones, dentroDe,
 };

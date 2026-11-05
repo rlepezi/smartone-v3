@@ -11,6 +11,24 @@ const BASE_URL = import.meta.env.VITE_API_URL || (
     : "/api"
 );
 
+// Descarga binaria (p. ej. el contenido de un archivo de SharePoint transmitido por el backend):
+// devuelve un Blob, o lanza con el mensaje de la API.
+export const apiBlob = async (endpoint) => {
+  const user = auth.currentUser;
+  const token = user ? await user.getIdToken() : null;
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data.message || "No se pudo descargar el archivo.");
+    error.status = response.status;
+    error.codigo = data.codigo || null;
+    throw error;
+  }
+  return response.blob();
+};
+
 export const apiClient = async (endpoint, { body, method = "GET", ...customConfig } = {}) => {
   const user = auth.currentUser;
   const token = user ? await user.getIdToken() : null;

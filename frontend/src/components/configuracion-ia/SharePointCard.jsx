@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Cloud } from "lucide-react";
+import { CheckCircle2, ChevronDown, Circle, Cloud, Loader2, XCircle } from "lucide-react";
 import { fuenteDocumentalService } from "../../services/fuenteDocumentalService";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { Tarjeta } from "./Tarjeta";
@@ -16,6 +16,9 @@ const BADGE = {
   error: { label: "Error", clase: "bg-red-50 text-red-700 border-red-200" },
   inactiva: { label: "Inactiva", clase: "bg-slate-100 text-slate-500 border-slate-200" },
 };
+
+// Cuerpo de la concesión de lectura sobre el sitio (Sites.Selected), para la guía de TI.
+const CUERPO_PERMISO_SITIO = '{ "roles": ["read"], "grantedToIdentities": [{ "application": { "id": "<Client ID>", "displayName": "SmartOne Connector" } }] }';
 
 const normalizarRutaBase = (ruta) => {
   const limpia = String(ruta || "").trim().replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
@@ -47,11 +50,35 @@ const Campo = ({ id, etiqueta, error, ayuda, children }) => (
   </div>
 );
 
-// Fuente SharePoint del Mandante: configuración guardada (secret cifrado en el backend, solo
-// escritura). Sin conexión real a Microsoft Graph todavía: "Probar conexión", el árbol y la
-// navegación de carpetas llegan con esa conexión. Una sola fuente activa por Mandante: con una
-// carpeta local activa, el backend rechaza crear o reactivar SharePoint. `onCambio`: tras guardar o
-// cambiar el estado (para recargar la fuente activa y las Carpetas de empresa).
+// Diagnóstico de "Probar conexión": un paso por línea (ok / error / omitido).
+const ICONO_PASO = {
+  ok: <CheckCircle2 className="w-4 h-4 shrink-0 text-sage-dark" />,
+  error: <XCircle className="w-4 h-4 shrink-0 text-red-600" />,
+  omitido: <Circle className="w-4 h-4 shrink-0 text-slate-300" />,
+};
+const Diagnostico = ({ resultado }) => (
+  <div role="status" className={`p-3 rounded-xl border text-xs space-y-1.5 ${resultado.ok ? "border-sage-light bg-sage-lighter/40" : "border-red-200 bg-red-50/50"}`}>
+    <p className={`font-bold ${resultado.ok ? "text-sage-darker" : "text-red-700"}`}>
+      {resultado.ok ? "Conexión exitosa." : "La conexión falló: revise el paso marcado."}
+    </p>
+    <ul className="space-y-1">
+      {resultado.pasos.map((p) => (
+        <li key={p.clave} className="flex items-start gap-2">
+          {ICONO_PASO[p.estado]}
+          <span><b className="text-carbon-dark">{p.titulo}</b>{p.mensaje ? `: ${p.mensaje}` : p.estado === "omitido" ? ": no se probó." : ""}</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+);
+
+// Fuente SharePoint del Mandante (Microsoft Graph, solo lectura, a través del backend): el secret se
+// cifra en el backend y no vuelve a mostrarse. "Probar conexión" valida paso a paso las credenciales,
+// el sitio, la biblioteca y la carpeta base, con los datos del formulario (antes de guardar) o con
+// la fuente guardada. Guardar sin una prueba exitosa de esos mismos datos pide confirmación. Una
+// sola fuente activa por Mandante: con una carpeta local activa, el backend rechaza crear o
+// reactivar SharePoint. `onCambio`: tras guardar, probar o cambiar el estado (para recargar la
+// fuente activa y las Carpetas de empresa).
 export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) => {
   const [fuente, setFuente] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -62,6 +89,10 @@ export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) 
   const [aviso, setAviso] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [confirmarDesactivar, setConfirmarDesactivar] = useState(false);
+  // Última prueba: { firma (datos probados), resultado }; y si se pide confirmar guardar sin ella.
+  const [prueba, setPrueba] = useState(null);
+  const [probando, setProbando] = useState(false);
+  const [confirmarSinPrueba, setConfirmarSinPrueba] = useState(false);
 
   const aplicar = (f) => {
     setFuente(f);
@@ -95,21 +126,61 @@ export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) 
   const original = desdeFuente(fuente);
   const hayCambios = JSON.stringify({ ...datos, clientSecret: "" }) !== JSON.stringify({ ...original, clientSecret: "" }) || Boolean(datos.clientSecret.trim());
 
-  const guardar = async (e) => {
-    e.preventDefault();
+  const payloadDe = (d) => ({
+    mandanteId, nombre: d.nombre.trim(), tenantId: d.tenantId.trim(), clientId: d.clientId.trim(),
+    clientSecret: d.clientSecret.trim() || undefined, siteUrl: d.siteUrl.trim(),
+    biblioteca: d.biblioteca.trim(), rutaBase: normalizarRutaBase(d.rutaBase),
+  });
+  // Firma de lo probado: los datos de conexión (el secret, solo si se escribió uno nuevo).
+  const firmaDe = (d) => JSON.stringify({ ...payloadDe(d), nombre: undefined });
+  const pruebaVigente = prueba && prueba.firma === firmaDe(datos) ? prueba.resultado : null;
+
+  const probar = async () => {
     setError(null);
     setAviso(null);
     const nuevos = validar(datos, esNueva);
     setErrores(nuevos);
     if (Object.keys(nuevos).length) return;
+    setProbando(true);
+    try {
+      // Sin cambios: se prueba la fuente guardada (deja su estado de conexión).
+      const resultado = await fuenteDocumentalService.probarConexion(
+        !esNueva && !hayCambios ? { mandanteId, fuenteId: fuente.id } : { ...payloadDe(datos), fuenteId: fuente?.id },
+      );
+      setPrueba({ firma: firmaDe(datos), resultado });
+      if (!esNueva && !hayCambios) onCambio?.();
+    } catch (err) {
+      setError(err.message || "No se pudo probar la conexión.");
+    } finally {
+      setProbando(false);
+    }
+  };
+
+  const guardar = async (e, confirmado = false) => {
+    e?.preventDefault?.();
+    setError(null);
+    setAviso(null);
+    const nuevos = validar(datos, esNueva);
+    setErrores(nuevos);
+    if (Object.keys(nuevos).length) return;
+    if (!confirmado && !pruebaVigente?.ok) {
+      setConfirmarSinPrueba(true);
+      return;
+    }
+    setConfirmarSinPrueba(false);
     setGuardando(true);
     try {
-      const payload = {
-        mandanteId, nombre: datos.nombre.trim(), tenantId: datos.tenantId.trim(), clientId: datos.clientId.trim(),
-        clientSecret: datos.clientSecret.trim() || undefined, siteUrl: datos.siteUrl.trim(),
-        biblioteca: datos.biblioteca.trim(), rutaBase: normalizarRutaBase(datos.rutaBase),
-      };
-      aplicar(esNueva ? await fuenteDocumentalService.crear(payload) : await fuenteDocumentalService.actualizar(fuente.id, payload));
+      const probadaOk = Boolean(pruebaVigente?.ok);
+      const payload = payloadDe(datos);
+      let guardada = esNueva ? await fuenteDocumentalService.crear(payload) : await fuenteDocumentalService.actualizar(fuente.id, payload);
+      // Guardar deja la fuente "sin probar": con la prueba exitosa de estos mismos datos, se prueba
+      // la guardada para dejarla "Conectada".
+      if (probadaOk && guardada?.estado === "activa") {
+        await fuenteDocumentalService.probarConexion({ mandanteId, fuenteId: guardada.id }).catch(() => null);
+        guardada = (await fuenteDocumentalService.listar(mandanteId).catch(() => [])).find((f) => f.id === guardada.id) || guardada;
+      }
+      aplicar(guardada);
+      setPrueba(null);
       setAviso("Fuente SharePoint guardada.");
       onCambio?.();
     } catch (err) {
@@ -150,9 +221,12 @@ export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) 
       acciones={<span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${badge.clase}`}>{badge.label}</span>}
     >
       <p className="text-[11px] text-slate-500">
-        La estructura se valida con la plantilla activa del mandante. El árbol de carpetas y su navegación estarán disponibles
-        cuando exista la conexión con Microsoft Graph; mientras tanto, la carpeta de cada empresa se indica con su URL.
+        SmartOne lee los documentos del sitio con permisos de solo lectura (Microsoft Graph): cualquier usuario autorizado los ve
+        desde cualquier equipo, sin archivos locales. La estructura se valida con la plantilla activa del Mandante.
       </p>
+      {fuente?.estadoConexion === "error" && fuente.ultimoErrorConexion && (
+        <p className="text-[11px] text-red-600">Última prueba: {fuente.ultimoErrorConexion}</p>
+      )}
       {!cargado ? (
         <div className="h-40 rounded-xl bg-slate-50 animate-pulse" aria-hidden="true" />
       ) : (
@@ -194,18 +268,39 @@ export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) 
             <summary className="flex items-center gap-2 px-4 py-2.5 cursor-pointer text-xs font-bold text-carbon-dark select-none">
               <ChevronDown className="w-4 h-4 text-slate-400" /> ¿Cómo obtengo estos datos?
             </summary>
-            <ol className="px-8 pb-3 space-y-1 text-[11px] text-slate-600 list-decimal">
-              <li>En Microsoft Entra ID, registrar una aplicación (por ejemplo, "SmartOne Connector").</li>
-              <li>Agregar el permiso de aplicación <b>Sites.Selected</b> (Microsoft Graph) y otorgar consentimiento de administrador.</li>
-              <li>Otorgar lectura sobre el sitio con <code>POST https://graph.microsoft.com/v1.0/sites/{"{siteId}"}/permissions</code>, rol <code>read</code>.</li>
-              <li>En "Certificados y secretos", crear un client secret y anotar su fecha de expiración.</li>
-              <li>Copiar Tenant ID, Client ID y el secret en este formulario.</li>
+            <p className="px-4 pb-2 text-[11px] text-slate-500">Pasos para el área de TI del cliente (administrador de Microsoft 365):</p>
+            <ol className="px-8 pb-3 space-y-1.5 text-[11px] text-slate-600 list-decimal">
+              <li>
+                <b>Registrar la aplicación.</b> En el portal de Microsoft Entra ID → Registros de aplicaciones → Nuevo registro
+                (por ejemplo, «SmartOne Connector»), cuentas de este directorio únicamente. Copie el <b>Id. de directorio (Tenant ID)</b> y
+                el <b>Id. de aplicación (Client ID)</b> de la página Información general.
+              </li>
+              <li>
+                <b>Crear el secreto.</b> En Certificados y secretos → Nuevo secreto de cliente. Copie el <b>Valor</b> (no el Id.) apenas se
+                cree: después no vuelve a mostrarse. Anote su fecha de expiración para renovarlo a tiempo.
+              </li>
+              <li>
+                <b>Conceder el permiso.</b> En Permisos de API → Agregar un permiso → Microsoft Graph → Permisos de aplicación →
+                <b> Sites.Selected</b> (recomendado: solo los sitios autorizados) o <b>Sites.Read.All</b> (todos los sitios, solo lectura).
+                Luego, <b>Conceder consentimiento de administrador</b>.
+              </li>
+              <li>
+                <b>Con Sites.Selected, autorizar el sitio.</b> Un administrador concede lectura sobre el sitio específico, por ejemplo con
+                Graph Explorer: <code>POST https://graph.microsoft.com/v1.0/sites/{"{siteId}"}/permissions</code> con
+                {" "}<code>{CUERPO_PERMISO_SITIO}</code>
+                {" "}(o con PowerShell PnP: <code>Grant-PnPAzureADAppSitePermission -Permissions Read</code>).
+              </li>
+              <li>Ingrese aquí Tenant ID, Client ID, secreto, la URL del sitio, la biblioteca y (opcional) la carpeta base, y presione <b>Probar conexión</b>.</li>
             </ol>
-            <p className="px-4 pb-3 text-[11px] text-slate-500">SmartOne solo solicita acceso de lectura a los sitios que el administrador autorice.</p>
+            <p className="px-4 pb-3 text-[11px] text-slate-500">SmartOne solo lee: nunca crea, modifica ni elimina nada en SharePoint.</p>
           </details>
 
+          {pruebaVigente && <Diagnostico resultado={pruebaVigente} />}
           {Object.keys(erroresVivos).length > 0 && hayCambios && (
-            <p className="text-[11px] text-slate-500">Para guardar, complete los campos obligatorios (*) con el formato indicado.</p>
+            <p className="text-[11px] text-slate-500">Para probar o guardar, complete los campos obligatorios (*) con el formato indicado.</p>
+          )}
+          {hayCambios && !pruebaVigente?.ok && Object.keys(erroresVivos).length === 0 && (
+            <p className="text-[11px] text-slate-500">Pruebe la conexión antes de guardar.</p>
           )}
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button type="submit" disabled={guardando || (!esNueva && !hayCambios) || Object.keys(erroresVivos).length > 0} className={CLASE_PRIMARIO}>
@@ -217,11 +312,23 @@ export const SharePointCard = ({ mandanteId, mandanteNombre = null, onCambio }) 
             ) : (
               <button type="button" onClick={() => cambiarEstado(true)} disabled={guardando} className={CLASE_SECUNDARIO}>Reactivar</button>
             ))}
-            <span title="Disponible en la próxima versión" className="ml-auto">
-              <button type="button" disabled className={CLASE_SECUNDARIO}>Probar conexión</button>
-            </span>
+            <button type="button" onClick={probar} disabled={probando || guardando || Object.keys(erroresVivos).length > 0 || (fuente?.estado === "inactiva" && !hayCambios)}
+              className={`${pruebaVigente?.ok || !hayCambios ? CLASE_SECUNDARIO : CLASE_PRIMARIO} ml-auto`}>
+              {probando ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando...</> : "Probar conexión"}
+            </button>
           </div>
         </form>
+      )}
+      {confirmarSinPrueba && (
+        <ConfirmacionModal
+          titulo="Guardar sin una prueba exitosa"
+          mensaje={pruebaVigente ? "La última prueba de conexión con estos datos falló. ¿Guardar de todas formas? La fuente quedará con error hasta que la conexión funcione."
+            : "Estos datos no se han probado. ¿Guardar de todas formas? La fuente quedará «sin probar» hasta que pruebe la conexión."}
+          textoConfirmar="Guardar sin probar"
+          ocupado={guardando}
+          onConfirmar={() => guardar(null, true)}
+          onCancelar={() => setConfirmarSinPrueba(false)}
+        />
       )}
       {confirmarDesactivar && (
         <ConfirmacionModal

@@ -255,7 +255,7 @@ export const vincularCarpetaExpediente = async (usuarioId, expedienteId, inicio 
 };
 
 // Carpeta (handle) en una ruta relativa ("a/b"), o null si no existe. Solo lectura.
-const carpetaEn = async (raiz, rutaRelativa) => {
+export const carpetaEn = async (raiz, rutaRelativa) => {
   let actual = raiz;
   for (const parte of String(rutaRelativa || "").split("/").filter(Boolean)) {
     try {

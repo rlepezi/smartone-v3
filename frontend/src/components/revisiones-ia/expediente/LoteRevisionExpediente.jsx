@@ -14,6 +14,7 @@ import {
   resumenPlan, sujetoDeInstancia,
 } from "../../../utils/loteRevision";
 import { formatUsd } from "../../configuracion-ia/estilos";
+import { AvisoFuenteLocal } from "../../shared/AvisoFuenteLocal";
 
 const CLASE_BOTON = "inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors disabled:opacity-50";
 const PRIMARIO = `${CLASE_BOTON} bg-primary text-white hover:bg-primary-dark`;
@@ -179,18 +180,19 @@ export const LoteRevisionExpediente = ({ expediente, usuarioId, carpeta, sujetos
   // ── Acceso a la carpeta (fuente del Mandante autorizada en este navegador) ──
   if (!acceso.soportado) return <p className="text-xs text-slate-500">Este navegador no permite leer carpetas locales (use Chrome o Edge).</p>;
   if (acceso.cargando) return <p className="text-xs text-slate-400">Abriendo la carpeta...</p>;
+  if (!acceso.lista && acceso.faltaRaiz) {
+    return (
+      <AvisoFuenteLocal mandanteId={expediente.mandanteId}>
+        <button type="button" onClick={onIrADocumentacion} className="font-bold underline">Autorizarla en la pestaña Documentación</button>
+        {acceso.error && <span className="text-red-600">{acceso.error}</span>}
+      </AvisoFuenteLocal>
+    );
+  }
   if (!acceso.lista) {
     return (
       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-2">
-        {acceso.faltaRaiz ? (
-          <p>La fuente documental del Mandante no está autorizada en este navegador.{" "}
-            <button type="button" onClick={onIrADocumentacion} className="font-bold underline">Autorizarla en la pestaña Documentación</button></p>
-        ) : (
-          <>
-            <p>El navegador necesita que confirme el acceso a la carpeta «{carpeta.ruta}».</p>
-            <button type="button" onClick={acceso.reautorizar} className={SECUNDARIO}><KeyRound className="w-3.5 h-3.5" /> Re-autorizar</button>
-          </>
-        )}
+        <p>El navegador necesita que confirme el acceso a la carpeta «{carpeta.ruta}».</p>
+        <button type="button" onClick={acceso.reautorizar} className={SECUNDARIO}><KeyRound className="w-3.5 h-3.5" /> Re-autorizar</button>
         {acceso.error && <p className="text-red-600">{acceso.error}</p>}
       </div>
     );

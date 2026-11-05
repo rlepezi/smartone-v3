@@ -7,6 +7,12 @@ const expedienteRepository = require("../repositories/expedienteRepository");
 const bitacoraService = require("./bitacoraService");
 const bitacoraLogger = require("../utils/bitacoraLogger");
 const AppError = require("../utils/AppError");
+const fuenteDocumentalRepository =
+    require("../repositories/fuenteDocumentalRepository");
+const {fuenteActiva} = require("../utils/fuentesDocumentales");
+const {
+  validarRutaCarpeta, validarUrlCarpeta, referenciaCarpeta,
+} = require("../utils/carpetasEmpresa");
 const {aMayusculas} = require("../utils/mayusculas");
 const {fechaSantiago} = require("../utils/fechaSantiago");
 
@@ -21,6 +27,9 @@ const ESTADOS_VALIDOS = [
   "finalizado",
   "archivado",
 ];
+
+// Roles que editan un Proyecto (mismos que PUT /proyectos/:id).
+const ROLES_EDITAN = ["superadmin", "mandante_admin"];
 
 // Estados del Proyecto que cierran sus Expedientes (RN-014).
 const ESTADOS_CIERRAN_EXPEDIENTES = ["finalizado", "archivado"];
@@ -549,6 +558,93 @@ class ProyectoService {
     }
 
     return actualizado;
+  }
+
+  /**
+   * Guarda, cambia o quita (null) la carpeta raíz del Proyecto dentro de la
+   * fuente documental de su Mandante: {tipo, fuenteId, ruta, url,
+   * referencia}, la misma
+   * descripción de una carpeta que usan `carpetas` (ruta relativa a la
+   * fuente, o URL de SharePoint). Solo los roles que editan el Proyecto y
+   * dentro de su Mandante; el cambio queda en la Bitácora con el valor
+   * anterior y el nuevo. Quitarla deja el campo en null (sin borrar nada).
+   * @param {string} id ID del proyecto.
+   * @param {?{tipo: string, ruta: ?string, url: ?string}} valor Carpeta, o
+   *     null para quitarla.
+   * @param {Object} actor Usuario autenticado.
+   * @return {Promise<Object>} El proyecto actualizado.
+   */
+  async actualizarRepositorioDocumental(id, valor, actor) {
+    if (!ROLES_EDITAN.includes(actor?.rol)) {
+      throw new AppError(403, "No tiene permiso para editar el proyecto.");
+    }
+    // Quitarla es explícito (null): sin el campo no se cambia nada.
+    if (valor === undefined) {
+      throw new AppError(400, "Indique repositorioDocumental (o null para " +
+          "quitar la carpeta).");
+    }
+    // getProyectoById aplica el alcance del actor (404 si es de otro
+    // Mandante).
+    const existente = await this.getProyectoById(id, actor);
+    if (existente.estado === "archivado") {
+      throw new AppError(400,
+          "El proyecto está archivado y no puede modificarse.");
+    }
+    const nuevo = valor === null ? null :
+      await this._repositorioProyecto(valor, existente.mandanteId);
+    const anterior = existente.repositorioDocumental || null;
+    if (JSON.stringify(anterior) === JSON.stringify(nuevo)) return existente;
+    const actualizado = await proyectoRepository.update(id,
+        {repositorioDocumental: nuevo});
+    await bitacoraLogger.registrarEvento({
+      mandanteId: existente.mandanteId,
+      entidad: "proyecto",
+      entidadId: id,
+      accion: "carpeta_proyecto_actualizada",
+      actor,
+      detalle: {anterior, nuevo},
+    });
+    return actualizado;
+  }
+
+  /**
+   * Valida la carpeta del Proyecto contra la fuente activa del Mandante.
+   * @param {*} valor Recibido.
+   * @param {string} mandanteId Mandante del Proyecto.
+   * @return {Promise<Object>} {tipo, fuenteId, ruta, url}.
+   */
+  async _repositorioProyecto(valor, mandanteId) {
+    if (!valor || typeof valor !== "object" ||
+        !["local", "sharepoint"].includes(valor.tipo)) {
+      throw new AppError(400,
+          "Tipo de carpeta no válido (local o sharepoint).");
+    }
+    const fuente = fuenteActiva(await fuenteDocumentalRepository.list(
+        mandanteId));
+    if (!fuente) {
+      throw new AppError(409, "Configure la fuente documental del " +
+          "Mandante (Inteligencia Artificial → Fuentes documentales).",
+      {codigo: "SIN_FUENTE"});
+    }
+    if (fuente.tipo !== valor.tipo) {
+      const tipo = fuente.tipo === "local" ? "local" : "SharePoint";
+      throw new AppError(400, "La carpeta debe ser de la fuente documental " +
+          `del Mandante (${tipo}).`);
+    }
+    if (valor.tipo === "sharepoint") {
+      const v = validarUrlCarpeta(valor.url, fuente.config?.siteUrl);
+      if (!v.ok) throw new AppError(400, v.error);
+      return {tipo: "sharepoint", fuenteId: fuente.id, ruta: v.ruta,
+        url: v.url, referencia: referenciaCarpeta({tipoFuente: "sharepoint",
+          ruta: v.ruta})};
+    }
+    const v = validarRutaCarpeta(valor.ruta);
+    if (!v.ok) {
+      throw new AppError(400, v.valor === null && !String(valor.ruta || "")
+          .trim() ? "Indique la carpeta del proyecto." : v.error);
+    }
+    return {tipo: "local", fuenteId: fuente.id, ruta: v.valor, url: null,
+      referencia: referenciaCarpeta({tipoFuente: "local", ruta: v.valor})};
   }
 
   /**

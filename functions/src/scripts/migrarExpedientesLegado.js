@@ -67,7 +67,7 @@ async function diagnosticar() {
   const [configs, expedientes, empresas, proyectos, mandantes, fuentes,
     carpetas, requerimientos] = await Promise.all(["configRevisionExpediente",
     "expedientes", "empresas", "proyectos", "mandantes", "fuentesDocumentales",
-    "carpetasEmpresa", "requerimientos"].map(mapa));
+    "carpetas", "requerimientos"].map(mapa));
   const nombreReq = (id) => requerimientos.get(id)?.nombreCorto ||
     requerimientos.get(id)?.nombre || id;
   const fuentesPorMandante = new Map();
