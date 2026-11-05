@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
-import { CrearPerfilRecurso } from "./CrearPerfilRecurso";
 import { ConfirmacionModal } from "../shared/ConfirmacionModal";
 import { perfilRecursoService } from "../../services/perfilRecursoService";
 import { puedeCrearPerfilRecurso } from "../../utils/permisosPerfilRecurso";
@@ -14,11 +13,11 @@ const TAMANOS = {
 // Selector de Perfil de Recurso de UNA persona o maquinaria al asignarla (asistente de Nueva
 // Acreditación, Ingresar recurso, Cambiar Proyecto, Reemplazar Acreditación). Único componente
 // para todos:
-//  - Persona: pills de selección múltiple (uno o más perfiles) y, al final, la pill "+ Nuevo perfil".
-//  - Maquinaria: un select (un solo perfil) y, a su lado, el botón "+ Nuevo perfil".
-// "+ Nuevo perfil" abre el modal compartido con el Mandante y la Clasificación fijos; al guardar,
-// el perfil nuevo queda asignado a ESTA fila (maquinaria: reemplaza; persona: se agrega) y se avisa
-// con `onPerfilCreado({ id, nombre, tipo })` para que quien lo usa recargue la lista de perfiles.
+//  - Persona: pills de selección múltiple (uno o más perfiles).
+//  - Maquinaria: un select (un solo perfil).
+// Los perfiles se crean solo en el módulo Perfiles de Recurso (aquí no hay "Nuevo perfil").
+// `onPerfilCreado({ id, nombre, tipo, reactivado })` avisa al reactivar uno inactivo, para que quien
+// lo usa recargue la lista de perfiles.
 // Por defecto quien lo usa le pasa solo perfiles activos. Si la lista trae alguno inactivo
 // (`estado` distinto de "activo"), elegirlo pide confirmación: se activa y recién entonces se
 // asigna; si se cancela, no queda elegido.
@@ -27,7 +26,7 @@ const TAMANOS = {
 //  - `error`: texto de error de la fila (borde rojo y mensaje), o null.
 //  - `etiqueta`: nombre accesible del grupo o del select.
 export const SelectorPerfilRecurso = ({
-  tipo, perfiles = [], valor = [], onChange, mandanteId, onPerfilCreado,
+  tipo, perfiles = [], valor = [], onChange, onPerfilCreado,
   error = null, tamano = "md", etiqueta = "Perfil de Recurso", anchoCompleto = false,
 }) => {
   const { profile } = useAuth();
@@ -75,19 +74,6 @@ export const SelectorPerfilRecurso = ({
     return () => clearTimeout(temporizador);
   }, [aviso]);
 
-  const alCrear = (perfil) => {
-    onPerfilCreado?.(perfil);
-    if (perfil?.id) {
-      asignar(perfil.id);
-      setAviso(perfil.reactivado ? `Perfil '${perfil.nombre}' activado y asignado`
-        : perfil.existente ? `Perfil '${perfil.nombre}' asignado`
-          : `Perfil ${perfil.nombre} creado y asignado`);
-    }
-  };
-
-  const crear = (variante) => (
-    <CrearPerfilRecurso variante={variante} tipo={tipo} mandanteId={mandanteId} onCreado={alCrear} />
-  );
 
   return (
     <div className="space-y-1">
@@ -112,7 +98,6 @@ export const SelectorPerfilRecurso = ({
               </button>
             );
           })}
-          {crear("pill")}
         </div>
       ) : (
         <div className={`flex items-center flex-wrap ${t.gap}`}>
@@ -133,12 +118,11 @@ export const SelectorPerfilRecurso = ({
               </option>
             ))}
           </select>
-          {crear("boton")}
         </div>
       )}
       {error && (
         <p className="text-[11px] font-semibold text-red-500">
-          {error}{!puedeCrear && ". Pide a un administrador que cree el perfil"}
+          {error}{perfiles.length === 0 && (puedeCrear ? ". Créalo en el módulo Perfiles de Recurso" : ". Pide a un administrador que cree el perfil")}
         </p>
       )}
       {porActivar && (

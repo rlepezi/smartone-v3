@@ -28,6 +28,7 @@ import { PasoCarpetaEmpresa } from "./wizard/PasoCarpetaEmpresa";
 import { CarpetaProyecto } from "../../components/proyectos/CarpetaProyecto";
 import { esCarpetaDestacada } from "../../utils/carpetasSujetos";
 import { esPlanillaListado, personasDeListado } from "../../utils/listadoPersonal";
+import { vehiculosDeListado } from "../../utils/listadoVehiculos";
 import { leerPlanilla } from "../../utils/planillas";
 import { CarpetaWizardPanel } from "./wizard/CarpetaWizardPanel";
 import { repositorioDocumentalService } from "../../services/repositorioDocumentalService";
@@ -209,9 +210,9 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   const [carpetaProyecto, setCarpetaProyecto] = useState(() => leerBorradorValido(mandanteFijo)?.carpetaProyecto || { valor: null, cambiada: false });
   // Relación de la Empresa elegida con el Proyecto (participacionEmpresa), pedida al elegirla.
   const [relacionCargando, setRelacionCargando] = useState(false);
-  // Listado del personal (planilla) abierto en la vista de la carpeta durante el paso Personas:
-  // { ruta, nombre, personas } (ver listadoPersonal.js). No se guarda en el borrador.
-  const [listadoPersonal, setListadoPersonal] = useState(null);
+  // Listados (planillas) abiertos en la vista de la carpeta en los pasos Personas y Maquinarias:
+  // { persona, recurso }, cada uno { tipo, ruta, nombre, filas } | null. No se guardan en el borrador.
+  const [listados, setListados] = useState({ persona: null, recurso: null });
   // Se quitó u omitió la carpeta de la empresa: la del proyecto ya no se elige sola.
   const [carpetaEmpresaDescartada, setCarpetaEmpresaDescartada] = useState(false);
   const pedidoRelacion = useRef(0);
@@ -330,13 +331,15 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
   // tipo o, si no hay, las sugeridas por su nombre ("personal", "trabajadores"; "maquinarias",
   // "vehículos"…).
   const tipoPaso = TIPO_DE_PASO[step] || null;
-  // Paso Personas: una planilla abierta en la vista se lee como listado del personal (nombre, RUT y
-  // cargo). Si no trae una tabla reconocible, no cambia el listado anterior.
-  const leerListadoPersonal = async (ruta, archivo) => {
-    if (step !== PASO_PERSONAS || !esPlanillaListado(archivo?.name)) return;
+  // Pasos Personas y Maquinarias: una planilla abierta en la vista se lee como listado (personas:
+  // nombre, RUT y cargo; vehículos: descripción, patente, marca y modelo). Si no trae una tabla
+  // reconocible, no cambia el listado anterior.
+  const leerListado = async (ruta, archivo) => {
+    if (!tipoPaso || !esPlanillaListado(archivo?.name)) return;
     try {
-      const personas = personasDeListado(await leerPlanilla(archivo));
-      if (personas.length) setListadoPersonal({ ruta, nombre: archivo.name, personas });
+      const hojas = await leerPlanilla(archivo);
+      const filas = tipoPaso === "persona" ? personasDeListado(hojas) : vehiculosDeListado(hojas);
+      if (filas.length) setListados((l) => ({ ...l, [tipoPaso]: { tipo: tipoPaso, ruta, nombre: archivo.name, filas } }));
     } catch {
       // Planilla ilegible: la vista ya muestra su error.
     }
@@ -497,7 +500,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     setRepositorioWizard(null);
     setCarpetaProyecto({ valor: null, cambiada: false });
     setCarpetaEmpresaDescartada(false);
-    setListadoPersonal(null);
+    setListados({ persona: null, recurso: null });
     setSesionWizard(nuevaSesionWizard());
   };
 
@@ -540,7 +543,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
     setRepositorioWizard(null);
     setVerCarpeta(false);
     setCarpetaEmpresaDescartada(false);
-    setListadoPersonal(null);
+    setListados({ persona: null, recurso: null });
   };
 
   // Paso Empresa (o la deducida desde la carpeta). Con el Proyecto ya elegido, se pide la relación
@@ -806,7 +809,7 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
           abrirCarpeta={step === PASO_PERSONAS ? repositorioWizard.mapeo?.carpetaPersonas || null
             : step === PASO_MAQUINARIAS ? repositorioWizard.mapeo?.carpetaRecursos || null : null}
           marcar={marcarCarpeta}
-          onArchivo={leerListadoPersonal}
+          onArchivo={leerListado}
           onCerrar={() => setVerCarpeta(false)}
         />
       )}
@@ -906,8 +909,9 @@ const AsistenteAcreditacion = ({ mandanteFijo, mandantes, errorMandantes }) => {
             onCambiarSeleccion={setSeleccion}
             mostrarErrores={erroresPaso5}
             onIrAProblema={(ref) => irAProblema(step, ref)}
-            listado={TIPO_DE_PASO[step] === "persona" ? listadoPersonal : null}
-            onQuitarListado={() => setListadoPersonal(null)}
+            listado={listados[TIPO_DE_PASO[step]] || null}
+            onQuitarListado={() => setListados((l) => ({ ...l, [TIPO_DE_PASO[step]]: null }))}
+            onListado={(tipo, listado) => setListados((l) => ({ ...l, [tipo]: listado }))}
             carpeta={repositorioWizard?.tipo === "local" ? carpetaWizard : null}
             mapeo={repositorioWizard?.mapeo || null}
             onCambiarMapeo={(tipo, ruta) => setRepositorioWizard((r) => (r ? {

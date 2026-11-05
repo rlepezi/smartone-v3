@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { PatenteChip } from "../../../components/shared/PatenteChip";
-import { Search, Plus, Info, AlertCircle } from "lucide-react";
+import { Search, Plus, Info, AlertCircle, AlertTriangle } from "lucide-react";
 import { acreditacionService } from "../../../services/acreditacionService";
 import { personaService } from "../../../services/personaService";
 import { recursoService } from "../../../services/recursoService";
@@ -8,9 +8,14 @@ import { listarDirectorio } from "../../../services/fuentes/carpetaLocal";
 import { carpetaUnicaDe, separarNombreApellido } from "../../../utils/carpetasSujetos";
 import { formatRutDisplay } from "../../../utils/rutFormatters";
 import { SelectorCarpeta } from "../../../components/expedientes/documentacion/SelectorCarpeta";
-import { CarpetaCabecera, CarpetaDetectadaLista } from "./CarpetaDetectadaBloque";
+import { CarpetaCabecera } from "./CarpetaDetectadaBloque";
 import { useFilasDetectadas, contarPendientes } from "./carpetaDetectada";
-import { ListadoPersonal } from "./ListadoPersonal";
+import { ListadoSujetos } from "./ListadoSujetos";
+import { registradaDe } from "../../../utils/listadoPersonal";
+import { registradoDe, vehiculosDeListado } from "../../../utils/listadoVehiculos";
+import { personasDeListado } from "../../../utils/listadoPersonal";
+import { leerPlanilla } from "../../../utils/planillas";
+import { obtenerArchivo } from "../../../services/fuentes/carpetaLocal";
 import { perfilRecursoService } from "../../../services/perfilRecursoService";
 import { ErrorBanner } from "../../../components/shared/ErrorBanner";
 import { ActionButton } from "../../../components/shared/ActionButton";
@@ -40,11 +45,14 @@ export const PasoAsignaciones = ({
   // Paso de un solo tipo ("persona": Personas, "recurso": Maquinarias), sin pestañas. Sin él, las dos
   // pestañas como antes.
   soloTipo = null,
-  // Listado del personal leído de una planilla abierta en la vista de la carpeta: { ruta, nombre,
-  // personas: [{ nombre, apellido, nombreCompleto, rut, rutValido, cargo }] } | null.
+  // Listado leído de una planilla abierta en la vista de la carpeta: { tipo ("persona" | "recurso"),
+  // ruta, nombre, filas } | null (personas: listadoPersonal.js; vehículos: listadoVehiculos.js).
   listado = null, onQuitarListado,
+  // Listado elegido en el selector de carpeta: onListado(tipo, { tipo, ruta, nombre, filas }).
+  onListado = null,
 }) => {
-  // Persona del listado que se está creando (formulario prellenado).
+  const [avisoListado, setAvisoListado] = useState(null);
+  // Fila del listado que se está creando (formulario prellenado): { tipo, fila }.
   const [crearDesdeListado, setCrearDesdeListado] = useState(null);
   const [personas, setPersonas] = useState([]);
   const [recursos, setRecursos] = useState([]);
@@ -64,7 +72,8 @@ export const PasoAsignaciones = ({
   // Repositorio documental: subcarpetas de la carpeta del personal / maquinarias, sujetos de otras
   // empresas (solo informativo), creación desde carpeta y asignación manual de carpeta.
   const [detectadas, setDetectadas] = useState({ persona: null, recurso: null });
-  const [lectura, setLectura] = useState(0);
+  // Versión de la lectura de subcarpetas (fija: ya no hay "Volver a leer carpeta" en el paso).
+  const [lectura] = useState(0);
   const [otros, setOtros] = useState({ persona: [], recurso: [] });
   const [crearDesde, setCrearDesde] = useState(null); // { tipo, fila }
   const [asignando, setAsignando] = useState(null); // { tipo, id }
@@ -85,6 +94,9 @@ export const PasoAsignaciones = ({
   };
 
   const proyectoActualId = proyectoSel?.id;
+  // Seleccionadas (del tipo del paso) activas en otro proyecto: requieren traslado al confirmar.
+  const enOtroProyecto = seleccion.filter((s) => (!soloTipo || s.tipo === soloTipo)
+    && s.participacionActiva && s.participacionActiva.proyectoId !== proyectoActualId);
 
   const cargar = () => {
     if (!empresaId) return;
@@ -201,7 +213,6 @@ export const PasoAsignaciones = ({
       ? prev.map((s) => (s.tipo === tipo && s.id === item.id ? { ...s, carpetaRelativa } : s))
       : [...prev, { ...armarItem(tipo, item), carpetaRelativa }]));
   };
-  const quitarSeleccion = (tipo, item) => onCambiarSeleccion((prev) => prev.filter((s) => !(s.tipo === tipo && s.id === item.id)));
   const asignarCarpeta = (tipo, id, carpetaRelativa) => onCambiarSeleccion((prev) => prev.map((s) => (
     s.tipo === tipo && s.id === id ? { ...s, carpetaRelativa } : s)));
 
@@ -241,6 +252,7 @@ export const PasoAsignaciones = ({
     if (crearDesde?.tipo === "recurso") seleccionarConCarpeta("recurso", conEstado, crearDesde.fila.carpeta.ruta);
     else toggle("recurso", conEstado);
     setCrearDesde(null);
+    setCrearDesdeListado(null);
   };
 
   // Lista corta: los seleccionados primero y completos, luego el resto hasta MAX_FILAS_CORTAS; el
@@ -269,13 +281,60 @@ export const PasoAsignaciones = ({
 
   // Una pestaña (Personas o Maquinarias) a todo el ancho: encabezado de una fila (carpeta · buscador ·
   // crear · perfil · ver todas), "Detectadas en carpeta" y los recursos, una línea por fila.
-  const renderPestana = ({ tipo, items, filas, termino, setTermino, textoDe, nombreDe, onCrear, etiquetaCrear, vacio, buscar }) => {
+  // Planilla elegida como listado en el selector de carpeta: se lee aquí (personas: nombre, RUT y
+  // cargo; vehículos: descripción, patente, marca y modelo).
+  const elegirListado = async (tipo, rutaArchivo) => {
+    setAvisoListado(null);
+    try {
+      const archivo = await obtenerArchivo(carpeta.handle, rutaArchivo);
+      if (!archivo) throw new Error("No se encontró el archivo.");
+      const hojas = await leerPlanilla(archivo);
+      const filas = tipo === "persona" ? personasDeListado(hojas) : vehiculosDeListado(hojas);
+      if (!filas.length) {
+        setAvisoListado(`«${archivo.name}» no tiene una tabla reconocible de ${tipo === "persona" ? "personas (nombre y RUT)" : "vehículos (patente o N° de serie, y descripción, marca o modelo)"}.`);
+        return;
+      }
+      onListado?.(tipo, { tipo, ruta: rutaArchivo, nombre: archivo.name, filas });
+    } catch (err) {
+      setAvisoListado(err.message || "No se pudo leer la planilla.");
+    }
+  };
+
+  // Selector de Perfil de Recurso de un seleccionado (en la lista de la pestaña o en el listado).
+  const selectorPerfil = (tipo, i, nombre) => {
+    const sel = buscarSeleccion(tipo, i.id);
+    if (!sel || sinPerfiles(tipo)) return null;
+    const conError = mostrarErrores && !(sel.perfilRecursoIds || []).length;
+    return (
+      <SelectorPerfilRecurso
+        tamano="sm"
+        tipo={tipo}
+        perfiles={perfilesDe(tipo)}
+        valor={sel.perfilRecursoIds || []}
+        onChange={(ids) => cambiarPerfiles(tipo, i.id, ids)}
+        mandanteId={mandanteId}
+        onPerfilCreado={cargarPerfiles}
+        error={conError ? "Elige un perfil" : null}
+        etiqueta={`Perfil de Recurso de ${nombre}`}
+      />
+    );
+  };
+
+  const renderPestana = ({ tipo, items: todos, termino, setTermino, textoDe, nombreDe, onCrear, etiquetaCrear, vacio, buscar }) => {
+    // Con listado (del personal o de vehículos), los que están en él se eligen (y se les asigna el
+    // perfil) solo en el listado: la lista de abajo queda con los demás de la empresa, sin repetirlos.
+    const conListado = Boolean(listado) && listado.tipo === tipo;
+    const coincide = tipo === "persona" ? registradaDe : registradoDe;
+    const enListado = conListado
+      ? new Set(listado.filas.map((f) => coincide(f, todos)?.id).filter(Boolean)) : null;
+    const items = conListado ? todos.filter((i) => !enListado.has(i.id)) : todos;
     const cortas = listaCorta(items, tipo, termino, textoDe);
     const ruta = rutaDe(tipo);
     return (
       <div className="space-y-3">
         <div className="sticky top-0 z-10 -mx-1 px-1 py-2 bg-white flex flex-wrap items-center gap-2 border-b border-slate-100">
-          <CarpetaCabecera tipo={tipo} carpeta={carpeta} ruta={ruta} onElegirRuta={(r) => onCambiarMapeo?.(tipo, r)} />
+          <CarpetaCabecera tipo={tipo} carpeta={carpeta} ruta={ruta} onElegirRuta={(r) => onCambiarMapeo?.(tipo, r)}
+            onElegirListado={onListado ? (r) => elegirListado(tipo, r) : null} />
           <div className="relative flex-1 min-w-[12rem]">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -284,9 +343,6 @@ export const PasoAsignaciones = ({
             />
           </div>
           <ActionButton variant="primary" icon={Plus} onClick={onCrear}>{etiquetaCrear}</ActionButton>
-          {perfilesDe(tipo).length > 0 && (
-            <CrearPerfilRecurso variante="enlace" tipo={tipo} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
-          )}
           <button type="button" onClick={() => setPanelAbierto(tipo)} className="text-[11px] font-bold text-primary hover:text-primary-dark whitespace-nowrap">
             Ver todas ({items.length}) →
           </button>
@@ -294,45 +350,46 @@ export const PasoAsignaciones = ({
         {sinPerfiles(tipo) && (
           <CrearPerfilRecurso tipo={tipo} mandanteId={mandanteId} onCreado={handlePerfilCreado} />
         )}
-        {tipo === "persona" && listado && (
-          <ListadoPersonal
+        {avisoListado && <p role="alert" className="text-[11px] text-amber-700">{avisoListado}</p>}
+        {conListado && (
+          <ListadoSujetos
+            tipo={tipo}
             listado={listado}
-            personas={items}
-            estaSeleccionado={(id) => estaSeleccionado("persona", id)}
+            sujetos={todos}
+            proyectoActualId={proyectoActualId}
+            faltaPerfil={(p) => { const s = buscarSeleccion(tipo, p.id); return Boolean(s) && !(s.perfilRecursoIds || []).length && !sinPerfiles(tipo); }}
+            renderPerfil={(p) => selectorPerfil(tipo, p, nombreDe(p))}
+            refDe={(p) => refRecurso(tipo, p.id)}
+            estaSeleccionado={(id) => estaSeleccionado(tipo, id)}
             esSeleccionable={esSeleccionable}
-            onAlternar={(item) => toggle("persona", item)}
+            onAlternar={(item) => toggle(tipo, item)}
             onSeleccionarTodas={(registradas) => onCambiarSeleccion((prev) => [
               ...prev,
-              ...registradas.filter((p) => esSeleccionable(p) && !prev.some((s) => s.tipo === "persona" && s.id === p.id))
-                .map((p) => ({ ...armarItem("persona", p), carpetaRelativa: null })),
+              ...registradas.filter((p) => esSeleccionable(p) && !prev.some((s) => s.tipo === tipo && s.id === p.id))
+                .map((p) => ({ ...armarItem(tipo, p), carpetaRelativa: null })),
             ])}
-            onCrear={(persona) => { setCrearDesde(null); setCrearDesdeListado(persona); setModalPersonaAbierto(true); }}
+            onCrear={(fila) => {
+              setCrearDesde(null);
+              setCrearDesdeListado({ tipo, fila });
+              if (tipo === "persona") setModalPersonaAbierto(true); else setModalRecursoAbierto(true);
+            }}
             onQuitar={onQuitarListado}
           />
         )}
-        {carpetaLista && ruta && (
-          <CarpetaDetectadaLista
-            tipo={tipo}
-            filas={filas}
-            cargando={!detectadas[tipo]}
-            onRecargar={() => { setDetectadas((d) => ({ ...d, [tipo]: null })); setLectura((n) => n + 1); }}
-            seleccion={seleccion.filter((x) => x.tipo === tipo)}
-            termino={termino}
-            onSeleccionar={(item, r) => seleccionarConCarpeta(tipo, item, r)}
-            onQuitar={(item) => quitarSeleccion(tipo, item)}
-            onCrearDesdeCarpeta={(fila) => {
-              setCrearDesde({ tipo, fila });
-              if (tipo === "persona") setModalPersonaAbierto(true); else setModalRecursoAbierto(true);
-            }}
-            esSeleccionable={esSeleccionable}
-          />
+        {/* "Detectadas en carpeta" ya no se muestra: las subcarpetas se siguen leyendo para asignar
+            sola la carpeta de cada seleccionado cuando una sola coincide (ver toggle). */}
+        {conListado && items.length > 0 && (
+          <p className="pt-1 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            {tipo === "persona" ? "Otras personas" : "Otras maquinarias"} de la empresa ({items.length})
+          </p>
         )}
-        {items.length === 0 ? (
+        {conListado && items.length === 0 ? null : items.length === 0 ? (
           !ruta ? (
             <div className="py-6 text-center space-y-3">
               <p className="text-[11px] text-slate-400">{vacio}</p>
               <div className="flex flex-wrap justify-center gap-2">
-                <CarpetaCabecera tipo={tipo} carpeta={carpeta} ruta={ruta} onElegirRuta={(r) => onCambiarMapeo?.(tipo, r)} />
+                <CarpetaCabecera tipo={tipo} carpeta={carpeta} ruta={ruta} onElegirRuta={(r) => onCambiarMapeo?.(tipo, r)}
+            onElegirListado={onListado ? (r) => elegirListado(tipo, r) : null} />
                 <ActionButton variant="primary" icon={Plus} onClick={onCrear}>{etiquetaCrear}</ActionButton>
               </div>
             </div>
@@ -363,6 +420,12 @@ export const PasoAsignaciones = ({
                     {tipo === "persona"
                       ? <span className="text-[11px] text-slate-400 shrink-0">{i.rut ? formatRutDisplay(i.rut) : ""}</span>
                       : <span className="shrink-0"><PatenteChip valor={i.patente} tipo={i.tipoIdentificacion} /></span>}
+                    {faltaPerfil && !sinPerfiles(tipo) && (
+                      <span title="Sin Perfil de Recurso asignado" aria-label="Sin Perfil de Recurso asignado"
+                        className="shrink-0 inline-flex items-center gap-1 px-1.5 rounded bg-amber-100 text-[10px] font-semibold text-amber-800">
+                        <AlertTriangle className="w-3 h-3" />{(tipo === "persona" ? i.empresaActual?.cargo : i.tipo) || "Sin perfil"}
+                      </span>
+                    )}
                     <BadgesDisponibilidad item={i} proyectoActualId={proyectoActualId} seleccionada={Boolean(sel)} />
                     {sel && carpetaLista && ruta && (sel.carpetaRelativa ? (
                       <span title={sel.carpetaRelativa} className="shrink-0 px-1.5 rounded-full text-[10px] font-bold bg-sage-lighter text-sage-darker border border-sage-light">📁</span>
@@ -374,19 +437,7 @@ export const PasoAsignaciones = ({
                     ))}
                   </label>
                   {sel && !sinPerfiles(tipo) && (
-                    <div className="shrink-0 w-full lg:w-72">
-                      <SelectorPerfilRecurso
-                        tamano="sm"
-                        tipo={tipo}
-                        perfiles={perfilesDe(tipo)}
-                        valor={sel.perfilRecursoIds || []}
-                        onChange={(ids) => cambiarPerfiles(tipo, i.id, ids)}
-                        mandanteId={mandanteId}
-                        onPerfilCreado={cargarPerfiles}
-                        error={conError ? "Elige un perfil" : null}
-                        etiqueta={`Perfil de Recurso de ${nombreDe(i)}`}
-                      />
-                    </div>
+                    <div className="shrink-0 w-full lg:w-72">{selectorPerfil(tipo, i, nombreDe(i))}</div>
                   )}
                 </div>
               );
@@ -418,6 +469,32 @@ export const PasoAsignaciones = ({
       </div>
 
       <ErrorBanner message={error} />
+
+      {/* Seleccionadas que ya están activas en OTRO proyecto: al confirmar se trasladan (su asignación
+          actual se finaliza). Se avisa siempre, a la vista, mientras sigan seleccionadas. */}
+      {enOtroProyecto.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-900">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-px text-amber-600" />
+          <div className="space-y-1 min-w-0">
+            <p className="font-bold">
+              {enOtroProyecto.length === 1
+                ? `1 ${soloTipo === "recurso" ? "maquinaria seleccionada ya está activa" : soloTipo === "persona" ? "persona seleccionada ya está activa" : "seleccionada ya está activa"} en otro proyecto`
+                : `${enOtroProyecto.length} ${soloTipo === "recurso" ? "maquinarias seleccionadas ya están activas" : soloTipo === "persona" ? "personas seleccionadas ya están activas" : "seleccionadas ya están activas"} en otro proyecto`}
+            </p>
+            <ul className="space-y-0.5">
+              {enOtroProyecto.map((s) => (
+                <li key={`${s.tipo}-${s.id}`}>
+                  <b>{s.nombre}</b> — {s.participacionActiva?.proyectoNombre || "otro proyecto"}
+                </li>
+              ))}
+            </ul>
+            <p>
+              Al confirmar la acreditación {enOtroProyecto.length === 1 ? "se trasladará" : "se trasladarán"} a {proyectoSel?.nombre || "este proyecto"} y
+              {enOtroProyecto.length === 1 ? " su asignación actual se finalizará" : " sus asignaciones actuales se finalizarán"}. Si no corresponde, quítalas de la selección.
+            </p>
+          </div>
+        </div>
+      )}
 
       {mostrarErrores && sinPerfilAsignado.length > 0 && (
         <div role="alert" className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 space-y-1.5">
@@ -495,8 +572,8 @@ export const PasoAsignaciones = ({
         <ModalCrearPersona
           empresaId={empresaId}
           mandanteId={mandanteId}
-          inicial={crearDesdeListado
-            ? { nombre: crearDesdeListado.nombre, apellido: crearDesdeListado.apellido, rut: crearDesdeListado.rut, cargo: crearDesdeListado.cargo }
+          inicial={crearDesdeListado?.tipo === "persona"
+            ? { nombre: crearDesdeListado.fila.nombre, apellido: crearDesdeListado.fila.apellido, rut: crearDesdeListado.fila.rut, cargo: crearDesdeListado.fila.cargo }
             : crearDesde?.tipo === "persona" ? separarNombreApellido(crearDesde.fila.limpio.display) : null}
           documento={documentoPara("persona")}
           onCreada={handlePersonaCreada}
@@ -507,10 +584,16 @@ export const PasoAsignaciones = ({
         <ModalCrearRecurso
           empresaId={empresaId}
           mandanteId={mandanteId}
-          inicial={crearDesde?.tipo === "recurso" ? { nombre: crearDesde.fila.limpio.display, patente: crearDesde.fila.patente || "" } : null}
+          inicial={crearDesdeListado?.tipo === "recurso" ? {
+            nombre: crearDesdeListado.fila.nombre, patente: crearDesdeListado.fila.patente || "",
+            tipoIdentificacion: crearDesdeListado.fila.tipoIdentificacion || "patente",
+            descripcion: crearDesdeListado.fila.descripcion || "", marca: crearDesdeListado.fila.marca,
+            modelo: crearDesdeListado.fila.modelo, anio: crearDesdeListado.fila.anio,
+            perfilSugerido: crearDesdeListado.fila.descripcion,
+          } : crearDesde?.tipo === "recurso" ? { nombre: crearDesde.fila.limpio.display, patente: crearDesde.fila.patente || "" } : null}
           documento={documentoPara("recurso")}
           onCreada={handleRecursoCreado}
-          onCerrar={() => { setModalRecursoAbierto(false); setCrearDesde(null); }}
+          onCerrar={() => { setModalRecursoAbierto(false); setCrearDesde(null); setCrearDesdeListado(null); }}
         />
       )}
       {asignando && carpetaLista && (

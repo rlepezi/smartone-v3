@@ -25,17 +25,23 @@ import { errorIdentificacion, normalizarPatente } from "../../utils/identificaci
 // si otra maquinaria activa visible ya la usa (409 PATENTE_DUPLICADA) se avisa y se pide
 // confirmación para continuar.
 // `mandanteId` (opcional): con él, la clasificación se elige como Perfil de Recurso del Mandante
-// (select + "+ Nuevo perfil") y su nombre se guarda como `tipo`; `onCreada(recurso)` recibe además
+// (select; los perfiles se crean en su módulo) y su nombre se guarda como `tipo`; `onCreada(recurso)` recibe además
 // `perfilRecursoId` para dejarlo asignado. Sin Mandante (catálogo de la Empresa, que puede tener
 // varios), se mantiene "Tipo de maquinaria" como texto con sugerencias.
-// `inicial` (opcional): { nombre, patente } para precargar (p. ej. "Crear desde carpeta").
+// `inicial` (opcional): { nombre, patente, tipoIdentificacion?, descripcion?, marca?, modelo?, anio?,
+// perfilSugerido? } para
+// precargar (p. ej. "Crear desde carpeta" o "Crear" desde un listado de vehículos: perfilSugerido
+// preselecciona el Perfil de Recurso de ese nombre, si existe).
 // `documento` (opcional): carpeta para ver el padrón o el listado al lado del formulario.
 export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticipacionId = null, onCreada, onCerrar, inicial = null, documento = null }) => {
   const patenteRef = useRef(null);
+  // Perfil sugerido por el listado (se fija al abrir; no cambia mientras el modal está abierto).
+  const perfilSugeridoRef = useRef(String(inicial?.perfilSugerido || "").trim().toLowerCase());
   const [empresaNombre, setEmpresaNombre] = useState("");
   const [patenteDuplicada, setPatenteDuplicada] = useState(null); // {recursoId, nombre, patente}
   const [formData, setFormData] = useState({
-    tipoIdentificacion: "patente", patente: inicial?.patente || "", nombre: inicial?.nombre || "", tipo: "",
+    tipoIdentificacion: inicial?.tipoIdentificacion || "patente", patente: inicial?.patente || "", nombre: inicial?.nombre || "", tipo: "",
+    descripcion: inicial?.descripcion || "",
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -51,7 +57,13 @@ export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticip
   const cargarPerfiles = () => {
     if (!mandanteId) return;
     perfilRecursoService.listar({ mandanteId, tipo: "recurso", estado: "activo" })
-      .then((data) => setPerfiles(data || []))
+      .then((data) => {
+        setPerfiles(data || []);
+        // Perfil sugerido (p. ej. la descripción del listado): solo si coincide por nombre.
+        const sugerido = perfilSugeridoRef.current;
+        const p = sugerido ? (data || []).find((x) => x.nombre.trim().toLowerCase() === sugerido) : null;
+        if (p) setPerfilIds((ids) => (ids.length ? ids : [p.id]));
+      })
       .catch(() => setPerfiles([]));
   };
   useEffect(cargarPerfiles, [mandanteId]);
@@ -80,7 +92,7 @@ export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticip
     if (errorId) newErrors.patente = errorId;
     if (!formData.nombre.trim()) newErrors.nombre = "La marca / modelo es obligatoria.";
     if (conPerfil) {
-      if (perfilIds.length === 0) newErrors.tipo = "Elija el Perfil de Recurso (o cree uno con «Nuevo perfil»).";
+      if (perfilIds.length === 0) newErrors.tipo = "Elija el Perfil de Recurso (se crean en el módulo Perfiles de Recurso).";
     } else if (!formData.tipo.trim()) {
       newErrors.tipo = "El tipo de maquinaria es obligatorio.";
     }
@@ -100,6 +112,10 @@ export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticip
         estado: "activo",
         tipoIdentificacion: formData.tipoIdentificacion,
         patente: formData.tipoIdentificacion === "patente" ? normalizarPatente(formData.patente) : formData.patente.trim(),
+        descripcion: formData.descripcion.trim() || null,
+        marca: inicial?.marca || null,
+        modelo: inicial?.modelo || null,
+        anio: inicial?.anio || null,
         confirmarPatenteDuplicada,
       });
       setPatenteDuplicada(null);
@@ -163,6 +179,14 @@ export const ModalCrearRecurso = ({ empresaId, mandanteId = null, perfilParticip
                 }`}
               />
               {errors.nombre && <p className="text-xs text-red-500 mt-1">{errors.nombre}</p>}
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Descripción (opcional)</label>
+              <input
+                type="text" name="descripcion" value={formData.descripcion} onChange={handleChange} maxLength={300}
+                placeholder="Ej: Camioneta 4x4 doble cabina"
+                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              />
             </div>
             {conPerfil ? (
               <div>

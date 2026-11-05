@@ -446,6 +446,7 @@ export const RecursoDetailPage = () => {
           <CampoInfo etiqueta="Marca">{recurso.marca}</CampoInfo>
           <CampoInfo etiqueta="Modelo">{recurso.modelo}</CampoInfo>
           <CampoInfo etiqueta="Año">{recurso.anio}</CampoInfo>
+          <CampoInfo etiqueta="Descripción">{recurso.descripcion}</CampoInfo>
           <CampoInfo etiqueta="Estado"><StatusBadge value={recurso.estado} map={MAPA_ACTIVO_INACTIVO} /></CampoInfo>
         </div>
       </TarjetaPanel>

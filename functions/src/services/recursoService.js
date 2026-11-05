@@ -18,6 +18,8 @@ const {
   TIPOS_IDENTIFICACION, normalizarPatente, esPatenteChilena,
 } = require("../utils/identificacionRecurso");
 
+// Largo máximo de la descripción de una maquinaria.
+const MAX_DESCRIPCION = 300;
 const ESTADOS_VALIDOS = ["activo", "inactivo"];
 const TIPO_MAX_LENGTH = 60;
 const db = admin.firestore();
@@ -277,6 +279,25 @@ class RecursoService {
   }
 
   /**
+   * Descripción de la maquinaria (texto libre opcional, p. ej. «Camioneta
+   * 4x4 doble cabina»): recortada, o null si viene vacía.
+   * @param {*} valor Recibido.
+   * @return {?string} Descripción.
+   */
+  _descripcion(valor) {
+    if (valor === undefined || valor === null) return null;
+    if (typeof valor !== "string") {
+      throw new AppError(400, "La descripción debe ser texto.");
+    }
+    const texto = valor.trim();
+    if (texto.length > MAX_DESCRIPCION) {
+      throw new AppError(400, "La descripción no puede exceder " +
+          `${MAX_DESCRIPCION} caracteres.`);
+    }
+    return texto || null;
+  }
+
+  /**
    * Crea un recurso junto con su relación inicial con la Empresa
    * (empresaRecursos), en una sola transacción (RN-122: ningún Recurso
    * queda sin Empresa). Patente obligatoria (ver _validarPatente).
@@ -289,7 +310,7 @@ class RecursoService {
   async crearRecurso(payload, actor) {
     const {
       nombre, tipo, empresaId, estado, patente, marca, modelo, anio,
-      fechaInicio,
+      fechaInicio, descripcion,
     } = payload;
     const tipoIdentificacion =
         this._validarTipoIdentificacion(payload.tipoIdentificacion);
@@ -328,6 +349,7 @@ class RecursoService {
       marca: marca ? marca.trim() : null,
       modelo: modelo ? modelo.trim() : null,
       anio: anio ? Number(anio) : null,
+      descripcion: this._descripcion(descripcion),
     };
 
     // Recurso + relación inicial con la Empresa (empresaRecursos) en UNA
@@ -385,7 +407,7 @@ class RecursoService {
 
     const allowedFields = [
       "nombre", "tipo", "estado", "patente", "marca", "modelo", "anio",
-      "tipoIdentificacion",
+      "tipoIdentificacion", "descripcion",
     ];
     const updateData = {};
     for (const key of allowedFields) {
@@ -438,6 +460,9 @@ class RecursoService {
     }
     if (updateData.anio !== undefined) {
       updateData.anio = updateData.anio ? Number(updateData.anio) : null;
+    }
+    if (updateData.descripcion !== undefined) {
+      updateData.descripcion = this._descripcion(updateData.descripcion);
     }
 
     const actualizado = await recursoRepository.update(id, updateData);

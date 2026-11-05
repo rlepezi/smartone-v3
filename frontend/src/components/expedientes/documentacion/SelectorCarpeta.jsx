@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronRight, File, Folder, FolderOpen, Star, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, File, FileSpreadsheet, Folder, FolderOpen, Star, X } from "lucide-react";
 import { listarDirectorio } from "../../../services/fuentes/carpetaLocal";
 import { esCarpetaDestacada, esPosibleListado } from "../../../utils/carpetasSujetos";
 import { formatTamano } from "../../../utils/repositorioDocumental";
+import { esPlanillaListado } from "../../../utils/listadoPersonal";
 import { CLASE_PRIMARIO, CLASE_SECUNDARIO } from "./estilos";
 
 const TEXTO_TIPO = { persona: "la carpeta del personal", recurso: "la carpeta de maquinarias" };
@@ -15,11 +16,16 @@ const TEXTO_TIPO = { persona: "la carpeta del personal", recurso: "la carpeta de
 // Opcionales (Nueva Empresa desde carpeta): `soloPrimerNivel` no deja entrar a las subcarpetas;
 // `estadoCarpeta(c)` → { texto, destacada, deshabilitada } marca cada carpeta del nivel (p. ej.
 // "Sin registrar" destacada, o "Registrada a X" deshabilitada).
-export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo, onElegir, onCerrar, soloPrimerNivel = false, estadoCarpeta = null }) => {
+// `onElegirListado(rutaArchivo)` (opcional): las planillas de la carpeta en vista previa se pueden
+// marcar como listado (del personal o de vehículos); al usar la carpeta, se informa también.
+export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo, onElegir, onCerrar, soloPrimerNivel = false, estadoCarpeta = null, onElegirListado = null }) => {
   const [actual, setActual] = useState(rutaInicial || "");
   const [listado, setListado] = useState(null);
   const [elegida, setElegida] = useState(rutaInicial || null);
   const [vista, setVista] = useState(null);
+  // Planilla marcada como listado, dentro de la carpeta en vista previa: { carpeta, ruta }.
+  const [listadoElegido, setListadoElegido] = useState(null);
+  const listadoVigente = listadoElegido && listadoElegido.carpeta === elegida ? listadoElegido.ruta : null;
 
   useEffect(() => {
     let vigente = true;
@@ -102,14 +108,27 @@ export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo,
                     <p className="font-bold text-carbon-dark mb-1">Archivos sueltos ({vista.archivos.length})</p>
                     {vista.archivos.length === 0 ? <p className="text-slate-400">Sin archivos.</p> : (
                       <ul className="space-y-0.5 text-slate-600">
-                        {vista.archivos.map((a) => (
-                          <li key={a.ruta} className="flex items-center gap-1.5">
-                            <File className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="truncate">{a.nombre}</span>
-                            <span className="text-slate-400 shrink-0">{formatTamano(a.tamanoBytes)}</span>
-                            {esPosibleListado(a.nombre) && <span className="shrink-0 px-1.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700">Posible listado</span>}
-                          </li>
-                        ))}
+                        {vista.archivos.map((a) => {
+                          const planilla = Boolean(onElegirListado) && esPlanillaListado(a.nombre);
+                          const marcado = listadoVigente === a.ruta;
+                          return (
+                            <li key={a.ruta} className={`flex flex-wrap items-center gap-1.5 ${marcado ? "rounded-lg bg-primary-lighter/60 -mx-1 px-1" : ""}`}>
+                              {planilla ? <FileSpreadsheet className="w-3.5 h-3.5 text-primary shrink-0" /> : <File className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+                              <span className="truncate">{a.nombre}</span>
+                              <span className="text-slate-400 shrink-0">{formatTamano(a.tamanoBytes)}</span>
+                              {esPosibleListado(a.nombre) && <span className="shrink-0 px-1.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700">Posible listado</span>}
+                              {planilla && (marcado ? (
+                                <button type="button" onClick={() => setListadoElegido(null)} className="shrink-0 inline-flex items-center gap-1 px-1.5 rounded-full border border-primary/30 bg-white text-[10px] font-bold text-primary">
+                                  <CheckCircle2 className="w-3 h-3" /> Listado elegido
+                                </button>
+                              ) : (
+                                <button type="button" onClick={() => setListadoElegido({ carpeta: elegida, ruta: a.ruta })} className="shrink-0 px-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-primary hover:bg-primary-lighter">
+                                  Usar como listado
+                                </button>
+                              ))}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -121,8 +140,9 @@ export const SelectorCarpeta = ({ handle, tipo = null, rutaInicial = "", titulo,
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100">
           <button type="button" onClick={onCerrar} className={CLASE_SECUNDARIO}>Cancelar</button>
-          <button type="button" disabled={elegida === null || elegida === ""} onClick={() => onElegir(elegida)} className={CLASE_PRIMARIO}>
-            Usar esta carpeta
+          <button type="button" disabled={elegida === null || elegida === ""}
+            onClick={() => { onElegir(elegida); if (listadoVigente) onElegirListado?.(listadoVigente); }} className={CLASE_PRIMARIO}>
+            {listadoVigente ? "Usar esta carpeta y el listado" : "Usar esta carpeta"}
           </button>
         </div>
       </div>

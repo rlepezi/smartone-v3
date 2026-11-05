@@ -51,6 +51,7 @@ export const RecursoEdicionForm = ({
     marca: "",
     modelo: "",
     anio: "",
+    descripcion: "",
     // Solo se usan al crear — la Empresa/relación después se cambia
     // únicamente vía "Cambiar Empresa" desde el detalle (RN-122).
     empresaId: "",
@@ -151,6 +152,7 @@ export const RecursoEdicionForm = ({
           marca: data.marca || "",
           modelo: data.modelo || "",
           anio: data.anio ? String(data.anio) : "",
+          descripcion: data.descripcion || "",
         }));
         // Empresa actual: la de su relación activa (null si es de una empresa fuera del alcance).
         setEmpresaActualNombre(data.empresaActual?.empresaNombre || null);
@@ -232,6 +234,7 @@ export const RecursoEdicionForm = ({
       marca: formData.marca.trim() || null,
       modelo: formData.modelo.trim() || null,
       anio: formData.anio ? Number(formData.anio) : null,
+      descripcion: formData.descripcion.trim() || null,
     };
 
     try {
@@ -543,6 +546,20 @@ export const RecursoEdicionForm = ({
                 placeholder="Ej: 2020"
                 min="1950"
                 max="2100"
+                className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Descripción (Opcional)</label>
+              <input
+                type="text"
+                name="descripcion"
+                value={formData.descripcion}
+                onChange={handleChange}
+                disabled={!puedeEscribir}
+                maxLength={300}
+                placeholder="Ej: Camioneta 4x4 doble cabina"
                 className="w-full px-3.5 py-2.5 bg-gray-50/50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
               />
             </div>

@@ -2,6 +2,7 @@
 // filas bajo la fila de encabezado. Determinístico, sin IA. Funciones puras; se prueban desde Node en
 // functions/test/listadoPersonal.spec.js (por eso los imports llevan la extensión ".js").
 import { cleanRut, validateRut } from "./rutFormatters.js";
+import { claveTexto } from "./carpetasSujetos.js";
 
 // Minúsculas, sin tildes, solo letras, números y espacios simples.
 const clave = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -97,6 +98,12 @@ export const personasDeListado = (hojas) => {
   });
   return personas;
 };
+
+// Persona de SmartOne (de la empresa) que corresponde a una fila del listado: por RUT; sin RUT
+// válido, por nombre completo exacto (normalizado).
+export const registradaDe = (fila, personas) => personas.find((p) => fila.rut && cleanRut(p.rut || "") === fila.rut)
+  || (!fila.rut ? personas.find((p) => claveTexto(`${p.nombre} ${p.apellido || ""}`) === claveTexto(fila.nombreCompleto)) : null)
+  || null;
 
 // ¿Es una planilla que se puede leer como listado?
 export const esPlanillaListado = (nombre) => ["xlsx", "xlsm", "xls", "csv"].includes(String(nombre || "").split(".").pop().toLowerCase());

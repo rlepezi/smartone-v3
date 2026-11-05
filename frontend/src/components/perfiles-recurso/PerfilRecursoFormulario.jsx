@@ -19,7 +19,7 @@ const ETIQUETA_TIPO = { persona: "Persona", recurso: "Maquinaria" };
 
 // Formulario de Perfil de Recurso (crear / editar). Único componente: lo usan la pantalla de
 // Perfiles de Recurso (PerfilRecursoFormPage) y el modal del wizard de Nueva Acreditación
-// (NuevoPerfilRecursoModal). `inicial` ({ nombre, tipo, mandanteId }) solo precarga al crear:
+// (antes también NuevoPerfilRecursoModal). `inicial` ({ nombre, tipo, mandanteId }) solo precarga al crear:
 // es un punto de partida y todos los campos siguen editables, salvo con `fijo`: el alta desde una
 // asignación (asistente y modales), donde Mandante y Clasificación vienen dados y son de solo
 // lectura, el Estado no se muestra (se crea activo) y el formulario va sin tarjeta, dentro del
